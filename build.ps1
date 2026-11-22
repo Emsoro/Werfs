@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Build script for Gridform (WAML + C++20 + MVVM).
+    Build script for Werfs (WAML + C++20 + MVVM).
 
 .DESCRIPTION
     Drives cl.exe / link.exe / rc.exe directly. CMake and Ninja are deliberately
@@ -516,7 +516,7 @@ function Build-SampleResource {
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
-Write-Host "Gridform $VersionString  |  target=$Target" -ForegroundColor Cyan
+Write-Host "Werfs $VersionString  |  target=$Target" -ForegroundColor Cyan
 Write-Host "output: $OutDir" -ForegroundColor DarkGray
 
 try {

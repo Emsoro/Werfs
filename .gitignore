@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Gridform
+# Werfs
 #
 # A fresh clone plus `build.ps1 all` must reproduce everything that matters.
 # Anything below is either a build artifact or a tree kept local on purpose.
@@ -39,7 +39,7 @@
 *.app
 
 # ---------------------------------------------------------------------------
-# Gridform-specific
+# Werfs-specific
 # ---------------------------------------------------------------------------
 
 # Build output (build.ps1's default target directory).

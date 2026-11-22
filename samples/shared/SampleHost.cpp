@@ -35,7 +35,7 @@ using namespace wui;
 namespace sample {
 namespace {
 
-constexpr wchar_t kClassName[] = L"GridformSampleHost";
+constexpr wchar_t kClassName[] = L"WerfsSampleHost";
 
 struct AppState {
     WidgetPtr root;
@@ -402,7 +402,7 @@ int RunInternal(HINSTANCE instance, const HostOptions& options, std::shared_ptr<
             MessageBoxW(nullptr,
                         (L"Cannot load the WAML markup.\n\nreason: " + Utf8ToWide(loaded.error))
                             .c_str(),
-                        L"Gridform sample", MB_ICONERROR);
+                        L"Werfs sample", MB_ICONERROR);
         return 1;
     }
 

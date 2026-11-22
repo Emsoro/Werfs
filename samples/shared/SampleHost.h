@@ -57,7 +57,7 @@ struct HostOptions {
     // Relative path used in loose-file mode, e.g. "samples\\list\\List.waml".
     std::string relativePath;
     // Shown in the title bar next to the version.
-    std::wstring title = L"Gridform sample";
+    std::wstring title = L"Werfs sample";
     // Initial window size in DIPs. Sizing in DIPs keeps the layout the same
     // apparent size on 100% and 200% displays.
     float widthDip = 420.0f;

@@ -1713,7 +1713,7 @@ TEST("border: explicit height is honoured inside a canvas") {
 TEST("basic page: wheel scrolls the page") {
     // Loads the real sample markup so this catches a broken sample, not just a
     // broken ScrollViewer.
-    const std::string path = "D:\\Cplusplus\\Gridform\\samples\\basic\\Basic.waml";
+    const std::string path = "D:\\Cplusplus\\Werfs\\samples\\basic\\Basic.waml";
     std::ifstream in(path, std::ios::binary);
     CHECK(in.good());
     if (!in.good()) return;
@@ -1784,7 +1784,7 @@ TEST("basic page: wheel reaches the scroller from anywhere in the viewport") {
     // Simulates the host's WM_MOUSEWHEEL path: hit-test the point, dispatch to
     // whatever comes back, and require the page to move. This is the exact
     // sequence that failed in the running app.
-    const std::string path = "D:\\Cplusplus\\Gridform\\samples\\basic\\Basic.waml";
+    const std::string path = "D:\\Cplusplus\\Werfs\\samples\\basic\\Basic.waml";
     std::ifstream in(path, std::ios::binary);
     CHECK(in.good());
     if (!in.good()) return;

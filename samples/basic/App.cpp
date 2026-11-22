@@ -27,7 +27,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.resourceId = IDR_WAML_BASIC;
     // Used in debug builds: markup read from disk so editing it needs no rebuild.
     options.relativePath = "samples\\basic\\Basic.waml";
-    options.title = L"Gridform — Basic Controls";
+    options.title = L"Werfs — Basic Controls";
     // Narrower than the list sample: this page is a single column of cards.
     options.widthDip = 640.0f;
     options.heightDip = 760.0f;

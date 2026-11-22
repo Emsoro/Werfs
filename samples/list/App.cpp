@@ -27,7 +27,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.resourceId = IDR_WAML_LIST;
     // Used in debug builds: markup read from disk so editing it needs no rebuild.
     options.relativePath = "samples\\list\\List.waml";
-    options.title = L"Gridform — Collections & Layout";
+    options.title = L"Werfs — Collections & Layout";
     // Wider than the default sample: the page demonstrates panels side by side.
     options.widthDip = 720.0f;
     options.heightDip = 760.0f;

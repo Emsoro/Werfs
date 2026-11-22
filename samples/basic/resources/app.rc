@@ -37,13 +37,13 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName",      "Gridform Project"
-            VALUE "FileDescription",  "Gridform sample: basic controls"
+            VALUE "CompanyName",      "Werfs Project"
+            VALUE "FileDescription",  "Werfs sample: basic controls"
             VALUE "FileVersion",      WUI_VERSION_STR
             VALUE "InternalName",     "waml_basic"
-            VALUE "LegalCopyright",   "MIT License. Copyright (c) 2026 Gridform Project."
+            VALUE "LegalCopyright",   "MIT License. Copyright (c) 2026 Werfs Project."
             VALUE "OriginalFilename", "waml_basic.exe"
-            VALUE "ProductName",      "Gridform Samples"
+            VALUE "ProductName",      "Werfs Samples"
             VALUE "ProductVersion",   WUI_VERSION_STR
             VALUE "Comments",         "TextBlock, Button, TextBox, CheckBox and Border on one ViewModel."
         END
