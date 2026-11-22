@@ -48,7 +48,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 83 用例 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 84 用例 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **15 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** | ✅ | 类型注册表 16 项（含 DataTemplate） |
@@ -63,8 +63,10 @@ build.ps1  CMakeLists.txt
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 3 个示例（gallery / list / basic）共用同一 Win32+D2D 宿主 |
-| **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言，避免「拿 gallery 的期望去测别的页」 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 2 个示例（basic / list）共用同一 Win32+D2D 宿主 |
+| **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
+| **文件选择器**（打开文件 / 选择文件夹 / 保存文件） | ⬜ 规划 | 需 `IFileDialog`（COM），见 §10b.1 |
+| **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
 
 ## 3. 产物
 
@@ -365,7 +367,7 @@ RESOURCE LAYOUT OK
 
 | | Debug | Release |
 |---|---|---|
-| 来源 | `samples/gallery/Gallery.waml` | `WAML_DOC` RCDATA |
+| 来源 | `samples/<name>/<Name>.waml` | `WAML_DOC` RCDATA |
 | 改界面 | 改文件重跑即可 | 需重新构建 |
 | 诊断文件名 | 真实路径 | `res:#101` |
 | 失败回退 | 回退到嵌入资源 | 无回退 |
@@ -495,22 +497,26 @@ S-1-4-151873615-607647326   Allow   DeleteSubDirectoriesAndFiles, Write, Delete,
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ samples/gallery                                  │
-│   Navigation · HomePage · ControlPages/*         │
+│ samples/   每个示例自带 WAML + ViewModel + 资源      │
+│   basic/ list/ binding/ theming/ usercontrol/    │
+│   files/ animation/                              │
 │   ← 只写 WAML + ViewModel，不含渲染代码            │
+│   shared/SampleHost  窗口/D2D/DPI/输入分发         │
 ├─────────────────────────────────────────────────┤
 │ framework                                        │
-│   waml   解析/校验/实例化                         │
-│   mvvm   绑定/命令/集合                           │
-│   core   控件/布局/输入/主题                       │
-│   render D2D / 软件光栅                           │
-│   platform 资源/版本/路径                          │
+│   waml     解析/校验/实例化                        │
+│   mvvm     绑定/命令/集合                          │
+│   core     控件/布局/输入/主题                      │
+│   platform 资源/版本/路径/文件对话框(规划)           │
+│   render   D2D / 软件光栅                          │
 └─────────────────────────────────────────────────┘
 ```
 
-## 9. Gallery 页面模型（参考 WinUI-Gallery）
+**依赖方向恒为向下**：示例只依赖框架，框架不认识任何示例。新增能力（如文件对话框）加在 `platform`，示例通过接口调用。
 
-每个控件页由统一的区块构成，不是自由排版：
+## 9. 示例页面的区块模型
+
+每个示例页由统一的区块构成，不是自由排版：
 
 ```
 PageHeader        标题 + 一段说明（这个控件是什么、何时用）
@@ -518,23 +524,12 @@ ExampleCard ×N    每个示例教**一个**概念：
                     ├ 标题（例如 "TwoWay 绑定"）
                     ├ 可交互的演示区
                     └ 对应的 WAML 代码片段（可折叠）
-相关控件          跳到相似控件的链接
+相关控件          跳到相似控件的链接（页内锚点，非路由）
 ```
 
-这个模型直接决定框架还缺什么：`ExampleCard` 需要**可复用的 WAML 片段**，代码展示需要**等宽字体文本块**，页面切换需要**路由**。
+`basic` 与 `list` 目前是最朴素的形式（卡片直接排下来），`binding` 示例会把「代码片段可折叠」这一栏补上。
 
-## 10. 导航模型
-
-因为 ListBox 无选中、无 Grid，导航用**左侧窄栏 + 按钮列表 + VM 驱动路由**：
-
-```
-GalleryVm
-  ├ Pages: ObservableList<PageEntry>     ← 侧栏数据源
-  ├ CurrentPage: Property<RefPtr>        ← 当前页（决定右侧内容）
-  └ NavigateCommand: RelayCommand(page)  ← 按钮点击切换
-```
-
-页面切换 = 换掉右侧 DataContext 并重新 Instantiate 对应 XAML。**不销毁窗口**。
+**不做路由**：曾经计划一个带侧栏导航的 gallery 应用（左栏列页、右栏切换）。现在每个示例是独立 exe，导航由操作系统完成——双击哪个跑哪个。少一层自研路由，也少一处 bug，代价只是切换示例要开新窗口。
 
 ---
 
@@ -544,21 +539,24 @@ GalleryVm
 
 ### 10a.1 分层原则与顺序
 
-示例按**概念难度递增**排列，顺序是刻意设计的：前四个不需要任何新框架能力，第五个（`usercontrol`）才开始逼出框架的组件层设计。
+示例按**概念难度递增**排列，顺序是刻意设计的：前四个不需要任何新框架能力，`usercontrol` 才开始逼出组件层设计。集大成的 gallery 已不再单独存在——每个示例本身就是它的一个分类页。
 
 ```
 samples/
-  1. basic/        基础：单个组件、单一数据源
-  2. binding/      绑定：四种模式的完整对照
-  3. list/         集合：DataTemplate 与列表
-  4. theming/      主题：Light/Dark 与 token
-  5. usercontrol/  组合：父子组件、两个独立数据源 ← 框架的关键缺口
-  6. gallery/      集大成：按 WinUI-Gallery 的组件分类组织全部控件页
+  1. basic/        基础：单个组件、单一数据源            ✅
+  2. list/         集合：DataTemplate 与布局面板         ✅
+  3. binding/      绑定：四种模式的完整对照              可立即开始
+  4. theming/      主题：Light/Dark 与 token             可立即开始
+  5. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
+  6. files/        系统：打开/保存/选文件夹               需先补 IFileDialog（10b.1）
+  7. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
 ```
 
-**为什么 `usercontrol` 排第五**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前四个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
+**为什么 `usercontrol` 排第五**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前几个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
 
-**依赖方向**：示例之间**不互相引用**。`gallery` 是唯一例外——它以**只读方式**复用其他示例的 WAML 与 ViewModel（见 10a.7），因为它就是「这些示例的目录」。
+后两个（`files`、`animation`）不是「控件演示」，而是**横切能力**的验收：它们要求框架提供全新机制，所以排在所有控件类示例之后，见 §10b。
+
+**依赖方向**：示例之间**不互相引用**。每个示例自带 WAML、ViewModel 和资源 id。
 
 ### 10a.2 `samples/basic/` — 基础组件
 
@@ -663,34 +661,11 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 - 卡片内嵌的 `StatusBadge` 跟随**卡片**的 `Enabled`，而非页面的；
 - 用 `waml_interact.exe` 断言三者的独立性。
 
-### 10a.7 `samples/gallery/` — 总的 Gallery
+### 10a.7 控件覆盖范围（原 gallery 职责）
 
-**目的**：把所有示例组织成一个可浏览的图库，即产品形态。它**不是再写一遍示例**，而是**索引**上面的示例。
+曾经计划单独做一个 `gallery` 示例作为所有控件页的目录。**该计划已取消**：它本质上是把其他示例再抄一遍，维护成本高、教学价值低。取而代之的是——每个示例本身就是它的一个分类页，`build.ps1` 一次构建全部，想看哪个直接运行哪个。
 
-**结构**：
-
-```
-┌──────────────┬──────────────────────────────────┐
-│ 侧栏          │ 内容区                            │
-│              │                                  │
-│ ▸ 基础        │  PageHeader                       │
-│   · TextBlock │  ┌────────────────────────────┐  │
-│   · Button    │  │ ExampleCard                │  │
-│   · TextBox   │  │  标题 / 演示区 / WAML 代码   │  │
-│   · CheckBox  │  └────────────────────────────┘  │
-│   · Border    │  ┌────────────────────────────┐  │
-│ ▸ 组合        │  │ ExampleCard                │  │
-│   · UserControl│ └────────────────────────────┘  │
-│ ▸ 绑定        │                                  │
-│   · 四模式     │                                  │
-│ ▸ 集合        │                                  │
-│   · 列表      │                                  │
-└──────────────┴──────────────────────────────────┘
-```
-
-**如何复用其他示例**：gallery 通过**文件级引用**读取 `samples/basic/*.waml` 等文件（打包时全部编入资源，或 debug 时从磁盘读），**不复制内容**。这样示例只有一份，gallery 永远显示真实代码。
-
-**导航模型**：因 `ListBox` 暂无选中（R3），侧栏先用**按钮列表**；迭代 3.3 完成后换成真正的列表控件。
+因此本节保留下来的是**唯一仍然有用的部分**：控件清单与分级（下面 10a.7.1），用来决定「下一个做哪个控件」。
 
 #### 10a.7.1 组件清单：来源与分级
 
@@ -699,18 +674,18 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 类别 | 数量 | 处理 |
 |---|---|---|
 | 概念/设计页（Fundamentals / Design / Accessibility） | 15 | 不是控件。其中 Binding、Style、Resources、Custom & User Controls 四项分别由 `binding/`、迭代 2、`usercontrol/` 覆盖 |
-| 需要 OS 子系统集成 | 14 | **不做**：`WebView2`、`MediaPlayerElement`、`MapControl`、`Capture Element`、`Sound`、通知中心、Badge、JumpList、`AppWindow`、`AppWindowTitleBar`、`ContentIsland`、`Storage pickers`、`System Backdrops`、`SystemBackdropElement` |
-| 纯控件 | 97 | 已有 7 个 → **90 个待实现** |
+| 需要 OS 子系统集成 | 14 | **不做**：`WebView2`、`MediaPlayerElement`、`MapControl`、`Capture Element`、`Sound`、通知中心、Badge、JumpList、`AppWindow`、`AppWindowTitleBar`、`ContentIsland`、`System Backdrops`、`SystemBackdropElement`。注：**`Storage pickers` 已改判**——文件/文件夹选择不列为控件，而是作为横切能力实现，见 §10b.1 |
+| 纯控件 | 97 | 已完成 15 个 → **82 个待实现**（其中 P0 余 16） |
 
-**不追求一次做完 90 个**。按日常使用频率与实现成本分三档，本轮**只做 P0**：
+**不追求一次做完**。按日常使用频率与实现成本分三档，本轮**只做 P0**：
 
 | 档位 | 数量 | 范围 | 何时做 |
 |---|---|---|---|
-| **P0 必做** | **23** | 日常界面几乎必用、且**不需要新子系统** | 本轮目标 |
+| **P0 必做** | **23**（已完成 7） | 日常界面几乎必用、且**不需要新子系统** | 进行中 |
 | P1 常用增强 | 16 | 共同卡在「浮层/弹出」这一层 | 浮层完成后顺带解锁 |
 | P2 长尾 | 51 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
 
-**P0 — 本轮要做的 23 个**（加已有 9 个 = 32 个控件）：
+**P0 清单**（已完成 7 个标 ✅；原始 23 个 + 已有 9 个 = 32 个控件）：
 
 | 分组 | 控件 | 新增框架能力 |
 |---|---|---|
@@ -768,18 +743,19 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 3 | `binding` | 无 | 可立即开始 |
 | 4 | `theming` | 无（主题已支持） | 可立即开始 |
 | 5 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
-| 6 | `gallery` | 多文档资源 + 路由（迭代 1）、P0 控件（10a.7.1） | 依赖前五项 |
+| 6 | `files` | **`IFileDialogService`**（10b.1） | 需先补框架 |
+| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
 
-**关键判断**：`usercontrol` 是唯一被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。排第五意味着前四个可以先落地，把框架改造集中成一次迭代，而不是一开始就卡在设计决策上。
+**关键判断**：`usercontrol` 是第一个被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。排在第五意味着前四个可以先落地，把框架改造集中成一次迭代，而不是一开始就卡在设计决策上。
 
-**关于 gallery 的组件数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。本次只做 P0 的 23 个（10a.7.1），加上已有 9 个共 32 个控件；P1 的 16 个等浮层子系统完成后顺带解锁；P2 的 51 个按需再议。
+`files` 和 `animation` 属于另一类：它们不是控件演示，而是**横切能力**的验收现场，各自要求框架补一套全新机制（COM 对话框桥接、帧时钟）。这两个的详细设计见 §10b，实施顺序上 `files` 在 `animation` 之前——前者纯增量，后者要改绘制与失效流程。
+
+**关于控件覆盖数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。已完成 15 个；P0 余 16 个，P1 的 16 个等浮层子系统完成后顺带解锁，P2 的 51 个按需再议。
 
 ### 10a.9 构建与打包
 
 每个示例是**独立可执行文件**（便于单独调试与截图）：
 
-| 目标 | 产物 | 说明 |
-|---|---|---|
 | 目标 | 产物 | 说明 |
 |---|---|---|
 | *（无参数）* | 全部示例 | **默认**，等价于 `samples` |
@@ -788,7 +764,242 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | `all` | 全部 | 示例 + 全部工具与测试 |
 
 `build.ps1` 用 `$SampleRegistry` 表驱动：一个示例 = 表里一行，分发逻辑共用，不再为每个示例写目标函数。每个示例复用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发），避免重复。
-`build.ps1` 增加对应目标函数；`all` 构建全部。每个示例复用 `samples/shared/` 下的宿主代码（Win32 窗口 + D2D 初始化），避免六份重复——**这也是本次重构要做的第一件事**：把 `App.cpp` 里与「具体页面」无关的宿主逻辑抽出来。
+
+---
+
+## 10b. 系统集成与动效（待实现能力）
+
+这两项都**不是控件**，而是横切能力：文件选择器把 Win32 对话框桥接进 MVVM，动画给所有控件加一层随时间变化的属性层。共同点是**框架目前完全没有对应机制**，所以要先补基础设施，再做示例。
+
+### 10b.1 文件与文件夹选择
+
+#### 现状与缺口
+
+示例目前只能演示内存里的数据。一旦要「打开一个文件」「另存为」，就撞上两个空缺：
+
+1. **没有系统对话框的封装**。现代做法是 COM 的 `IFileOpenDialog` / `IFileSaveDialog`（Vista 起），能用它同时覆盖「选文件」「选文件夹」（`FOS_PICKFOLDERS`）「保存」。旧的 `GetOpenFileName` 是 ANSI 时代遗留，不支持文件夹选择，无现代导航栏，**不采用**。
+2. **MVVM 里没有「请求宿主做某事」的通道**。ViewModel 不该直接 `new` 一个 HWND 对话框——那会让 ViewModel 依赖 UI 线程与窗口句柄，也就无法在无窗口的 `waml_interact` 里跑。
+
+#### 设计
+
+用**服务接口 + 命令**，ViewModel 只表达意图：
+
+```cpp
+// framework/src/platform/FileDialog.h
+namespace wui {
+
+struct FileFilter {
+    std::wstring label;        // L"WAML 文件"
+    std::wstring pattern;      // L"*.waml"
+};
+
+struct FileDialogRequest {
+    std::wstring title;
+    std::wstring defaultExtension;    // 不含点
+    std::vector<FileFilter> filters;
+    std::wstring initialPath;         // 可空
+    bool pickFolders = false;         // true = 选目录
+};
+
+struct FileDialogResult {
+    bool accepted = false;
+    std::vector<std::wstring> paths;  // 多选时 >1
+};
+
+// 宿主实现；framework 只声明，不实现 Win32 部分。
+class IFileDialogService {
+public:
+    virtual ~IFileDialogService() = default;
+    virtual FileDialogResult ShowOpen(const FileDialogRequest&) = 0;
+    virtual FileDialogResult ShowSave(const FileDialogRequest&) = 0;
+};
+
+// 当前宿主注册的服务；未注册时所有调用返回 accepted=false。
+void SetFileDialogService(IFileDialogService* service);
+IFileDialogService* FileDialogService();
+
+} // namespace wui
+```
+
+ViewModel 侧只依赖接口，测试里注入一个返回固定结果的假实现即可。
+
+#### WAML 用法
+
+对话框不能凭空弹，必须由用户动作触发，所以挂成**命令**：
+
+```xml
+<StackPanel Orientation="Horizontal" Spacing="8">
+  <Button Content="打开…"  Command="{Binding OpenCommand}"/>
+  <Button Content="另存为…" Command="{Binding SaveCommand}"/>
+  <Button Content="选文件夹…" Command="{Binding PickFolderCommand}"/>
+</StackPanel>
+
+<TextBlock Text="{Binding SelectedPath, StringFormat='已选择: {0}'}"
+           TextWrapping="Wrap" Foreground="TextSecondary"/>
+```
+
+#### ViewModel 用法
+
+```cpp
+class EditorVm final : public sample::ObservableObject {
+public:
+    EditorVm() {
+        open_.Set(std::make_shared<wui::RelayCommand>([this] { OnOpen(); }));
+        Make("OpenCommand", open_);
+        Make("SelectedPath", SelectedPath);
+    }
+
+    void OnOpen() {
+        auto* dialogs = wui::FileDialogService();
+        if (!dialogs) return;                       // 无宿主：静默，不崩溃
+
+        wui::FileDialogRequest req;
+        req.title = L"打开 WAML 文件";
+        req.defaultExtension = L"waml";
+        req.filters = {{L"WAML 文件", L"*.waml"}, {L"所有文件", L"*.*"}};
+
+        const auto result = dialogs->ShowOpen(req);
+        if (!result.accepted || result.paths.empty()) return;
+        SelectedPath.Set(result.paths.front());
+    }
+
+    wui::ObservableProperty<std::wstring> SelectedPath{"SelectedPath", L"(未选择)"};
+private:
+    wui::ObservableProperty<wui::RefPtr> open_{"OpenCommand"};
+};
+```
+
+#### 任务拆分
+
+| 编号 | 任务 | 验收 |
+|---|---|---|
+| 10b.1.1 | `IFileDialogService` 接口 + 全局注册点 | 无宿主时返回 `accepted=false`，不崩 |
+| 10b.1.2 | Win32 实现（`IFileOpenDialog` / `IFileSaveDialog` + `FOS_PICKFOLDERS` / `FOS_ALLOWMULTISELECT`） | 三种模式都能弹出并返回正确路径 |
+| 10b.1.3 | COM 生命周期（`CoCreateInstance` + `CoTaskMemFree`） | 连续弹 100 次无泄漏、无崩溃 |
+| 10b.1.4 | 宿主接入 `SampleHost` | 示例窗口里点击能弹出 |
+| 10b.1.5 | 假实现供无窗口测试 | `waml_interact` 能断言「命令被调用」 |
+| 10b.1.6 | `samples/files/` 示例 | 见下 |
+
+#### 示例：`samples/files/`
+
+| 区块 | 内容 |
+|---|---|
+| 1 打开文件 | 选文件 → 路径显示在界面 |
+| 2 另存为 | 预设文件名 + 扩展名 + 过滤器 |
+| 3 选文件夹 | `FOS_PICKFOLDERS`，只返回目录 |
+| 4 只读演示 | 选中的文件读前 20 行显示（顺带验证平台层文件读取） |
+
+**不做的部分**：不做最近文件、不做拖放（`WM_DROPFILES` 属另一能力）、不做路径记忆持久化。
+
+#### 风险
+
+| 风险 | 说明 | 应对 |
+|---|---|---|
+| R13 对话框阻塞 UI 线程 | 模态对话框期间不重绘 | 可接受（与系统行为一致）；不引入异步 |
+| R14 COM 初始化顺序 | 宿主未 `CoInitialize` 时弹框失败 | `SampleHost` 已有 `ole32` 初始化，做成显式前置断言 |
+| R15 无窗口环境 | 测试与 CI 无桌面 | 服务接口可注入假实现，测试永远不碰真对话框 |
+
+### 10b.2 动画
+
+#### 现状与缺口
+
+所有属性变化都是**瞬时**的：`ScrollTo` 直接改 `offset_`，`SetExpanded` 直接改 `expanded_`。UI 能工作，但没有任何过渡，`Expander` 展开是硬跳变，悬停也没有渐变。
+
+缺三样东西：
+
+1. **帧时钟**：没有「每 16 ms 推进一次」的驱动。目前只在有输入时 `InvalidateRect`。
+2. **可插值的属性**：属性槽是 `Value` 联合体，没有「从 A 到 B 的中间态」概念。
+3. **动画对象与 WAML 语法**：用什么声明一段动画。
+
+#### 设计（分两期，先做能立住的）
+
+**一期：帧时钟 + 隐式过渡（`Transitions`）**
+
+不做关键帧，只做「属性变化时自动补间」。这是 90% 场景，也避免了 `Storyboard`/`Timeline` 的重型语法。
+
+```cpp
+// framework/src/core/Animation.h
+namespace wui {
+
+enum class Easing { Linear, EaseOut, EaseInOut };
+
+// 单个属性的补间状态。由 Widget 持有，按槽位索引。
+struct Tween {
+    int slot = -1;
+    float from = 0, to = 0;
+    float elapsed = 0, duration = 0;
+    Easing easing = Easing::EaseOut;
+    bool active = false;
+};
+
+// 全局帧时钟：宿主在消息循环里推进，返回 true 表示仍需重绘。
+bool AdvanceAnimations(float deltaSeconds);
+bool HasActiveAnimations();
+void SetAnimationEnabled(bool);   // 测试与快照必须关掉
+
+}
+```
+
+驱动方式：宿主在 `WM_TIMER` 或空闲时以固定步长推进，`AdvanceAnimations` 返回 true 时 `InvalidateRect`。**快照工具必须显式关闭动画**，否则确定性哈希会随帧漂移——这条要写进 `Snapshot.cpp`。
+
+WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
+
+```xml
+<Border Background="CardBackground" CornerRadius="8"
+        Transition.Duration="0.18" Transition.Easing="EaseOut">
+```
+
+可动画的属性白名单（一期只做数值型）：`Opacity`、`CornerRadius`、`Width`、`Height`、`Margin`/`Padding` 的四个分量、`ScrollViewer` 的偏移、`Expander` 的展开高度。
+
+**二期：关键帧（`Storyboard`）**
+
+只有一期不够用时才做——例如「点按钮让卡片左右抖动」。届时引入：
+
+```xml
+<Storyboard x:Name="Shake">
+  <DoubleAnimation Target="Card" Property="Canvas.Left"
+                   From="0" To="12" Duration="0.1" AutoReverse="True" RepeatCount="3"/>
+</Storyboard>
+```
+
+二期依赖 `x:Name` 查找（`RelativePanel` 也需要它，见 §10a.7.1），所以两者应一起做。
+
+#### 任务拆分
+
+| 编号 | 任务 | 验收 |
+|---|---|---|
+| 10b.2.1 | 帧时钟 + `AdvanceAnimations` | 测试里手动推进时间，断言中间值单调 |
+| 10b.2.2 | 数值属性补间（`Opacity` 先行） | 0→1 过渡时 `Opacity` 落在 (0,1) |
+| 10b.2.3 | `Transition.*` 属性注册 + 白名单 | 未列入的属性写 `Transition.Duration` 报诊断 |
+| 10b.2.4 | `Expander` 接入（高度补间） | 折叠→展开不再硬跳 |
+| 10b.2.5 | `ScrollViewer` 滚轮平滑滚动 | 一格滚轮产生约 150 ms 缓动 |
+| 10b.2.6 | 快照工具强制关闭动画 | 双主题哈希仍确定 |
+| 10b.2.7 | `samples/animation/` 示例 | 见下 |
+
+#### 示例：`samples/animation/`
+
+| 区块 | 内容 |
+|---|---|
+| 1 隐式过渡 | 点击切换 `Opacity` / `CornerRadius`，观察补间 |
+| 2 缓动函数对比 | 三种 `Easing` 并排，同时启动 |
+| 3 展开动画 | `Expander` 平滑展开 |
+| 4 滚动缓动 | 长页面，滚轮有缓冲感 |
+| 5 关闭动画 | 一个开关切 `SetAnimationEnabled(false)`，对比硬跳变 |
+
+#### 风险
+
+| 风险 | 说明 | 应对 |
+|---|---|---|
+| R16 确定性快照被破坏 | 动画让同一份 WAML 在不同帧渲染不同 | 快照/测试强制 `SetAnimationEnabled(false)`，并加门禁 |
+| R17 帧驱动与空闲 | 无输入时也必须重绘，否则动画不动 | 有活动动画时持续 `InvalidateRect`，结束后停止（不空转） |
+| R18 属性白名单蔓延 | 什么都能动会让布局每帧重算 | 布局类属性（`Width`/`Height`）标为 `AffectsMeasure`，动画期间限制只允许少量控件使用 |
+| R19 与滚动修复的交互 | 滚动偏移现在在绘制期应用（§7.15），动画改的是同一个量 | 动画只改 `offset_` 的目标值，绘制期平移逻辑不变 |
+
+### 10b.3 实施顺序建议
+
+先做文件选择器，再做动画。理由：文件选择器是**纯增量**（新增文件 + 一个接口 + 一个示例），不触碰任何现有渲染路径；动画要改 `Widget` 的绘制与失效流程，风险高一个量级，应等滚动那批修复稳定之后再动。
+
+两者都不阻塞 `binding` / `theming` 示例——那两个仍不依赖任何新能力，可以并行先做。
 
 ---
 
@@ -810,36 +1021,31 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 **为什么先做 0.1–0.3**：不做的话，后面每加一个示例就多一份复制粘贴，违反「框架不认识示例」的原则，也会让 §R6（代码漂移）提前发生。
 
-## 12. 迭代 1：可导航的 Gallery 骨架（v0.6）
+## 12. 迭代 1：~~可导航的 Gallery 骨架~~ → **已取消**
 
-**目标**：能点开不同控件页，每页有标题和示例卡片。内容先做 3 个控件。
+原计划做一个带侧栏导航的单体应用：多页资源打包、VM 驱动路由、文件级引用其他示例的 WAML。
 
-| 任务 | 说明 | 验收 |
-|---|---|---|
-| 1.1 多页资源打包 | `app.rc` 支持多份 WAML，按 id 枚举 | `EnumerateWamlResources` 返回 N>1 |
-| 1.2 页面路由 | VM 持有 `CurrentPage`，切换时重建树 | 点击侧栏 → 右侧内容变化 |
-| 1.3 ExampleCard 结构 | 统一卡片 WAML 片段（标题/演示区/代码区） | 3 页复用它 |
-| 1.4 前 3 个控件页 | Button / TextBox / CheckBox | 每页 ≥3 个示例 |
-| 1.5 侧栏导航 | 按钮列表 + 当前页高亮 | 高亮跟随路由 |
-| 1.6 **文件级引用** | gallery 读取 `samples/*/` 的 WAML，不复制内容（10a.7.1） | 改示例文件，gallery 同步变化 |
+**取消理由**：这套设计的目的是「把六个示例组织成目录」，但六个示例本身已经是独立可执行文件，`build.ps1` 一条命令全部构建。为了在应用内部再模拟一次导航，需要引入多页资源枚举、路由、跨示例文件级引用三套机制——**每套都只为这一个应用服务**，而换来的是「不用关窗口就能切页」。
 
-**风险**：页面切换时的绑定泄漏（旧树未 detach）→ 切换前显式 `DetachBindings()`。
+更关键的是它和工程质量冲突：文件级引用要求 gallery 在构建期读取 `samples/*/` 的源文件，这会让示例的构建产物依赖彼此的源码树，一处 WAML 语法错误会同时打挂多个目标。
 
-**同期交付示例**：`binding/`、`list/`、`theming/`（10a.3–10a.5），它们不依赖路由，且正好提供 gallery 的内容。
+**保留的部分**：其中「多文档资源打包」在单示例需要分页时仍有价值（例如 `theming` 示例要演示多种主题）。真到那时再单独评估，不作为路线节点。
+
+**同期交付示例**：`binding/`、`theming/`（见 10a.3、10a.5），均不依赖任何新能力。
 
 ## 13. 迭代 2：布局与样式补齐（v0.7）
 
-| 任务 | 说明 | 理由 |
+| 任务 | 说明 | 状态 |
 |---|---|---|
-| 2.1 `Grid` 控件 | 行列定义 + 跨行列 | 卡片「左演示/右代码」必须 |
-| 2.2 `Style` / `Setter` | 具名样式，可 `BasedOn` | 否则每个控件重复写 10 个属性 |
-| 2.3 `ResourceDictionary` | WAML 内定义颜色/尺寸常量 | 主题 token 不够表达设计系统 |
-| 2.4 等宽字体 | FontFamily 属性 | 代码片段必须等宽 |
-| 2.5 `StackPanel` 的 `Justify` | Start/Center/End/SpaceBetween | 页头标题与版本号同行 |
+| 2.1 `Grid` 控件 | 行列定义 + 跨行列 | **✅ 已完成** |
+| 2.2 `Style` / `Setter` | 具名样式，可 `BasedOn` | 待做 |
+| 2.3 `ResourceDictionary` | WAML 内定义颜色/尺寸常量 | 待做 |
+| 2.4 等宽字体 | FontFamily 属性 | 待做 |
+| 2.5 `StackPanel` 的 `Justify` | Start/Center/End/SpaceBetween | 待做 |
 
 **风险**：`Style` 引入后，属性优先级（本地值 > 样式 > 默认值）需明确并测试。
 
-**同期交付示例**：`samples/basic/`、`samples/binding/`、`samples/list/`、`samples/theming/`（见 10a.2–10a.5，均不依赖本迭代的新能力，可与迭代 2 并行）。
+**同期交付示例**：`samples/binding/`、`samples/theming/`（见 10a.3、10a.5，均不依赖本迭代的新能力，可与迭代 2 并行）。
 
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
@@ -873,6 +1079,38 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 3.10 | 新增 `Expander` | 折叠展开 + 高度动画 |
 
 **每批次独立可交付**，不必等全部完成。
+
+## 15b. 迭代 3b：系统集成与动效（v0.8+）
+
+两项横切能力，详细设计见 §10b。**分两批做，不并行**：`files` 是纯增量，`animation` 要动绘制流程。
+
+### 3b.A 文件选择器（先做）
+
+| 任务 | 说明 | 验收 |
+|---|---|---|
+| 3b.A.1 | `IFileDialogService` 接口 + 注册点 | 无宿主时返回未接受，不崩溃 |
+| 3b.A.2 | Win32 实现（打开 / 保存 / 选文件夹） | 三种模式均可用，路径正确 |
+| 3b.A.3 | COM 生命周期与资源释放 | 连续 100 次无泄漏 |
+| 3b.A.4 | 宿主接入 + 假实现供测试 | `waml_interact` 可断言命令被调用 |
+| 3b.A.5 | `samples/files/` | 四个区块全部可交互 |
+
+**为什么排在这里**：它不阻塞任何现有工作，且示例能立刻用上——`list` 示例的「导入列表」、未来 `theming` 的「载入主题文件」都依赖它。
+
+### 3b.B 动画（后做）
+
+| 任务 | 说明 | 验收 |
+|---|---|---|
+| 3b.B.1 | 帧时钟 + `AdvanceAnimations` | 手动推进时间可断言中间值 |
+| 3b.B.2 | 数值属性补间（`Opacity` 先行） | 过渡期间值落在两端之间 |
+| 3b.B.3 | `Transition.*` 属性 + 白名单 | 白名单外属性报诊断 |
+| 3b.B.4 | `Expander` 高度补间 | 不再硬跳变 |
+| 3b.B.5 | `ScrollViewer` 平滑滚动 | 滚轮有约 150 ms 缓动 |
+| 3b.B.6 | **快照强制关闭动画** | 双主题哈希仍确定（门禁） |
+| 3b.B.7 | `samples/animation/` | 五个区块全部可交互 |
+
+**关键约束**：动画一旦引入，**确定性快照**就必须显式关闭它，否则哈希随帧漂移。这条要写进 `Snapshot.cpp` 并有测试守住——§7.14/§7.15 已经证明「看起来能跑但显示不对」的缺陷代价很高。
+
+**关键帧（`Storyboard`）留到二期**：它依赖 `x:Name` 查找，与 `RelativePanel` 是同一块基础设施，应一起做。
 
 ## 16. 迭代 4：示例质量（v0.9）
 
@@ -927,6 +1165,13 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | R10 | IME 未实现 | 自绘 TextBox 无法输入中文 | 见 §20；需做垂直切片决策 |
 | R11 | `DataContext` 不可绑定 | 无法复用组件，示例只能复制粘贴 WAML | 迭代 2b（见 10a.6），底层已就绪只缺标记层入口 |
 | R12 | 示例之间复制宿主代码 | 六份 Win32+D2D 初始化重复，改动发散 | 迭代 0 先抽 `samples/shared/` |
+| R13 | 文件对话框阻塞 UI 线程 | 模态期间不重绘 | 可接受（与系统行为一致）；不引入异步 |
+| R14 | COM 初始化顺序 | 宿主未 `CoInitialize` 时弹框失败 | `SampleHost` 已初始化 `ole32`，做成显式前置断言 |
+| R15 | 无窗口环境无法测对话框 | CI 与 `waml_interact` 碰不到真对话框 | 服务接口可注入假实现，测试永不弹真框 |
+| R16 | **动画破坏确定性快照** | 同一份 WAML 不同帧渲染不同，哈希漂移 | 快照与测试强制 `SetAnimationEnabled(false)`，加门禁测试 |
+| R17 | 帧驱动与空闲空转 | 动画结束后仍在重绘，CPU 不降 | 仅在 `HasActiveAnimations()` 为真时续帧 |
+| R18 | 动画属性白名单蔓延 | 布局类属性每帧重算，掉帧 | 一期只开放数值型；`AffectsMeasure` 属性限用 |
+| R19 | 动画与滚动偏移交互 | 两者都改 `offset_`，可能互相覆盖 | 动画只改目标值，绘制期平移逻辑（§7.15）不动 |
 
 ## 20. 未覆盖 / 明确不做
 
@@ -945,24 +1190,25 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 ## 21. 验收标准（v1.0）
 
-1. **启动即 gallery**：双击 exe，左栏列出所有示例，点击进入。
-2. **示例矩阵齐备**（10a）：`basic`、`usercontrol`、`binding`、`list`、`theming`、`gallery` 六个可独立运行的示例。
-3. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
-4. **控件页覆盖 P0 清单**：10a.7.1 的 23 个新控件 + 已有 9 个 = 32 个控件都有示例页，每页 ≥3 个可交互示例。
-5. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
-6. **主题可切换**：Light/Dark 即时生效，无需重启。
-7. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。
-8. **单文件分发**：无 DLL、无外部资源目录。
+1. **示例矩阵齐备**（10a）：`basic`、`list`、`binding`、`theming`、`usercontrol`、`files`、`animation` 七个可独立运行的示例，`build.ps1` 无参数即全部构建。
+2. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
+3. **系统集成可用**：`files` 示例里打开/保存/选文件夹三种对话框都能返回真实路径，且无窗口环境下不崩溃（10b.1）。
+4. **动效可用且不破坏确定性**：`animation` 示例的过渡肉眼连贯，同时双主题快照哈希仍确定（10b.2 + R16）。
+5. **控件页覆盖 P0 清单**：10b 之前的 15 个 + P0 余 16 个 = 31 个控件都有示例，每页 ≥3 个可交互示例。
+6. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
+7. **主题可切换**：Light/Dark 即时生效，无需重启。
+8. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。
+9. **单文件分发**：无 DLL、无外部资源目录。
 
 ## 22. 下一步（按投入产出排序）
 
-1. **抽出共享宿主**（迭代 0.1–0.3）：六个示例的前置条件。不做就是六份复制粘贴，改动发散，还会让 R6（代码漂移）提前发生。
-2. **`samples/basic/`**（迭代 0.4）：不依赖任何新框架能力，能立刻验证「多示例」这条路走得通。
-3. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层 `SetDataContext(dc, own)` 已支持本地值优先，只缺标记层入口，改动面小、信息量大。
-4. **多页资源 + 路由 + 文件级引用**（迭代 1.1–1.2、1.6）：gallery 骨架，做完才有「图库」雏形。
-5. **Grid**（迭代 2.1）：卡片布局硬需求，没有它每张卡都是竖排。
-6. **ListBox 选中**（迭代 3.3）：把侧栏从按钮列表换成真正的列表控件。
-7. **TextBox 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
+1. **`binding` / `theming` 示例**（迭代 2 同期）：不依赖任何新框架能力，可立即开工，也是验证「多示例」架构的下一步。
+2. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层 `SetDataContext(dc, own)` 已支持本地值优先，只缺标记层入口，改动面小、信息量大。
+3. **文件选择器**（迭代 3b.A、§10b.1）：纯增量，不碰渲染路径，却能立刻给所有示例加上真实文件 I/O。
+4. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：示例页的 WAML 目前属性重复较多，样式系统能显著缩短。
+5. **动画一期**（迭代 3b.B、§10b.2）：要改绘制与失效流程，风险高一个量级，应在滚动那批修复稳定之后再动；**动工前先写好 R16 的门禁测试**。
+6. **`ListBox` 选中**（迭代 3.3）：把侧栏从按钮列表换成真正的列表控件。
+7. **`TextBox` 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
 8. **绑定失败可观测到所有宿主**：Debug 下断言 `BindingErrorCount()` 为 0，让「拼错属性名」在开发期立即暴露。
 9. **`wamlc` 仍不做**：解析 8 KB 仅 175 µs，启动期成本可忽略。
 
@@ -972,21 +1218,29 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 # 附录
 
-## A. 测试清单（65 用例）
+## A. 测试清单（84 用例）
+
+`waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
 | 分组 | 数量 | 覆盖 |
 |---|---|---|
 | parse | 8 | 元素/属性/嵌套/注释/处理指令/实体/文本内容/属性元素/`x:Name` |
-| diag | 10 | 15 类诊断码矩阵 + 建议质量 + 码点列号 + 转义 + 索引器拒绝 |
+| diag | 11 | 15 类诊断码矩阵 + 建议质量 + 码点列号 + 转义 + 索引器拒绝 |
 | value | 2 | 颜色（token/hex/非法）、Thickness（1/2/4 值） |
 | instantiate | 3 | 树结构、默认值、绑定附加、DataContext 继承 |
-| binding | 17 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、LostFocus、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
+| binding | 18 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、LostFocus、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
 | list | 3 | 模板实例化、数据上下文隔离（回归）、订阅泄漏 |
-| layout | 4 | 垂直/水平排列、Border padding、失效冒泡 |
+| layout | 4 | 垂直/水平排列、Border padding、失效冒泡、显式尺寸 |
+| grid | 5 | 星号分配、固定+星号混合、跨列、间距、auto 列自适应 |
+| wrappanel / viewbox / expander | 3 | 换行、等比缩放、两态高度 |
+| canvas | 3 | 绝对定位、子项尺寸、在 StackPanel 内的高度传递 |
+| variablesizedwrapgrid | 2 | 跨列、跨行不重叠 |
+| border | 1 | Canvas 内的显式高度 |
+| scrollviewer | 5 | 滚动范围与钳制、短内容、空白处滚轮、视口外不可点、四角探测 |
 | input | 6 | 点击/键盘/禁用、TextBox 输入、CheckBox 切换、命中测试 |
-| scroll | 2 | 内容超出可滚动 + 两端钳制、短内容不滚动 |
 | render | 3 | 记录式确定性、光栅确定性、主题切换 |
 | perf | 5 | 5 项预算守卫 |
+| *（无前缀）* | 2 | 页面级集成：basic 页滚动、滚动后按钮仍可点 |
 
 ## B. 复现方式
 
@@ -1018,7 +1272,7 @@ CMake/Ninja 在某些受限沙箱下**无法使用**：两者都通过管道捕�
 | `tests` | 3 | ~1400 |
 | `tools` | 5 | ~1300 |
 | `bench` | 1 | ~257 |
-| `samples/gallery` | 3 + 资源 | ~700 |
-| **合计** | **~32** | **~8.7k** |
+| `samples/basic` + `samples/list` | 各 4 + 资源 | ~800 |
+| `samples/shared` | 2 | ~480 |
 
 对照 H1 的「≤ 1500 行覆盖 WAML 子集」：`Parser.cpp` 实测 1327 行（含诊断文案、位置映射、标记扩展解析、验证器、实例化器），优于预期。
