@@ -200,6 +200,10 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsMeasure | AffectsRender, BindingMode::TwoWay);
         // The + button invokes this; the ViewModel decides what a new tab is.
         t->Prop("AddCommand", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        // Set to the index the user asked to close; -1 when there is no pending
+        // request. OneWay because the control publishes, the ViewModel decides.
+        t->Prop("CloseRequested", VType::Number, Value::Number(-1),
+                AffectsRender, BindingMode::OneWay);
         t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);

@@ -1636,6 +1636,7 @@ TabView::TabView() {
     slotAddCommand_ = SlotOf("AddCommand");
     slotSelectedIndex_ = SlotOf("SelectedIndex");
     slotSelectedItem_ = SlotOf("SelectedItem");
+    slotCloseRequested_ = SlotOf("CloseRequested");
 }
 
 TabView::~TabView() { UnsubscribeSource(); }
@@ -1887,7 +1888,14 @@ Widget* TabView::HitTest(const Point& p) {
 }
 
 void TabView::RequestClose(size_t index) {
-    if (index < ItemCount()) closeRequested_ = static_cast<int>(index);
+    if (index >= ItemCount()) return;
+    closeRequested_ = static_cast<int>(index);
+    // Publish it. The ViewModel decides whether to remove the tab, because only
+    // it knows about unsaved changes.
+    if (slotCloseRequested_ >= 0) {
+        SetSlotValue(slotCloseRequested_, Value::Number(closeRequested_), true);
+    }
+    Invalidate(AffectsRender);
 }
 
 void TabView::OnPointerUp(const Point& local) {

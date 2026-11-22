@@ -421,8 +421,11 @@ private:
     std::wstring TitleFor(size_t index);
     float TabWidthFor(size_t index);
 
-    // Set when a close was requested; read by the host after the input pass.
+    // Which tab the user asked to close. Published as a bindable property so the
+    // ViewModel hears it: a control cannot know whether there is unsaved work,
+    // and a close that happened without asking is data loss.
     int closeRequested_ = -1;
+    int slotCloseRequested_ = -1;
 
     // Measured widths, recomputed on layout so hit testing matches painting.
     std::vector<float> tabWidths_;
