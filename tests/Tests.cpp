@@ -1749,7 +1749,7 @@ TEST("scrollviewer: wheel over blank space still scrolls") {
     auto doc = CompileWaml(
         "<Page><ScrollViewer>"
         "<StackPanel Orientation=\"Vertical\" Height=\"600\">"
-        "<Border Height=\"100\" Width=\"50\"/>"
+        "<Border Height=\"100\" Width=\"50\" Background=\"Accent\"/>"
         "</StackPanel></ScrollViewer></Page>",
         ParseOptions{"svblank.waml"}, bag);
     CHECK(doc != nullptr);
@@ -1819,6 +1819,56 @@ TEST("basic page: wheel reaches the scroller from anywhere in the viewport") {
                 moved, sizeof(probes) / sizeof(probes[0]));
     // Every probe must scroll, not just the ones that happen to land on a control.
     CHECK(moved == static_cast<int>(sizeof(probes) / sizeof(probes[0])));
+}
+
+TEST("scrollviewer: scrolling actually moves what is painted") {
+    // Regression: offset_ changed and the thumb moved, but the content stayed
+    // still because the paint path ignored the scroll offset entirely. Recording
+    // the draw calls is the only way to catch that -- checking ScrollOffset()
+    // passed while the screen did not move.
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><ScrollViewer>"
+        "<StackPanel Orientation=\"Vertical\" Height=\"600\">"
+        "<Border Height=\"100\" Width=\"50\" Background=\"Accent\"/>"
+        "</StackPanel></ScrollViewer></Page>",
+        ParseOptions{"svpaint.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+
+    auto* scroller = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
+    CHECK(scroller != nullptr);
+    if (!scroller) return;
+
+    // Paint at two scroll positions and compare the pixels. Checking offset_
+    // alone passed even when nothing moved on screen, so this has to look at the
+    // rendered output.
+    auto hashAt = [&](float scroll) {
+        scroller->ScrollTo(scroll);
+        SoftwareRasterizer r(400, 200);
+        RasterPaintContext c(r);
+        root->PaintTree(c, LightPalette());
+        return r.Hash();
+    };
+
+
+    const uint64_t atTop = hashAt(0.0f);
+
+    const uint64_t atHundred = hashAt(100.0f);
+
+
+    CHECK(atTop != atHundred);
+
+    // And the offset must be reflected in the geometry the child sees.
+    scroller->ScrollTo(0.0f);
+    const float borderTopAtTop = root->Children()[0]->Children()[0]->Children()[0]->Bounds().y;
+    scroller->ScrollTo(100.0f);
+    const float borderTopScrolled = root->Children()[0]->Children()[0]->Children()[0]->Bounds().y;
+
+    // Bounds are layout geometry and must NOT move; the shift happens at paint.
+    CHECK(borderTopAtTop == borderTopScrolled);
 }
 
 int main(int argc, char** argv) {

@@ -94,6 +94,10 @@ public:
     // --- paint --------------------------------------------------------------
     virtual void OnPaint(PaintCtx& ctx, const ThemePalette& palette) = 0;
     void PaintTree(PaintCtx& ctx, const ThemePalette& palette);
+    // Same, with an extra translation applied to this subtree. Used to scroll
+    // content: PaintCtx has no transform stack, so the only way to move pixels
+    // is to move the rects while painting.
+    void PaintTreeAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift);
 
     // --- input --------------------------------------------------------------
     virtual Widget* HitTest(const Point& p); // p in this widget's local space
@@ -145,6 +149,12 @@ protected:
     // Applies Width/Height/MinWidth/MinHeight/MaxWidth/MaxHeight from slots to
     // desired_. Called at the end of each control's Measure().
     void ApplySizeConstraints();
+
+    // Paints the children. Overridden by ScrollViewer to clip to its viewport and
+    // shift the content by the scroll amount; every other widget forwards
+    // unchanged. Called AFTER OnPaint, never from inside it -- a container that
+    // painted its children itself would paint them twice.
+    virtual void PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift);
 
     const TypeInfo* type_ = nullptr;
     std::vector<Value> values_;

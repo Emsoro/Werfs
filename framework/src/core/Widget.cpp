@@ -244,9 +244,36 @@ void Widget::Arrange(const Rect& finalRect) {
 }
 
 void Widget::PaintTree(PaintCtx& ctx, const ThemePalette& palette) {
+    PaintTreeAt(ctx, palette, Point{0, 0});
+}
+
+void Widget::PaintTreeAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
     if (bounds_.w <= 0 || bounds_.h <= 0) return;
+
+    // PaintCtx has no transform stack and every control draws from its own
+    // bounds_, so moving the rect for the duration of the paint is the only way
+    // to move pixels. The rect is restored immediately afterwards: bounds_ is
+    // layout geometry, and leaving a scroll shift in it would corrupt Arrange.
+    const Point savedPosition{bounds_.x, bounds_.y};
+    bounds_.x += shift.x;
+    bounds_.y += shift.y;
+
     OnPaint(ctx, palette);
-    for (auto& c : children_) c->PaintTree(ctx, palette);
+    // The shift is passed DOWN, not just applied to this rect. bounds_ holds
+    // absolute coordinates, so translating only the direct child would leave its
+    // grandchildren exactly where they were -- which is why scrolling moved the
+    // panel but nothing inside it.
+    PaintChildrenAt(ctx, palette, shift);
+
+    bounds_.x = savedPosition.x;
+    bounds_.y = savedPosition.y;
+}
+
+void Widget::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
+    for (auto& c : children_) {
+        c->PaintTreeAt(ctx, palette,
+                       Point{shift.x + c->paintOffset_.x, shift.y + c->paintOffset_.y});
+    }
 }
 
 Widget* Widget::HitTest(const Point& p) {

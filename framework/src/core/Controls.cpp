@@ -236,27 +236,16 @@ void ScrollViewer::Arrange(const Rect& finalRect) {
 
 void ScrollViewer::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
+    // Only the scrollbar is drawn here. The content is drawn by PaintChildrenAt,
+    // which PaintTree calls right after this returns -- painting children from
+    // inside OnPaint would paint them twice, once shifted and once not.
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Rect viewport{bounds_.x + margin.l, bounds_.y + margin.t,
                         std::max(0.0f, bounds_.w - margin.H()),
                         std::max(0.0f, bounds_.h - margin.V())};
     if (viewport.w <= 0 || viewport.h <= 0) return;
-
-    ctx.PushClip(viewport);
-    // Children are arranged in unscrolled space; the paint offset is what moves
-    // them up. HitTest undoes the same offset.
-    for (auto& c : children_) {
-        const Point saved = c->PaintOffset();
-        c->SetPaintOffset(Point{0, -offset_});
-        c->PaintTree(ctx, palette);
-        c->SetPaintOffset(saved);
-    }
-    ctx.PopClip();
-
-    // Scrollbar: a thin track on the right with a proportional thumb. Only when
-    // there is something to scroll -- an always-visible bar on a short page
-    // reads as a rendering bug.
     if (maxScroll_ <= 0) return;
+
     constexpr float kBarW = 6.0f;
     constexpr float kBarInset = 2.0f;
     const float trackX = viewport.x + viewport.w - kBarW - kBarInset;
@@ -271,6 +260,25 @@ void ScrollViewer::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const Rect thumb{track.x, track.y + travel * t, kBarW, thumbH};
     const Color thumbColor = ResolveColor(Color{0, 0, 0, 1, Token::TextSecondary}, palette);
     ctx.FillRoundRect(thumb, kBarW * 0.5f, Color{thumbColor.r, thumbColor.g, thumbColor.b, 0.55f});
+}
+
+void ScrollViewer::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect viewport{bounds_.x + margin.l, bounds_.y + margin.t,
+                        std::max(0.0f, bounds_.w - margin.H()),
+                        std::max(0.0f, bounds_.h - margin.V())};
+    if (viewport.w <= 0 || viewport.h <= 0) return;
+
+    // Clip so content outside the viewport is never drawn, then offset the
+    // subtree upward by the scroll amount. Both are needed: without the clip the
+    // page paints over things below it, without the offset the page never
+    // appears to move.
+    //
+    // The offset is added to the incoming shift rather than replacing it, so a
+    // scroller nested inside another scrolled page still composes correctly.
+    ctx.PushClip(viewport);
+    Widget::PaintChildrenAt(ctx, palette, Point{shift.x, shift.y - offset_});
+    ctx.PopClip();
 }
 
 void ScrollViewer::ScrollTo(float offset) {
@@ -290,10 +298,14 @@ Widget* ScrollViewer::HitTest(const Point& p) {
     // it, so a hit there would land on something the user cannot see.
     if (!viewport.Contains(p)) return nullptr;
 
-    // Children first, so a button inside the page still gets its own click. They
-    // handle the scroll offset themselves (each carries a paint offset).
+    // Children are arranged in unscrolled coordinates, so a point in screen space
+    // has to move DOWN by the scroll amount before descending. Without this every
+    // control inside a scrolled page is unclickable the moment you scroll.
+    const Point inContent{p.x, p.y + offset_};
+
+    // Children first, so a button inside the page still gets its own click.
     for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
-        if (Widget* hit = (*it)->HitTest(p)) return hit;
+        if (Widget* hit = (*it)->HitTest(inContent)) return hit;
     }
     // Nothing under the cursor, but it is inside the viewport: claim it. Scrolling
     // has to work over the gaps between children and over the empty area past the

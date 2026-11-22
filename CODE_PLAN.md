@@ -12,7 +12,7 @@
 
 **Gridform = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.6.0.0 已完成**地基 + 布局层**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**15 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板）、两种渲染后端、**82 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `gallery`）共用一套宿主。
+当前 0.6.0.0 已完成**地基 + 布局层**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**15 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板）、两种渲染后端、**83 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `gallery`）共用一套宿主。
 
 **下一阶段的主线是「示例矩阵」**（§10a）：把单个 `gallery` 拆成六个可独立运行的示例——`basic`（✅ 基础控件）、`list`（✅ 集合与布局）、`usercontrol`（**父子组件、两个数据源**）、`binding`（四种模式对照）、`theming`（主题）、`gallery`（集大成的目录）。它同时是框架能力的验收矩阵：`usercontrol` 要求的能力当今框架**还没有**，这正是下一块要补的（§14）。
 
@@ -48,7 +48,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 82 用例 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 83 用例 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **15 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** | ✅ | 类型注册表 16 项（含 DataTemplate） |
@@ -58,7 +58,7 @@ build.ps1  CMakeLists.txt
 | **Viewbox**：等比缩放子内容 | ✅ | 1 个测试锁定缩小适配 |
 | **Expander**：折叠展开 + 点击头部切换 | ✅ | 1 个测试锁定两态高度 |
 | **TextBlock 自动换行**（`TextWrapping="Wrap"`） | ✅ | list 示例长段落渲染验证 |
-| ScrollViewer（滚轮 + 键盘 + 自绘滚动条） | ✅ | 5 个测试：滚动范围、钳制、空白处滚轮、视口外不可点、四角探测 |
+| ScrollViewer（滚轮 + 键盘 + 自绘滚动条） | ✅ | 6 个测试：滚动范围、钳制、空白处滚轮、视口外不可点、四角探测、**绘制像素随滚动变化** |
 | D2D 真实渲染 + 确定性快照 | ✅ | 两次渲染 SHA 相同 |
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
@@ -458,6 +458,34 @@ S-1-4-151873615-607647326   Allow   DeleteSubDirectoriesAndFiles, Write, Delete,
 **教训**：`HitTest` 的「有子节点就不认领自己」是个危险的默认值——容器只要没铺满就会被指针事件穿透。凡是需要接收事件（滚轮、拖拽、背景点击）的容器，都应显式覆写 `HitTest`。另外，「显式尺寸不生效」会让滚动类问题伪装成布局问题，两者需要分开验证。
 
 **测试**：新增 3 个用例锁定——空白处滚轮能滚动、视口外内容不可点、以及沿视口四角探测点全部能触发滚动（模拟宿主 `WM_MOUSEWHEEL` 的真实路径）。
+
+**后续（同一问题的第二层，见 §7.15）**：滚轮生效后暴露出更根本的缺陷——滚动位置从未影响绘制。
+
+---
+
+## 7.15 【严重】滚动只动滚动条，内容不动
+
+**现象**：滚轮修好之后（§7.14），滚动条滑块会移动、`ScrollOffset()` 也返回正确值，但界面上的内容纹丝不动。用户描述是「滚动条动了，界面没有滚动，下方的东西没上来」。
+
+**原因**：滚动位置从未进入绘制路径。`ScrollViewer::OnPaint` 给子节点设了 `paintOffset_`，然后立刻恢复，而 `Widget::PaintTree` **根本不读 `paintOffset_`** —— 这个字段被写入后从未被消费。滚动条之所以会动，是因为滑块位置直接从 `offset_` 算出来；内容之所以不动，是因为绘制只用 `bounds_`。
+
+**为什么前一个测试没抓到**：之前的断言只检查 `ScrollOffset() > 0`，而这个数值一直是正确的。**只验证状态、不验证像素**，是这个 bug 能活下来的根本原因。
+
+**修复**：
+
+1. `PaintCtx` 没有坐标变换栈，每个控件又都从自己的 `bounds_` 绘制，所以唯一的办法是在绘制期间平移 rect。新增 `PaintTreeAt(ctx, palette, shift)`，进入时 `bounds_ += shift`，退出时恢复——**绝不能让偏移留在 `bounds_` 里**，那是布局几何，会污染后续 `Arrange`。
+
+2. shift 必须**沿整棵子树累加下传**。`bounds_` 是绝对坐标，只平移直接子节点的话，孙节点仍停在原地——这正是「面板动了、面板里的东西没动」的直接原因。
+
+3. 引入 `Widget::PaintChildrenAt` 作为虚钩子：`PaintTreeAt` 在 `OnPaint` 之后调用它，`ScrollViewer` 覆写它以加上 `-offset_` 并 `PushClip`。**子节点不能在自己的 `OnPaint` 里画**，否则会被画两次（一次带偏移、一次不带），这也是第一版修复失败的另一个原因。
+
+4. `HitTest` 相应对称：把屏幕坐标 + `offset_` 还原到内容空间，再向下传递。
+
+**教训**：
+
+- **验证要看到像素**。新增的测试直接比较两个滚动位置下 `SoftwareRasterizer` 的哈希，而不是读 `ScrollOffset()`。哈希不同才证明画面真的变了。
+- **画与点必须用同一套坐标约定**。`PaintChildrenAt` 下传偏移、`HitTest` 回收偏移，两者必须严格对称，否则会出现「看得到点不到」或「点得到看不到」。
+- 顺带给 `waml_snapshot` 加了滚动参数（第 5 个 argv），可以渲染任意滚动位置的画面，肉眼确认。
 
 ---
 

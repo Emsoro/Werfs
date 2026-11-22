@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -114,11 +115,24 @@ int main(int argc, char** argv) {
         std::printf("FAIL: height must be positive\n");
         return 1;
     }
+    // Optional scroll offset, so the tool can prove that scrolling actually moves
+    // pixels instead of only changing a number. argv[5] in DIPs.
+    const float scroll = argc > 5 ? static_cast<float>(std::atof(argv[5])) : 0.0f;
 
     auto build = [&]() {
         WidgetPtr root = doc->Instantiate(&text);
         root->SetDataContext(vmRef);
         root->ForceLayout(Size{static_cast<float>(width), static_cast<float>(height)});
+        if (scroll > 0.0f) {
+            // Apply to every scroller on the page; a sample has one.
+            std::function<void(Widget*)> apply = [&](Widget* w) {
+                if (!w) return;
+                if (auto* sv = dynamic_cast<ScrollViewer*>(w)) sv->ScrollTo(scroll);
+                for (auto& c : w->Children()) apply(c.get());
+            };
+            apply(root.get());
+            root->ForceLayout(Size{static_cast<float>(width), static_cast<float>(height)});
+        }
         return root;
     };
 

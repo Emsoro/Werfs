@@ -86,7 +86,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `release` | `waml_demo.exe` | 优化构建，默认（gallery） |
 | `debug` | `waml_demo.exe` | 符号 + WAML 读磁盘，改界面免重编 |
 | `all` | 全部 | 以下全部都建（release） |
-| `tests` | `waml_tests.exe` | 82 个用例 |
+| `tests` | `waml_tests.exe` | 83 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
