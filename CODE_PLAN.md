@@ -619,17 +619,19 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 | 档位 | 数量 | 范围 | 何时做 |
 |---|---|---|---|
-| **P0 必做** | **21** | 日常界面几乎必用、且**不需要新子系统** | 本轮目标 |
+| **P0 必做** | **23** | 日常界面几乎必用、且**不需要新子系统** | 本轮目标 |
 | P1 常用增强 | 16 | 共同卡在「浮层/弹出」这一层 | 浮层完成后顺带解锁 |
-| P2 长尾 | 53 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
+| P2 长尾 | 51 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
 
-**P0 — 本轮要做的 21 个**（加已有 9 个 = 30 个控件）：
+**P0 — 本轮要做的 23 个**（加已有 9 个 = 32 个控件）：
 
 | 分组 | 控件 | 新增框架能力 |
 |---|---|---|
 | 布局 | `Grid` | **行列定义 + 跨行跨列**（卡片布局硬需求） |
 | 布局 | `Canvas` | 绝对定位 |
 | 布局 | `WrapPanel` | 换行排列 |
+| 布局 | `VariableSizedWrapGrid` | 换行 + **单项跨行跨列**（Grid 的行列 + WrapPanel 的换行） |
+| 布局 | `RelativePanel` | **元素间相对关系**（需附加属性，见下） |
 | 布局 | `Viewbox` | 缩放子内容 |
 | 布局 | `Expander` | 折叠展开（需高度变化重排） |
 | 基础输入 | `ToggleButton` | 布尔 + 视觉状态 |
@@ -649,18 +651,24 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 图形 | `Line` | `PaintCtx` 需加画线 |
 | 图形 | `Shape` | 基础几何绘制 |
 
-**P0 里真正的框架改造只有四项**，其余是「注册类型 + 实现 Measure/Arrange/OnPaint」的重复劳动：
+**布局这一组已覆盖 WinUI-Gallery 的 Layout 分类**：`Border`、`StackPanel`、`ScrollViewer` 已有；本轮补齐 `Grid`、`Canvas`、`WrapPanel`、`VariableSizedWrapGrid`、`RelativePanel`、`Viewbox`、`Expander`。`SplitView` 归 P1（需浮层式面板），`LayoutPanel` 是自定义布局基类，不进 gallery。
+
+**P0 里真正的框架改造有六项**，其余是「注册类型 + 实现 Measure/Arrange/OnPaint」的重复劳动：
 
 1. `Grid` 的行列布局算法
-2. `Image` 的 WIC 解码与缓存
-3. `PaintCtx` 增加 `DrawLine` / 路径绘制（支撑 `Line`、`Shape`、`ProgressRing`）
-4. `RadioButton` 的组作用域
+2. `VariableSizedWrapGrid` 的跨行列换行（复用 Grid 的跨行列 + WrapPanel 的换行）
+3. `RelativePanel` 的**附加属性机制**（`RelativePanel.RightOf="name"` 这类写法，当前解析器不支持带点号的属性名，也没有「按名字引用兄弟元素」的能力）
+4. `Image` 的 WIC 解码与缓存
+5. `PaintCtx` 增加 `DrawLine` / 路径绘制（支撑 `Line`、`Shape`、`ProgressRing`）
+6. `RadioButton` 的组作用域
+
+**关于 `RelativePanel` 的额外成本**：它需要两样框架目前都没有的东西——**附加属性**（`RelativePanel.RightOf`）和**按 `x:Name` 查找兄弟元素**。`x:Name` 已经记录在 `NodeDesc::name` 里，但布局期没有「从名字解析到 Widget」的索引。若这两项成本评估偏高，可把它降到 P1，用 `Grid` 的固定行列达成相近效果——但既然要覆盖 Layout 分类，建议做。`RelativePanel` 的其余朝向关系还有：`LeftOf`、`Above`、`Below`、`AlignLeftWith`、`AlignTopWith` 等。
 
 **P1 — 之后做（16 个）**：`ComboBox`、`Popup`、`Flyout`、`MenuFlyout`、`ToolTip`、`ContentDialog`、`TeachingTip`、`AutoSuggestBox`、`CommandBar`、`AppBarButton`、`AppBarToggleButton`、`AppBarSeparator`、`BreadcrumbBar`、`MenuBar`、`SplitView`、`RatingControl`
 
 这 16 个共同卡在一个缺失子系统上：**浮层（Popup/Flyout）**。它要处理 z-order、点外关闭、焦点陷阱、窗口外定位，成本高于 P0 任意单项——但做完这一次，其中大多数会顺带完成。
 
-**P2 — 按需，不承诺（53 个）**：虚拟化集合（`ListView`/`GridView`/`TreeView`/`ItemsRepeater`/`FlipView`/`ItemsView`/`TableView`/`PullToRefresh`）、日期时间（4 个）、动画过渡（7 个）、导航容器（`NavigationView`/`TabView`/`Pivot`/`SelectorBar`）、分割按钮（3 个）、`ColorPicker`、`RichEditBox`、滚动增强（`PipsPager`/`PagerControl`/`SemanticZoom`/`AnnotatedScrollBar`/`ScrollView`）、画刷（`AcrylicBrush`/`RadialGradientBrush`）、`ThemeShadow`、`IconElement`/`AnimatedIcon`、`Compact Sizing`、`Clipboard`、`Chart`、`InkCanvas`、`AnimatedVisualPlayer`、`TitleBar`、`Window`、`LayoutPanel`/`RelativePanel`/`VariableSizedWrapGrid`、命令对象（`StandardUICommand`/`XamlUICommand`）
+**P2 — 按需，不承诺（51 个）**：虚拟化集合（`ListView`/`GridView`/`TreeView`/`ItemsRepeater`/`FlipView`/`ItemsView`/`TableView`/`PullToRefresh`）、日期时间（4 个）、动画过渡（7 个）、导航容器（`NavigationView`/`TabView`/`Pivot`/`SelectorBar`）、分割按钮（3 个）、`ColorPicker`、`RichEditBox`、滚动增强（`PipsPager`/`PagerControl`/`SemanticZoom`/`AnnotatedScrollBar`/`ScrollView`）、画刷（`AcrylicBrush`/`RadialGradientBrush`）、`ThemeShadow`、`IconElement`/`AnimatedIcon`、`Compact Sizing`、`Clipboard`、`Chart`、`InkCanvas`、`AnimatedVisualPlayer`、`TitleBar`、`Window`、`LayoutPanel`、命令对象（`StandardUICommand`/`XamlUICommand`）
 
 **为什么这样切**：P0 覆盖「写一个真实窗口界面」的绝大部分，且除 Grid/Image/画线/组互斥外都是低风险增量。P1 被浮层这一项统一卡住，集中攻克一次即可解锁一批。P2 里的虚拟化与动画是另一个量级（见 R4、迭代 3），混进 P0 会拖垮进度。
 
@@ -677,7 +685,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 **关键判断**：`usercontrol` 是唯一被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。排第五意味着前四个可以先落地，把框架改造集中成一次迭代，而不是一开始就卡在设计决策上。
 
-**关于 gallery 的组件数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。本次只做 P0 的 21 个（10a.7.1），加上已有 9 个共 30 个控件；P1 的 16 个等浮层子系统完成后顺带解锁；P2 的 53 个按需再议。
+**关于 gallery 的组件数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。本次只做 P0 的 23 个（10a.7.1），加上已有 9 个共 32 个控件；P1 的 16 个等浮层子系统完成后顺带解锁；P2 的 51 个按需再议。
 
 ### 10a.9 构建与打包
 
@@ -852,7 +860,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 1. **启动即 gallery**：双击 exe，左栏列出所有示例，点击进入。
 2. **示例矩阵齐备**（10a）：`basic`、`usercontrol`、`binding`、`list`、`theming`、`gallery` 六个可独立运行的示例。
 3. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
-4. **控件页覆盖 P0 清单**：10a.7.1 的 21 个新控件 + 已有 9 个 = 30 个控件都有示例页，每页 ≥3 个可交互示例。
+4. **控件页覆盖 P0 清单**：10a.7.1 的 23 个新控件 + 已有 9 个 = 32 个控件都有示例页，每页 ≥3 个可交互示例。
 5. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
 6. **主题可切换**：Light/Dark 即时生效，无需重启。
 7. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。

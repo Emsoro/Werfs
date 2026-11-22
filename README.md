@@ -171,11 +171,11 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 档位 | 数量 | 内容 | 何时做 |
 |---|---|---|---|
-| **P0 必做** | 21 | `Grid` `Canvas` `WrapPanel` `Viewbox` `Expander` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 当前目标 |
+| **P0 必做** | 23 | `Grid` `Canvas` `WrapPanel` `VariableSizedWrapGrid` `RelativePanel` `Viewbox` `Expander` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 当前目标 |
 | P1 常用增强 | 16 | `ComboBox` `Popup` `Flyout` `ToolTip` `ContentDialog` `MenuFlyout` `CommandBar` `AutoSuggestBox` 等 | 浮层子系统完成后 |
-| P2 长尾 | 53 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
+| P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-加上已有 9 个，P0 完成后共 **30 个可用控件**。P0 里真正的框架改造只有四项：`Grid` 布局算法、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
+加上已有 9 个，P0 完成后共 **32 个可用控件**。P0 里真正的框架改造有六项：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`RelativePanel` 附加属性与按名查找、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
 
 ---
 
