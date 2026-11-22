@@ -1,0 +1,21 @@
+# Normalize line endings on commit, keep the working tree as-is.
+#
+# Why this file exists: without it, `core.autocrlf=true` on Windows rewrites
+# every LF file to CRLF on checkout, so a clone produces a working tree that
+# differs from the original byte-for-byte and every diff looks enormous.
+# C++ sources here are LF; batch files are LF too and drive cmd.exe fine.
+#
+# Rule: store LF in the repository, write LF in the working tree.
+* text=auto eol=lf
+
+# Binary payloads must never be line-ending converted.
+*.ico   binary
+*.png   binary
+*.exe   binary
+*.lib   binary
+*.pdb   binary
+
+# Windows batch/cmd scripts: LF is what this repo builds with (build.bat has
+# been verified to work with LF). Pinned explicitly so no filter "fixes" it.
+*.bat   text eol=lf
+*.cmd   text eol=lf

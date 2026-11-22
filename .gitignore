@@ -1,3 +1,10 @@
+# ---------------------------------------------------------------------------
+# Gridform
+#
+# A fresh clone plus `build.bat all` must reproduce everything that matters.
+# Anything below is either a build artifact or a tree kept local on purpose.
+# ---------------------------------------------------------------------------
+
 # Prerequisites
 *.d
 
@@ -30,3 +37,54 @@
 *.exe
 *.out
 *.app
+
+# ---------------------------------------------------------------------------
+# Gridform-specific
+# ---------------------------------------------------------------------------
+
+# Build output (build.bat's default target directory).
+build/
+
+# CMake build tree
+out/
+cmake-build-*/
+
+# Linker / debug databases
+*.pdb
+*.ilk
+*.exp
+*.res
+*.idb
+*.iobj
+*.ipdb
+*.log
+
+# ---------------------------------------------------------------------------
+# Local reference projects -- intentionally NOT part of this repository.
+#
+# Upstream sources kept on this machine for reading only: control design comes
+# from WinUI-Gallery, XAML parsing from the WinUI3 source. They are large,
+# separately licensed, and not ours to redistribute. Cloning this repo must not
+# pull them in.
+# ---------------------------------------------------------------------------
+WinUI-Gallery-3.0.4/
+microsoft-ui-xaml-winui3-release-2.7.0/
+
+# Design and planning notes -- kept local by request.
+docs/
+
+# ---------------------------------------------------------------------------
+# Tooling state
+# ---------------------------------------------------------------------------
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# OS noise
+Thumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
