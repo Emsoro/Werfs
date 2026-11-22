@@ -5,7 +5,7 @@
 // title and size. The Win32 / D2D / DPI / input plumbing lives in
 // samples/shared/SampleHost, so adding a sample does not mean copying it.
 #include "BasicVm.h"
-#include "Resource.h"    // IDR_WAML_BASIC
+#include "BasicResource.h"    // IDR_WAML_BASIC
 #include "SampleHost.h"
 
 #include <windows.h>

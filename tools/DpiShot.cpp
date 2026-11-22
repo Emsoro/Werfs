@@ -5,7 +5,7 @@
 #include "Core.h"
 #include "D2DRender.h"
 #include "Diagnostics.h"
-#include "GalleryVm.h"  // sample: the Gallery page's ViewModel
+#include "BasicVm.h"    // sample: the basic controls page's ViewModel
 #include "Mvvm.h"
 #include "Types.h"
 #include "Waml.h"
@@ -30,7 +30,7 @@ using namespace wui;
 namespace {
 
 // Sample ViewModel, shared with the other tools.
-using Vm = sample::GalleryVm;
+using Vm = sample::BasicViewVm;
 
 std::string ReadFile(const std::string& p) {
     std::ifstream in(p, std::ios::binary);
@@ -111,13 +111,13 @@ int wmain(int argc, wchar_t** argv) {
     std::printf("dpi=%u scale=%.2f client=%dx%d px -> %.0fx%.0f dip\n", dpi, scale, clientW, clientH,
                 clientW / scale, clientH / scale);
 
-    const std::string src = ReadFile(argc > 1 ? WideToUtf8(argv[1]) : "..\\samples\\Gallery.waml");
+    const std::string src = ReadFile(argc > 1 ? WideToUtf8(argv[1]) : "..\\samples\\basic\\Basic.waml");
     if (src.empty()) {
         std::printf("cannot read waml\n");
         return 1;
     }
     ParseOptions opt;
-    opt.fileName = "Gallery.waml";
+    opt.fileName = "Basic.waml";
     DiagnosticBag bag;
     auto doc = CompileWaml(src, opt, bag);
     if (!doc) {
@@ -128,7 +128,7 @@ int wmain(int argc, wchar_t** argv) {
     DWriteTextService text;
     TextSystem::Set(&text);
     auto vm = std::make_shared<Vm>();
-    vm->SeedItems(5);
+    
     WidgetPtr root = doc->Instantiate(&text);
     root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
 

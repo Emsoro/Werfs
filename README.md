@@ -83,17 +83,17 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 
 | 目标 | 产物 | 说明 |
 |---|---|---|
-| `release` | `waml_demo.exe` | 优化构建，默认（gallery） |
-| `debug` | `waml_demo.exe` | 符号 + WAML 读磁盘，改界面免重编 |
-| `all` | 全部 | 以下全部都建（release） |
-| `tests` | `waml_tests.exe` | 83 个用例 |
+| *（无参数）* | 全部示例 | **默认**：等价于 `samples` |
+| `samples` | `waml_basic.exe` `waml_list.exe` | 构建所有示例（release） |
+| `basic` | `waml_basic.exe` | 只构基础控件示例 |
+| `list` | `waml_list.exe` | 只构集合与布局示例 |
+| `all` | 全部 | 示例 + 全部工具与测试 |
+| `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
+| `tests` | `waml_tests.exe` | 84 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
 | `probe` | `waml_probe.exe` | 资源门禁，**构建后自动运行** |
-| `basic` | `waml_basic.exe` | 基础控件示例 |
-| `list` | `waml_list.exe` | 集合与布局示例 |
-| `samples` | 全部示例 | 一次构建所有示例 |
 | `probedbg` | 同上 | 调试构建的门禁 |
 | `res` | `.res` | 只编译资源 |
 | `icon` | `app.ico` | 重新生成图标 |
@@ -125,7 +125,7 @@ $env:WUI_VERSION_MINOR = '6'
 pwsh -File build.ps1 all
 ```
 
-也可直接改 `samples/gallery/resources/Resource.h` 的默认值。
+也可直接改 `samples/basic/resources/BasicResource.h` 的默认值。
 
 ### 为什么是 PowerShell 直接驱动编译器
 
@@ -156,19 +156,20 @@ framework/src/
 
 samples/                ← 示例，单向依赖框架
     shared/                共享宿主：窗口、D2D、DPI、输入分发（不含任何页面逻辑）
-    gallery/               控件总览页
     basic/                 **已实现** 基础控件：TextBlock/Button/TextBox/CheckBox/Border
     list/                  **已实现** 集合与布局：ListBox + Grid/WrapPanel/Canvas/VariableSizedWrapGrid/Viewbox/Expander
-    binding/               （规划 2）四种绑定模式对照
-    theming/               （规划 3）Light/Dark 主题
-    usercontrol/           （规划 4）父子组件、两个独立数据源
+    binding/               （规划 1）四种绑定模式对照
+    theming/               （规划 2）Light/Dark 主题
+    usercontrol/           （规划 3）父子组件、两个独立数据源
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
 
-关键约束：`framework/` 里**没有**任何 `Gallery.waml`、`GalleryVm` 或 `IDR_WAML_*` 的引用。资源 id 属于示例，定义在 `samples/gallery/resources/Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
+关键约束：`framework/` 里**没有**任何示例的 `.waml`、ViewModel 或 `IDR_WAML_*`。资源 id 属于示例，定义在 `samples/basic/resources/BasicResource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
 
-新增示例：复制 `samples/gallery/` 改名、改 `Resource.h` 里的 id、在 `build.ps1` 加一个目标函数即可，框架侧零改动。
+新增示例：复制 `samples/basic/` 改名、改 `Resource.h` 里的 id、在 `build.ps1` 的 `$SampleRegistry` 加一行即可，框架侧零改动。
+
+> 各示例的资源头文件名必须唯一（`BasicResource.h`、`ListResource.h`…）。两个示例都用 `Resource.h` 时，工具同时引入两者会撞名，先命中的那个会静默胜出——这正是 `IDR_WAML_BASIC 未声明` 的由来。
 
 ### 示例路线
 
@@ -181,15 +182,14 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 3 | `binding` | 四种绑定模式并排对照 | 规划中 |
 | 4 | `theming` | Light/Dark 切换与 token | 规划中 |
 | 5 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
-| 6 | `gallery` | 把全部控件页组织成可浏览的图库（产品形态） | 演进中 |
 
 两个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（把六个面板装进一个真实页面，也确实因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷）。
 
-`usercontrol` 排在第五，因为它依赖的能力（`DataContext` 可绑定）目前还不存在；放在中段可以让前面几个示例先落地，而不是一开始就卡在设计决策上。
+`usercontrol` 排在最后，因为它依赖的能力（`DataContext` 可绑定）目前还不存在；放在末位可以让前面几个示例先落地，而不是一开始就卡在设计决策上。
 
-所有示例共用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发），示例本身只提供 WAML、ViewModel 和标题。加一个新示例 = 新建目录 + 三件套 + 在 `build.ps1` 注册一个目标。详细规划见 `CODE_PLAN.md` §10a。
+所有示例共用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发），示例本身只提供 WAML、ViewModel 和标题。加一个新示例 = 新建目录 + 三件套 + 在 `build.ps1` 的注册表加一行。详细规划见 `CODE_PLAN.md` §10a。
 
-### Gallery 的组件范围
+### 控件覆盖范围
 
 对齐 WinUI-Gallery 的完整清单是 **90 个待实现控件**（已剔除 15 个概念页与 14 个需要 OS 集成的条目）。本项目**不追求一次做完**，按使用频率分三档：
 
@@ -207,15 +207,15 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 目标 | 用途 |
 |---|---|
-| `waml_demo.exe` | 真实 Win32 窗口 |
-| `waml_demo.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 65 个单元/集成用例 |
+| `waml_basic.exe` / `waml_list.exe` | 真实 Win32 窗口 |
+| `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
+| `waml_tests.exe` | 84 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
 | `waml_bench.exe` | 性能基线 |
 
-所有工具遵循同一个交付开关：**debug 读 `samples/gallery/*.waml`，release 读 exe 内嵌资源**；显式传路径时以路径为准。
+所有工具遵循同一个交付开关：**debug 读 `samples/*/*.waml`，release 读 exe 内嵌资源**；显式传路径时以路径为准。
 
 ---
 
@@ -223,7 +223,6 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 所有错误在加载期给出，带行列号（列按 Unicode 码点计）：
 
-```text
 demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you mean 'Text'?)
 ```
 
@@ -280,7 +279,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 | 文件 | 内容 |
 |---|---|
 | `CODE_PLAN.md` | 实施计划 + 技术验证报告：架构决策、迭代路线、风险登记、缺陷复盘 |
-| `samples/gallery/Gallery.waml` | 覆盖全部已实现语法的示例 |
+| `samples/basic/Basic.waml` | 五个基础控件，单一数据源 |
 
 ---
 

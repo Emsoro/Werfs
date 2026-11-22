@@ -30,20 +30,20 @@ framework/src/         框架：不认识任何示例
     platform/          Resources：资源与文件加载、VERSIONINFO、路径解析
     render/            SoftwareRender（测试）、D2DRender（真实）
 
-samples/gallery/       示例：单向依赖框架
-    Gallery.waml         界面描述
-    GalleryVm.h          ViewModel（唯一一份，工具共用）
-    App.cpp              Win32 宿主窗口
-    resources/           app.rc、Resource.h、app.ico、app.manifest
+samples/                示例树：单向依赖框架
+    shared/SampleHost   窗口、D2D、DPI、输入分发（不含任何页面逻辑）
+    basic/              Basic.waml + BasicVm.h + App.cpp + resources/
+    list/               List.waml  + ListVm.h  + App.cpp + resources/
 
 tests/  bench/  tools/ 框架级工具，不依赖示例
 build.ps1  CMakeLists.txt
 ```
 
-**铁律**：`framework/` 里**没有**任何 `Gallery.waml`、`GalleryVm` 或 `IDR_WAML_*` 的引用。资源 id 属于示例，定义在 `samples/gallery/resources/Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
+**铁律**：`framework/` 里**没有**任何示例的 `.waml`、ViewModel 或 `IDR_WAML_*`。资源 id 属于示例，定义在各自的 `<Name>Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
 
-新增示例 = 复制 `samples/gallery/` 改名、改资源 id、在 `build.ps1` 加一个目标函数即可，框架零改动。
+新增示例 = 复制 `samples/basic/` 改名、改资源 id、在 `build.ps1` 的 `$SampleRegistry` 加一行即可，框架零改动。
 
+> 资源头文件必须**每示例唯一**（`BasicResource.h` / `ListResource.h`）。同名的 `Resource.h` 会让同时引入两者的工具静默拿到其中一个，表现为「`IDR_WAML_*` 未声明」。
 ## 2. 能力清单
 
 | 能力 | 状态 | 证据 |
@@ -70,8 +70,8 @@ build.ps1  CMakeLists.txt
 
 | 产物 | 作用 |
 |---|---|
-| `waml_demo.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 65 个单元/集成用例 |
+| `waml_basic.exe` / `waml_list.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
+| `waml_tests.exe` | 84 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -780,13 +780,14 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 | 目标 | 产物 | 说明 |
 |---|---|---|
-| `basic` | `waml_basic.exe` | 单示例 |
-| `usercontrol` | `waml_usercontrol.exe` | 单示例 |
-| `binding` | `waml_binding.exe` | 单示例 |
-| `list` | `waml_list.exe` | 单示例 |
-| `theming` | `waml_theming.exe` | 单示例 |
-| `release` / `all` | `waml_demo.exe` | **gallery**，产品形态 |
+| 目标 | 产物 | 说明 |
+|---|---|---|
+| *（无参数）* | 全部示例 | **默认**，等价于 `samples` |
+| `samples` | 各示例 | 构建所有示例（release） |
+| `basic` / `list` | 单个示例 | 只构指定示例 |
+| `all` | 全部 | 示例 + 全部工具与测试 |
 
+`build.ps1` 用 `$SampleRegistry` 表驱动：一个示例 = 表里一行，分发逻辑共用，不再为每个示例写目标函数。每个示例复用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发），避免重复。
 `build.ps1` 增加对应目标函数；`all` 构建全部。每个示例复用 `samples/shared/` 下的宿主代码（Win32 窗口 + D2D 初始化），避免六份重复——**这也是本次重构要做的第一件事**：把 `App.cpp` 里与「具体页面」无关的宿主逻辑抽出来。
 
 ---
@@ -996,9 +997,9 @@ build\release\waml_tests.exe
 build\release\waml_interact.exe
 build\release\waml_snapshot.exe
 build\release\waml_probe.exe
-build\release\waml_bench.exe
-build\release\waml_demo.exe              :: 交互窗口
-build\release\waml_demo.exe --selftest   :: 写 selftest.log 并返回退出码
+
+build\release\waml_basic.exe          :: 交互窗口（基础控件示例）
+build\release\waml_basic.exe --selftest :: 写 selftest.log 并返回退出码
 ```
 
 ## C. 构建环境说明

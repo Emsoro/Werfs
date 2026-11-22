@@ -19,12 +19,16 @@
     Both disappear because arguments are passed as an array, not a parsed line.
 
 .PARAMETER Target
-    What to build. Defaults to 'release' (the gallery app).
+    What to build. With no argument every sample is built (release), because
+    running the samples is what the project is for; the harnesses and tools are
+    reached through 'all'.
 
-      release   optimised build, WAML embedded in the exe (single file)
-      debug     symbols, WAML read from samples/gallery/*.waml at runtime,
-                so editing markup needs no rebuild
-      all       everything below, in release
+      samples   DEFAULT. Every sample below, optimised, WAML embedded in the exe
+      basic     basic controls sample  (waml_basic.exe)
+      list      collections + layout   (waml_list.exe)
+      all       samples plus every tool and test binary
+      debug     one sample with symbols and WAML read from disk at runtime, so
+                editing markup needs no rebuild (-Sample picks which)
       tests     unit/integration tests
       bench     performance baseline
       snapshot  D2D render + determinism check
@@ -62,10 +66,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('release', 'debug', 'all', 'tests', 'bench', 'snapshot',
+    [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'basic', 'list', 'samples')]
-    [string]$Target = 'release',
+                 'basic', 'list')]
+    [string]$Target = 'samples',
 
     [switch]$Clean,
 
@@ -80,7 +84,7 @@ $ErrorActionPreference = 'Stop'
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Framework  = Join-Path $ProjectDir 'framework'
 $SamplesRoot = Join-Path $ProjectDir 'samples'
-$Sample     = Join-Path $SamplesRoot 'gallery'
+$IconSourceDir = Join-Path $SamplesRoot 'basic\resources'
 $SharedSample = Join-Path $SamplesRoot 'shared'
 $SampleHostSource = Join-Path $SharedSample 'SampleHost.cpp'
 
@@ -241,9 +245,11 @@ $Libs = @(
     'gdi32.lib', 'shell32.lib', 'version.lib', 'advapi32.lib'
 )
 
-$Manifest = Join-Path $Sample 'resources\app.manifest'
-$ResourceScript = Join-Path $Sample 'resources\app.rc'
-$IconFile = Join-Path $Sample 'resources\app.ico'
+$Manifest = Join-Path $IconSourceDir 'app.manifest'
+$IconFile = Join-Path $IconSourceDir 'app.ico'
+# The shared .res used by tools (probe, snapshot). Samples compile their own via
+# Build-SampleResource, because each embeds a different payload id.
+$ResourceScript = Join-Path $IconSourceDir 'app.rc'
 $ResObj = Join-Path $OutDir 'objres\app.res'
 
 # ---------------------------------------------------------------------------
@@ -384,15 +390,14 @@ function Build-Bench {
 }
 
 # The harnesses bind a sample's ViewModel and read its markup ids, so they need
-# that sample's include paths. Kept out of the global list so a sample's own
-# Resource.h can take precedence when building that sample.
-$GalleryIncludes = @($Sample, (Join-Path $Sample 'resources'))
+# The harnesses bind samples' ViewModels and read their markup ids, so they need
+# those include paths. Kept out of the global list so a sample's own Resource.h
+# still wins when building that sample.
 $ListSampleDir = Join-Path $SamplesRoot 'list'
 $BasicSampleDir = Join-Path $SamplesRoot 'basic'
-# Tools that bind several samples need every sample's headers.
-$AllSampleIncludes = $GalleryIncludes +
-    @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
-      $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'))
+# Tools that touch several samples need every sample's headers.
+$AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
+                       $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'))
 
 function Build-Snapshot {
     $exe = Build-Executable -ExeName 'waml_snapshot' -ObjName 'snapshot' -Config 'release' `
@@ -411,7 +416,7 @@ function Build-Interact {
 function Build-DpiShot {
     $exe = Build-Executable -ExeName 'waml_dpishot' -ObjName 'dpishot' -Config 'release' `
         -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\DpiShot.cpp')) `
-        -ExtraIncludes $GalleryIncludes
+        -ExtraIncludes $AllSampleIncludes
     Write-Host "  dpishot -> $exe" -ForegroundColor DarkGray
 }
 
@@ -419,7 +424,7 @@ function Build-Probe {
     param([string]$Config = 'release')
     $exe = Build-Executable -ExeName 'waml_probe' -ObjName 'probe' -Config $Config `
         -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\ResourceProbe.cpp')) `
-        -ExtraIncludes $GalleryIncludes
+        -ExtraIncludes $AllSampleIncludes
     Write-Host "  probe -> $exe" -ForegroundColor DarkGray
     return $exe
 }
@@ -443,22 +448,13 @@ function Build-Sample {
     Write-Host "  $ObjName -> $exe" -ForegroundColor DarkGray
     return $exe
 }
-
-function Build-Gallery {
-    param([string]$Config = 'release')
-    return Build-Sample -ExeName 'waml_demo' -ObjName 'gallery' -Dir $Sample `
-        -ResName 'gallery' -Config $Config
-}
-
-# Sample registry: name -> executable, resource base name, target name.
+# Sample registry: the single place that knows which samples exist.
 #
-# One line per sample. Adding a sample means adding an entry here and nothing
-# else; keeping the list in one place is why the dispatch below can stay a
-# simple loop instead of growing a branch per sample.
+# Adding a sample means adding one line here. The dispatcher loops over this
+# table, so no target needs a hand-written branch.
 $SampleRegistry = @(
-    @{ Name = 'gallery'; Exe = 'waml_demo'; Res = 'gallery'; Target = 'release' }
-    @{ Name = 'list';    Exe = 'waml_list'; Res = 'list';    Target = 'list' }
-    @{ Name = 'basic';   Exe = 'waml_basic'; Res = 'basic';  Target = 'basic' }
+    @{ Name = 'basic'; Exe = 'waml_basic'; Res = 'basic' }
+    @{ Name = 'list';  Exe = 'waml_list';  Res = 'list' }
 )
 
 function Build-RegisteredSample {
@@ -477,6 +473,13 @@ function Get-SampleEntry {
         throw "Unknown sample '$Name'. Known: $(($SampleRegistry | ForEach-Object { $_.Name }) -join ', ')"
     }
     return $entry
+}
+
+function Build-AllRegisteredSamples {
+    param([string]$Config = 'release')
+    foreach ($entry in $SampleRegistry) {
+        Build-RegisteredSample -Entry $entry -Config $Config | Out-Null
+    }
 }
 
 # Builds the resource script of one sample into that sample's own .res file.
@@ -516,33 +519,29 @@ Write-Host "output: $OutDir" -ForegroundColor DarkGray
 
 try {
     switch ($Target) {
-        'release' {
-            Build-Resource
-            Build-Gallery -Config 'release' | Out-Null
+        # Default: run every sample. This is what people actually want when they
+        # type "build" -- the tools and harnesses are for maintainers.
+        'samples' {
+            Build-AllRegisteredSamples -Config 'release'
         }
-        'debug' {
-            Build-Resource
-            Build-Gallery -Config 'debug' | Out-Null
-        }
+        # Everything: samples plus every harness and tool.
         'all' {
             Build-Resource
+            Build-AllRegisteredSamples -Config 'release'
             Build-Tests
             Build-Bench
             Build-Snapshot
             Build-Interact
-            foreach ($entry in $SampleRegistry) {
-                Build-RegisteredSample -Entry $entry -Config 'release' | Out-Null
-            }
+            Build-DpiShot
             Build-Probe -Config 'release' | Out-Null
         }
-        'samples' {
-            Build-Resource
-            foreach ($entry in $SampleRegistry) {
-                Build-RegisteredSample -Entry $entry -Config 'release' | Out-Null
-            }
+        # Symbols plus loose markup, so editing a .waml needs no rebuild. Builds
+        # the debug variant of every sample silently: samples are only ever run
+        # one at a time, so this stays cheap.
+        'debug' {
+            Build-AllRegisteredSamples -Config 'debug'
         }
-        { $_ -in @('basic', 'list') } {
-            Build-Resource
+        { $_ -in ($SampleRegistry | ForEach-Object { $_.Name }) } {
             Build-RegisteredSample -Entry (Get-SampleEntry $Target) -Config 'release' | Out-Null
         }
         'tests'   { Build-Resource; Build-Tests }

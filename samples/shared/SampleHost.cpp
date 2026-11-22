@@ -293,7 +293,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
         }
         g.pressed = target;
-        if (target) target->OnPointerDown(LocalPoint(target, x, y));
+        // Convert to the target's own space. Pointer coordinates are window
+        // space, but every control tests bounds_, which are unscrolled -- inside
+        // a scrolled page the two differ by the scroll offset, so dispatching the
+        // raw point made controls ignore clicks after scrolling.
+        if (target) target->OnPointerDown(target->ToLocal(LocalPoint(target, x, y)));
         SetCapture(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -304,7 +308,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const int x = GET_X_LPARAM(lp);
         const int y = GET_Y_LPARAM(lp);
         if (g.pressed) {
-            g.pressed->OnPointerUp(LocalPoint(g.pressed, x, y));
+            g.pressed->OnPointerUp(g.pressed->ToLocal(LocalPoint(g.pressed, x, y)));
             g.pressed = nullptr;
         }
         InvalidateRect(hwnd, nullptr, FALSE);

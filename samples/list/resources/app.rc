@@ -7,7 +7,7 @@
 // Resource types must be numeric where Windows defines them: writing
 // RT_MANIFEST instead of 24 makes rc.exe store it as a string type name, which
 // Windows never looks up -- the manifest silently does nothing.
-#include "Resource.h"
+#include "ListResource.h"
 
 IDI_APP  ICON  "app.ico"
 

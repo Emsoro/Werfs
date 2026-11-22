@@ -7,7 +7,7 @@
 //   2. the debug/release  -- a mis-set working directory must never make a
 //      switch                shipped build read stale loose markup.
 #include "Core.h"      // WideToUtf8
-#include "Resource.h"  // WAML_RESOURCE_TYPE / IDR_WAML_GALLERY / WUI_VERSION_*
+#include "BasicResource.h"  // IDR_WAML_BASIC / WUI_VERSION_*
 #include "Resources.h"
 
 #include <windows.h>
@@ -67,27 +67,27 @@ int wmain() {
     // -----------------------------------------------------------------------
     // 2. Payload presence -- required in BOTH modes (debug uses it as fallback).
     // -----------------------------------------------------------------------
-    const DWORD waml = ResSize(MAKEINTRESOURCEW(IDR_WAML_GALLERY), WAML_RESOURCE_TYPE);
-    std::printf("  WAML_DOC/%d: %lu bytes\n", IDR_WAML_GALLERY, waml);
-    Expect(waml > 0, L"gallery markup is embedded as RCDATA");
+    const DWORD waml = ResSize(MAKEINTRESOURCEW(IDR_WAML_BASIC), WAML_RESOURCE_TYPE);
+    std::printf("  WAML_DOC/%d: %lu bytes\n", IDR_WAML_BASIC, waml);
+    Expect(waml > 0, L"sample markup is embedded as RCDATA");
 
-    WamlLoadResult res = LoadWamlResource(WAML_RESOURCE_TYPE, IDR_WAML_GALLERY);
-    Expect(res.ok, L"gallery markup loads from the resource");
-    Expect(res.origin == "res:#" + std::to_string(IDR_WAML_GALLERY), L"resource origin is reported");
+    WamlLoadResult res = LoadWamlResource(WAML_RESOURCE_TYPE, IDR_WAML_BASIC);
+    Expect(res.ok, L"sample markup loads from the resource");
+    Expect(res.origin == "res:#" + std::to_string(IDR_WAML_BASIC), L"resource origin is reported");
     Expect(!res.text.empty() && res.text.find("Page") != std::string::npos, L"payload looks like WAML");
 
     // The embedded copy must be the current file: otherwise a release build can
     // ship stale markup while the working tree looks correct.
     {
-        WamlLoadResult file = LoadWamlFile("samples\\gallery\\Gallery.waml");
+        WamlLoadResult file = LoadWamlFile("samples\\basic\\Basic.waml");
         if (!file.ok) {
             // Try the resolution helper, which walks ancestor directories.
-            const std::string resolved = ResolveWamlPath("samples\\gallery\\Gallery.waml");
+            const std::string resolved = ResolveWamlPath("samples\\basic\\Basic.waml");
             if (!resolved.empty()) file = LoadWamlFile(resolved);
         }
         if (file.ok) {
             const bool same = file.text == res.text;
-            std::printf("  embedded == samples\\gallery\\Gallery.waml: %s\n", same ? "yes" : "NO");
+            std::printf("  embedded == samples\\basic\\Basic.waml: %s\n", same ? "yes" : "NO");
             Expect(same, L"embedded markup matches the source .waml (stale .res?)");
         } else {
             std::printf("  (source .waml not reachable from here; skipping staleness check)\n");
@@ -97,14 +97,14 @@ int wmain() {
     // -----------------------------------------------------------------------
     // 3. Mode selection.
     // -----------------------------------------------------------------------
-    WamlLoadResult picked = LoadWaml(WAML_RESOURCE_TYPE, IDR_WAML_GALLERY, "samples\\gallery\\Gallery.waml");
+    WamlLoadResult picked = LoadWaml(WAML_RESOURCE_TYPE, IDR_WAML_BASIC, "samples\\basic\\Basic.waml");
     Expect(picked.ok, L"LoadWaml() succeeds");
     if (loose) {
         Expect(picked.source == WamlSource::File, L"debug picks the loose file");
         std::printf("  origin: %s\n", picked.origin.c_str());
     } else {
         Expect(picked.source == WamlSource::Resource, L"release picks the resource");
-        Expect(picked.origin == "res:#" + std::to_string(IDR_WAML_GALLERY), L"release origin is res:#id");
+        Expect(picked.origin == "res:#" + std::to_string(IDR_WAML_BASIC), L"release origin is res:#id");
     }
 
     // -----------------------------------------------------------------------

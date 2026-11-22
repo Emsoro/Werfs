@@ -54,27 +54,46 @@ target_compile_definitions(wui_framework PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 add_library(wui_render_d2d STATIC framework/src/render/D2DRender.cpp)
 target_link_libraries(wui_render_d2d PUBLIC wui_framework d2d1 dwrite windowscodecs ole32)
 
-# ---------------------------------------------------------------------------
-# Sample: gallery. Owns its ViewModel, markup and resources.
-# ---------------------------------------------------------------------------
-set(GALLERY_DIR samples/gallery)
-
-set(GALLERY_RES_SRC ${CMAKE_CURRENT_BINARY_DIR}/gallery/app.res)
-add_custom_command(
-    OUTPUT ${GALLERY_RES_SRC}
-    COMMAND rc /nologo /fo${GALLERY_RES_SRC}
-            /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=5 /dWUI_VERSION_PATCH=0 /dWUI_VERSION_BUILD=0
-            ${CMAKE_CURRENT_SOURCE_DIR}/${GALLERY_DIR}/resources/app.rc
-    DEPENDS ${GALLERY_DIR}/resources/app.rc ${GALLERY_DIR}/Gallery.waml
-    COMMENT "Compiling gallery resources"
-)
-
-add_executable(gallery WIN32 ${GALLERY_DIR}/App.cpp ${GALLERY_RES_SRC})
-target_include_directories(gallery PRIVATE ${GALLERY_DIR} ${GALLERY_DIR}/resources)
-target_link_libraries(gallery PRIVATE wui_render_d2d)
 
 # ---------------------------------------------------------------------------
-# Framework harnesses.
+# Samples. Each owns its ViewModel, markup and resources; the Win32/D2D plumbing
+# lives in samples/shared and is compiled into every sample.
+# ---------------------------------------------------------------------------
+set(SAMPLE_SHARED_DIR samples/shared)
+set(SAMPLE_INCLUDES
+    ${SAMPLE_SHARED_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/basic
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/basic/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/list
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/list/resources)
+
+# One function so adding a sample stays a single call.
+function(add_sample NAME)
+    set(dir ${CMAKE_CURRENT_SOURCE_DIR}/samples/${NAME})
+    set(res ${CMAKE_CURRENT_BINARY_DIR}/${NAME}/app.res)
+    add_custom_command(
+        OUTPUT ${res}
+        COMMAND rc /nologo /fo${res}
+                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=6
+                /dWUI_VERSION_PATCH=0 /dWUI_VERSION_BUILD=0
+                ${dir}/resources/app.rc
+        DEPENDS ${dir}/resources/app.rc
+        COMMENT "Compiling ${NAME} resources"
+    )
+    add_executable(waml_${NAME} WIN32
+        ${dir}/App.cpp
+        ${SAMPLE_SHARED_DIR}/SampleHost.cpp
+        ${res})
+    target_include_directories(waml_${NAME} PRIVATE ${dir} ${dir}/resources ${SAMPLE_SHARED_DIR})
+    target_link_libraries(waml_${NAME} PRIVATE wui_render_d2d)
+endfunction()
+
+add_sample(basic)
+add_sample(list)
+
+# ---------------------------------------------------------------------------
+# Framework harnesses. These read sample markup and ViewModels, so they carry
+# every sample's include path.
 # ---------------------------------------------------------------------------
 add_executable(waml_tests tests/Tests.cpp)
 target_link_libraries(waml_tests PRIVATE wui_framework)
@@ -83,16 +102,17 @@ add_executable(waml_bench bench/Bench.cpp)
 target_link_libraries(waml_bench PRIVATE wui_framework)
 
 add_executable(waml_snapshot tools/Snapshot.cpp)
-target_include_directories(waml_snapshot PRIVATE ${GALLERY_DIR} ${GALLERY_DIR}/resources)
+target_include_directories(waml_snapshot PRIVATE ${SAMPLE_INCLUDES})
 target_link_libraries(waml_snapshot PRIVATE wui_render_d2d)
 
 add_executable(waml_interact tools/Interact.cpp)
-target_include_directories(waml_interact PRIVATE ${GALLERY_DIR} ${GALLERY_DIR}/resources)
+target_include_directories(waml_interact PRIVATE ${SAMPLE_INCLUDES})
 target_link_libraries(waml_interact PRIVATE wui_framework)
 
 add_executable(waml_dpishot tools/DpiShot.cpp)
-target_include_directories(waml_dpishot PRIVATE ${GALLERY_DIR} ${GALLERY_DIR}/resources)
+target_include_directories(waml_dpishot PRIVATE ${SAMPLE_INCLUDES})
 target_link_libraries(waml_dpishot PRIVATE wui_render_d2d)
 
 enable_testing()
+add_test(NAME unit COMMAND waml_tests)
 add_test(NAME unit COMMAND waml_tests)

@@ -118,6 +118,8 @@ public:
 protected:
     // Clips to the viewport and shifts content up by offset_.
     void PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) override;
+    // Lets Widget::ToLocal undo the scroll when converting pointer coordinates.
+    float ScrollShiftForPointers() const override { return offset_; }
 
 private:
     float offset_ = 0;

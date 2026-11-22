@@ -6,11 +6,10 @@
 #include "Core.h"
 #include "D2DRender.h"
 #include "Diagnostics.h"
-#include "GalleryVm.h"  // sample: the Gallery page's ViewModel
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
 #include "Mvvm.h"
-#include "Resource.h"  // WAML_RESOURCE_TYPE / IDR_WAML_GALLERY
+#include "BasicResource.h"  // IDR_WAML_BASIC (default page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
 #include "Types.h"
 #include "Waml.h"
@@ -33,7 +32,7 @@ using namespace wui;
 namespace {
 
 // Sample ViewModel, shared with the other tools.
-using SnapshotVm = sample::GalleryVm;
+
 
 std::string ReadFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -59,7 +58,7 @@ int main(int argc, char** argv) {
         const std::string resolved = ResolveWamlPath(wamlPath);
         loaded = LoadWamlFile(resolved.empty() ? wamlPath : resolved);
     } else {
-        loaded = LoadWaml(WAML_RESOURCE_TYPE, IDR_WAML_GALLERY, "samples\\gallery\\Gallery.waml");
+        loaded = LoadWaml(WAML_RESOURCE_TYPE, IDR_WAML_BASIC, "samples\\basic\\Basic.waml");
     }
     if (!loaded.ok) {
         std::printf("FAIL: cannot load markup: %s\n", loaded.error.c_str());
@@ -101,9 +100,11 @@ int main(int argc, char** argv) {
         std::printf("vm: ListViewVm (%zu rows)\n", static_cast<size_t>(listVm->ItemCount.Get()));
         vmRef = std::static_pointer_cast<RefObject>(listVm);
     } else {
-        auto galleryVm = std::make_shared<SnapshotVm>();
-        galleryVm->SeedItems(5);
-        vmRef = std::static_pointer_cast<RefObject>(galleryVm);
+        // Default: the basic page. There is no gallery sample any more; every
+        // page belongs to exactly one sample, and an unknown one is a mistake
+        // worth reporting rather than rendering with an empty ViewModel.
+        std::printf("FAIL: no ViewModel known for this markup\n");
+        return 1;
     }
 
     // Height is a parameter because pages differ in length: the gallery fits in

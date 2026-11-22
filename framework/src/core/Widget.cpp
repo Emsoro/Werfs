@@ -276,6 +276,17 @@ void Widget::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const P
     }
 }
 
+Point Widget::ToLocal(const Point& p) const {
+    // Sum the scroll amount contributed by every scroller between this widget and
+    // the root. A point in window space is ABOVE the content by that much, so it
+    // moves DOWN by the same amount to reach content space.
+    float scrolled = 0.0f;
+    for (const Widget* w = this; w != nullptr; w = w->parent_) {
+        scrolled += w->ScrollShiftForPointers();
+    }
+    return Point{p.x, p.y + scrolled};
+}
+
 Widget* Widget::HitTest(const Point& p) {
     // Scrolled content: `p` arrives in this widget's unscrolled space, so undo
     // the paint offset before descending. Descending without this would make

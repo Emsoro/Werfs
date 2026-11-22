@@ -133,6 +133,17 @@ public:
         return Rect{bounds_.x + paintOffset_.x, bounds_.y + paintOffset_.y, bounds_.w, bounds_.h};
     }
 
+    // Converts a window-space point into the space this widget's bounds_ live in.
+    //
+    // Pointer events arrive in window coordinates, while every control tests its
+    // own bounds_, which are unscrolled. Inside a ScrollViewer those differ by
+    // exactly the scroll offset, so dispatching the raw point made controls
+    // ignore clicks the moment the page scrolled.
+    //
+    // This walks up the ancestor chain asking each ScrollViewer how much it has
+    // scrolled, so nothing needs to be pushed down into the tree.
+    Point ToLocal(const Point& p) const;
+
     // --- invalidation counters (for tests / profiling) -----------------------
     static inline uint64_t LayoutCount = 0;
     static inline uint64_t PaintCount = 0;
@@ -146,6 +157,10 @@ public:
 protected:
     void SetDirtyUpwards(uint32_t flags);
     Widget* Root();
+    // How far this widget has scrolled its content, vertically. Only a
+    // ScrollViewer returns anything but zero; ToLocal walks the ancestor chain
+    // summing these to undo the scroll for pointer dispatch.
+    virtual float ScrollShiftForPointers() const { return 0.0f; }
     // Applies Width/Height/MinWidth/MinHeight/MaxWidth/MaxHeight from slots to
     // desired_. Called at the end of each control's Measure().
     void ApplySizeConstraints();

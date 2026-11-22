@@ -1853,11 +1853,9 @@ TEST("scrollviewer: scrolling actually moves what is painted") {
         return r.Hash();
     };
 
-
     const uint64_t atTop = hashAt(0.0f);
 
     const uint64_t atHundred = hashAt(100.0f);
-
 
     CHECK(atTop != atHundred);
 
@@ -1869,6 +1867,81 @@ TEST("scrollviewer: scrolling actually moves what is painted") {
 
     // Bounds are layout geometry and must NOT move; the shift happens at paint.
     CHECK(borderTopAtTop == borderTopScrolled);
+}
+
+TEST("scrollviewer: button inside a scrolled page still fires") {
+    // Regression: after scrolling, the page painted correctly but every control
+    // stopped responding. The host dispatches pointer events in window
+    // coordinates (DIPs), while bounds_ holds unscrolled content coordinates, so
+    // a control's own bounds_.Contains(local) check was off by exactly offset_.
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><ScrollViewer>"
+        "<StackPanel Orientation=\"Vertical\">"
+        "<Border Height=\"300\" Background=\"ControlFill\"/>"
+        "<Button Content=\"Hit me\" Command=\"{Binding Cmd}\"/>"
+        "</StackPanel></ScrollViewer></Page>",
+        ParseOptions{"svclick.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    int calls = 0;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    class CmdVm final : public ObservableObject {
+    public:
+        explicit CmdVm(std::function<void()> fn) {
+            Cmd.Set(std::make_shared<RelayCommand>(std::function<void()>(fn)));
+            Make("Cmd", Cmd);
+        }
+        ObservableProperty<RefPtr> Cmd{"Cmd"};
+    };
+    auto vm = std::make_shared<CmdVm>([&calls] { ++calls; });
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{400, 200});
+
+    auto* sv = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
+    CHECK(sv != nullptr);
+    if (!sv) return;
+    CHECK(sv->MaxScroll() > 0);
+
+    Widget* button = nullptr;
+    std::function<void(Widget*)> find = [&](Widget* w) {
+        if (!w || button) return;
+        if (std::string(w->TypeName()) == "wui/Button") { button = w; return; }
+        for (auto& c2 : w->Children()) find(c2.get());
+    };
+    find(root.get());
+    CHECK(button != nullptr);
+    if (!button) return;
+
+    sv->ScrollTo(0.0f);
+    const Rect layoutBounds = button->Bounds();
+    // Scroll as far as the page allows; the exact amount is clamped.
+    sv->ScrollTo(1000.0f);
+    const float scrolled = sv->ScrollOffset();
+    CHECK(scrolled > 0.0f);
+    // Where the button appears on screen now: layout position minus the scroll.
+    const Point screenPoint{layoutBounds.x + layoutBounds.w * 0.5f,
+                            layoutBounds.y + layoutBounds.h * 0.5f - scrolled};
+
+    // Hit testing must land on the button...
+    Widget* hit = root->HitTest(screenPoint);
+    CHECK(hit == button);
+    if (hit != button) return;
+
+    // ...and dispatching must reach it with coordinates it recognises. This is
+    // ...and dispatching must reach it with coordinates it recognises. This is
+    // the part that failed silently: the hit test passed while the control
+    // ignored the click because the point was in the wrong coordinate space.
+    // Same conversion the host performs before dispatching.
+    const Point localPt = hit->ToLocal(screenPoint);
+    hit->OnPointerDown(localPt);
+    hit->OnPointerUp(localPt);
+    CHECK(calls == 1);
+    // A second click must fire again, not latch.
+    hit->OnPointerDown(localPt);
+    hit->OnPointerUp(localPt);
+    CHECK(calls == 2);
 }
 
 int main(int argc, char** argv) {

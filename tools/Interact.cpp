@@ -7,9 +7,9 @@
 #include "Core.h"
 #include "Diagnostics.h"
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
-#include "GalleryVm.h"  // sample: the Gallery page's ViewModel
+#include "ListVm.h"     // sample: the list page's ViewModel
 #include "Mvvm.h"
-#include "Resource.h"  // WAML_RESOURCE_TYPE / IDR_WAML_GALLERY
+#include "BasicResource.h"  // IDR_WAML_BASIC (this tool defaults to the basic page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
 #include "SoftwareRender.h"
 #include "Types.h"
@@ -34,9 +34,6 @@ void Expect(bool cond, const char* what) {
 }
 
 void Assert(bool cond, const char* what) { Expect(cond, what); }
-
-// Sample ViewModel, shared with the other tools.
-using Vm = sample::GalleryVm;
 
 // The basic sample has a different ViewModel. Running the gallery assertions
 // against it would report failures that say nothing about the page, so the two
@@ -164,16 +161,85 @@ std::string ReadFile(const std::string& path) {
     return ss.str();
 }
 
+// Checks for samples/list/List.waml: DataTemplate rows, per-item context and
+// dynamic add/remove.
+int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
+    std::printf("\n[1] DataTemplate shows per-row data\n");
+    Widget* list = FindFirst(root, "wui/ListBox");
+    Expect(list != nullptr, "found ListBox");
+    if (!list) return g_failures == 0 ? 0 : 1;
+
+    auto* lb = dynamic_cast<ListBox*>(list);
+    Expect(lb != nullptr, "ListBox has the expected type");
+    if (!lb) return g_failures == 0 ? 0 : 1;
+
+    const int seeded = static_cast<int>(vm->ItemCount.Get());
+    Expect(lb->ItemCount() == seeded, "rows materialised from ObservableList");
+
+    // Row 1 must show its OWN title, not the first item's. This is the regression
+    // that once made every row render the same data.
+    if (seeded > 1) {
+        Widget* row = lb->ItemWidgetAt(1);
+        Assert(row != nullptr, "row 1 exists");
+        Widget* title = nullptr;
+        std::function<void(Widget*)> findTitle = [&](Widget* w) {
+            if (!w || title) return;
+            const int slot = w->SlotOf("Text");
+            if (slot >= 0) {
+                const auto v = w->Get<std::wstring>(slot);
+                if (v.rfind(L"Item ", 0) == 0) { title = w; return; }
+            }
+            for (auto& c2 : w->Children()) findTitle(c2.get());
+        };
+        findTitle(row);
+        Expect(title != nullptr, "row 1 contains a bound title");
+        if (title) {
+            Expect(title->Get<std::wstring>(title->SlotOf("Text")) == L"Item 2",
+                   "row 1 shows its own item (no DataContext crossover)");
+        }
+    }
+
+    std::printf("\n[2] commands add and remove rows\n");
+    const int before = lb->ItemCount();
+    Widget* add = ButtonWithText(root, L"Add");
+    Expect(add != nullptr, "found Add button");
+    if (add) {
+        root->ForceLayout(Size{700, 2000});
+        ClickAt(root, add);
+    }
+    Expect(lb->ItemCount() == before + 1, "Add appended a row");
+
+    Widget* remove = ButtonWithText(root, L"Remove");
+    Expect(remove != nullptr, "found Remove button");
+    if (remove) {
+        root->ForceLayout(Size{700, 2000});
+        ClickAt(root, remove);
+    }
+    Expect(lb->ItemCount() == before, "Remove dropped a row");
+
+    std::printf("\n[3] this page carries no basic-only controls\n");
+    // Keeps the two samples from drifting into one another.
+    Expect(FindFirst(root, "wui/TextBox") == nullptr, "list page has no TextBox");
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
-    // Same delivery switch as the demo: an explicit path wins, otherwise the
-    // build configuration decides (debug = file, release = embedded resource).
+    // An explicit path wins; otherwise fall back to the basic sample's resource.
+    // Each sample embeds its markup under its own id, so there is no single
+    // "default page" -- basic is the smallest and the one people run first.
     WamlLoadResult loaded;
+    // When falling back to the embedded resource, origin is "res:#101" and says
+    // nothing about which page it is. Keep the logical path alongside so page
+    // detection works the same either way.
+    std::string argPath = argc > 1 ? argv[1] : "samples\\basic\\Basic.waml";
     if (argc > 1) {
         const std::string resolved = ResolveWamlPath(argv[1]);
         loaded = LoadWamlFile(resolved.empty() ? argv[1] : resolved);
     } else {
-        loaded = LoadWaml(WAML_RESOURCE_TYPE, IDR_WAML_GALLERY, "samples\\gallery\\Gallery.waml");
+        loaded = LoadWaml(WAML_RESOURCE_TYPE, IDR_WAML_BASIC, argPath);
     }
     if (!loaded.ok) {
         std::printf("cannot load markup (%s): %s\n",
@@ -196,117 +262,17 @@ int main(int argc, char** argv) {
     TextSystem::Set(&text);
 
     // Dispatch on the page so each sample is driven against its own ViewModel.
-    // Asserting the gallery's expectations against another page would produce
-    // failures that say nothing about the code under test.
-    if (IsBasicPage(loaded.origin, argc > 1 ? argv[1] : "")) {
-        auto basicVm = std::make_shared<sample::BasicViewVm>();
-        WidgetPtr basicRoot = doc->Instantiate(&text);
-        basicRoot->SetDataContext(std::static_pointer_cast<RefObject>(basicVm));
-        basicRoot->ForceLayout(Size{700, 1200});
-        return RunBasicChecks(basicRoot.get(), basicVm);
+    if (IsBasicPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::BasicViewVm>();
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{700, 1200});
+        return RunBasicChecks(root.get(), vm);
     }
 
-    auto vm = std::make_shared<Vm>();
-    vm->Title.Set(L"demo"); // this tool asserts against a known title
-    vm->SeedItems(3);
-    WidgetPtr root = doc->Instantiate(&text);
-    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
-    root->ForceLayout(Size{760, 900});
-
-    std::printf("\n[1] initial bindings\n");
-    Widget* title = FindFirst(root.get(), "wui/TextBlock");
-    Expect(title && title->Get<std::wstring>(title->SlotOf("Text")) == L"demo", "title bound from VM");
-
-    std::printf("\n[2] command via click\n");
-    Widget* plus = ButtonWithText(root.get(), L"+");
-    Expect(plus != nullptr, "found '+' button");
-    const int before = vm->Count.Get();
-    if (plus) {
-        root->ForceLayout(Size{760, 900}); // ensure bounds are current
-        ClickAt(root.get(), plus);
-    }
-    Expect(vm->Count.Get() == before + 1, "click executed IncrementCommand");
-    Widget* minus = ButtonWithText(root.get(), L"-");
-    if (minus) ClickAt(root.get(), minus);
-    Expect(vm->Count.Get() == before, "click executed DecrementCommand");
-
-    std::printf("\n[3] two-way text input\n");
-    Widget* box = FindFirst(root.get(), "wui/TextBox");
-    Expect(box != nullptr, "found TextBox");
-    if (box) {
-        auto* tb = dynamic_cast<TextBox*>(box);
-        Expect(tb != nullptr, "TextBox has the expected type");
-        if (tb) {
-            tb->SetCaretToEnd();
-            tb->OnChar(L'o');
-            tb->OnChar(L'k');
-            Expect(vm->Name.Get() == L"ok", "typed characters reached the ViewModel");
-            vm->Name.Set(L"from-vm");
-            Expect(box->Get<std::wstring>(box->SlotOf("Text")) == L"from-vm",
-                   "VM change flowed back into the TextBox");
-        }
-    }
-
-    std::printf("\n[4] two-way checkbox toggle\n");
-    Widget* check = FindFirst(root.get(), "wui/CheckBox");
-    Expect(check != nullptr, "found CheckBox");
-    if (check) {
-        const bool wasChecked = vm->Enabled.Get();
-        const Rect& b = check->Bounds();
-        Widget* hit = root->HitTest(Point{b.x + 8, b.y + b.h * 0.5f});
-        Expect(hit == check, "hit test lands on the CheckBox");
-        if (hit) {
-            hit->OnPointerDown(Point{b.x + 8, b.y + b.h * 0.5f});
-            hit->OnPointerUp(Point{b.x + 8, b.y + b.h * 0.5f});
-        }
-        std::printf("    enabled: before=%d after=%d\n", static_cast<int>(wasChecked),
-                    static_cast<int>(vm->Enabled.Get()));
-        Expect(vm->Enabled.Get() != wasChecked, "toggle wrote back to IsChecked");
-    }
-
-    std::printf("\n[5] list rendering from DataTemplate\n");
-    Widget* list = FindFirst(root.get(), "wui/ListBox");
-    Expect(list != nullptr, "found ListBox");
-    if (auto* lb = dynamic_cast<ListBox*>(list)) {
-        Expect(lb->ItemCount() == 3, "3 rows materialised from ObservableList");
-        Widget* row = lb->ItemWidgetAt(1);
-        Assert(row != nullptr, "row 1 exists");
-        // Dump the row subtree so the check cannot silently test the wrong node.
-        std::function<void(Widget*, int)> dump = [&](Widget* w, int depth) {
-            if (!w) return;
-            std::printf("      %*s%s", depth * 2, "", w->TypeName());
-            const int slot = w->SlotOf("Text");
-            if (slot >= 0) std::printf(" text='%s'", WideToUtf8(w->Get<std::wstring>(slot)).c_str());
-            std::printf("\n");
-            for (auto& c2 : w->Children()) dump(c2.get(), depth + 1);
-        };
-        dump(row, 0);
-        // Find the row's title TextBlock (the one that is not the "#'n'" index).
-        Widget* rowText = nullptr;
-        std::function<void(Widget*)> findTitle = [&](Widget* w) {
-            if (!w || rowText) return;
-            const int slot = w->SlotOf("Text");
-            if (slot >= 0) {
-                const auto v = w->Get<std::wstring>(slot);
-                if (v.rfind(L"Item ", 0) == 0) {
-                    rowText = w;
-                    return;
-                }
-            }
-            for (auto& c2 : w->Children()) findTitle(c2.get());
-        };
-        findTitle(row);
-        if (rowText) {
-            std::printf("    row1 title = '%s'\n",
-                        WideToUtf8(rowText->Get<std::wstring>(rowText->SlotOf("Text"))).c_str());
-        }
-        Expect(rowText != nullptr, "row 1 contains a bound title");
-        if (rowText) {
-            Expect(rowText->Get<std::wstring>(rowText->SlotOf("Text")) == L"Item 2",
-                   "row 1 shows its own item (no DataContext crossover)");
-        }
-    }
-
-    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
-    return g_failures == 0 ? 0 : 1;
+    auto listVm = std::make_shared<sample::ListViewVm>();
+    WidgetPtr listRoot = doc->Instantiate(&text);
+    listRoot->SetDataContext(std::static_pointer_cast<RefObject>(listVm));
+    listRoot->ForceLayout(Size{700, 2000});
+    return RunListChecks(listRoot.get(), listVm);
 }
