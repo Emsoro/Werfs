@@ -70,9 +70,6 @@ cmake-build-*/
 WinUI-Gallery-3.0.4/
 microsoft-ui-xaml-winui3-release-2.7.0/
 
-# Design and planning notes -- kept local by request.
-docs/
-
 # ---------------------------------------------------------------------------
 # Tooling state
 # ---------------------------------------------------------------------------

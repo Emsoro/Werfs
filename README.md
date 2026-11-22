@@ -91,7 +91,6 @@ samples/gallery/        ← 示例应用，自带 VM、WAML、资源
     resources/
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
-docs/                        ← 设计与计划（不提交到仓库）
 ```
 
 关键约束：`framework/` 里**没有**任何 `Gallery.waml`、`GalleryVm` 或 `IDR_WAML_*` 的引用。资源 id 属于示例，定义在 `samples/gallery/resources/Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
@@ -167,7 +166,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **`ListBox` 无选中**：只渲染列表，无 `SelectedIndex`。
 - **不虚拟化**：见性能基线。
 
-这些都在路线图里，见 `docs/CODE_PLAN.md`。
+这些都在路线图里，见 `CODE_PLAN.md`。
 
 ---
 
@@ -175,8 +174,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 
 | 文件 | 内容 |
 |---|---|
-| `docs/CODE_PLAN.md` | 架构决策、迭代路线、风险登记 |
-| `SPIKE-REPORT.md` | 技术验证报告（H1–H8 假设的实测结论） |
+| `CODE_PLAN.md` | 实施计划 + 技术验证报告：架构决策、迭代路线、风险登记、缺陷复盘 |
 | `samples/gallery/Gallery.waml` | 覆盖全部已实现语法的示例 |
 
 ---
