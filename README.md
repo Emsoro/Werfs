@@ -162,7 +162,8 @@ samples/                ← 示例，单向依赖框架
     theming/               （规划 4）Light/Dark 主题
     usercontrol/           （规划 5）父子组件、两个独立数据源
     files/                 （规划 6）打开/保存/选文件夹   ← 需先补 IFileDialogService
-    animation/             （规划 7）隐式过渡与缓动        ← 需先补帧时钟
+    editor/                （规划 7）菜单/工具栏/多标签/未保存提示 ← 需先补浮层与模态
+    animation/             （规划 8）隐式过渡与缓动        ← 需先补帧时钟
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
@@ -185,7 +186,8 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 4 | `theming` | Light/Dark 切换与 token | 规划中 |
 | 5 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
 | 6 | `files` | **打开文件 / 另存为 / 选文件夹**，验证系统对话框接入 | 规划中，需先补 `IFileDialogService` |
-| 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
+| 7 | `editor` | **菜单 + 工具栏 + 多标签 + 未保存提示**，验证浮层与模态 | 规划中，需先补浮层与模态 |
+| 8 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
 
 两个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（把六个面板装进一个真实页面，也确实因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷）。
 
@@ -226,7 +228,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ## 诊断
 
 所有错误在加载期给出，带行列号（列按 Unicode 码点计）：
-
+```text
 demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you mean 'Text'?)
 ```
 

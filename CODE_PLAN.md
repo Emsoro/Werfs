@@ -65,8 +65,13 @@ build.ps1  CMakeLists.txt
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
 | **多示例 + 共享宿主**（`samples/shared`） | ✅ | 2 个示例（basic / list）共用同一 Win32+D2D 宿主 |
 | **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
-| **文件选择器**（打开文件 / 选择文件夹 / 保存文件） | ⬜ 规划 | 需 `IFileDialog`（COM），见 §10b.1 |
+| **文件选择器**（打开 / 保存 / 选文件夹） | ⬜ 规划 | 需 `IFileDialog`（COM），见 §10b.1 |
 | **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
+| **Visibility + 转换器** | ⬜ 规划 | 按条件显示/隐藏，见 §10c.3 |
+| **浮层**（Popup / Flyout） | ⬜ 规划 | z-order、点外关闭、边缘翻转，见 §10c.3 |
+| **模态**（ContentDialog） | ⬜ 规划 | 遮罩 + 焦点陷阱，见 §10c.3 |
+| **单选模型**（Selector 基类） | ⬜ 规划 | 供 TabView / ListBox / ComboBox 复用，见 §10c.3 |
+| **菜单 / 工具栏 / 多标签** | ⬜ 规划 | 见 §10c.2 |
 
 ## 3. 产物
 
@@ -549,12 +554,15 @@ samples/
   4. theming/      主题：Light/Dark 与 token             可立即开始
   5. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
   6. files/        系统：打开/保存/选文件夹               需先补 IFileDialog（10b.1）
-  7. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
+  7. editor/       集成：菜单 + 工具栏 + 多标签 + 未保存提示  需先补 Visibility/浮层/模态（10c）
+  8. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
 ```
 
 **为什么 `usercontrol` 排第五**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前几个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
 
-后两个（`files`、`animation`）不是「控件演示」，而是**横切能力**的验收：它们要求框架提供全新机制，所以排在所有控件类示例之后，见 §10b。
+后三个（`files`、`editor`、`animation`）不是「控件演示」，而是**横切能力**的验收：它们要求框架提供全新机制，所以排在所有控件类示例之后，见 §10b、§10c。
+
+`editor` 是**集成点**——它同时用到文件对话框、菜单、工具栏、标签栏和模态确认，是把前面所有能力串起来的那个示例，因此排在 `files` 之后。
 
 **依赖方向**：示例之间**不互相引用**。每个示例自带 WAML、ViewModel 和资源 id。
 
@@ -575,6 +583,7 @@ samples/
 **验收**：五个控件各一个示例，全部可交互且状态正确。
 
 ### 10a.3 `samples/binding/` — 四种绑定模式对照
+
 **目的**：绑定是 MVVM 的核心，但「OneTime 和 OneWay 到底差在哪」很难靠文字讲清。这里用**并排四列**、同一个数据源，让差异肉眼可见。
 
 | 示例 | 内容 | 教什么 |
@@ -677,7 +686,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 需要 OS 子系统集成 | 14 | **不做**：`WebView2`、`MediaPlayerElement`、`MapControl`、`Capture Element`、`Sound`、通知中心、Badge、JumpList、`AppWindow`、`AppWindowTitleBar`、`ContentIsland`、`System Backdrops`、`SystemBackdropElement`。注：**`Storage pickers` 已改判**——文件/文件夹选择不列为控件，而是作为横切能力实现，见 §10b.1 |
 | 纯控件 | 97 | 已完成 15 个 → **82 个待实现**（其中 P0 余 16） |
 
-**不追求一次做完**。按日常使用频率与实现成本分三档，本轮**只做 P0**：
+**不追求一次做完**。按日常使用频率与实现成本分三档：
 
 | 档位 | 数量 | 范围 | 何时做 |
 |---|---|---|---|
@@ -689,13 +698,13 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 | 分组 | 控件 | 新增框架能力 |
 |---|---|---|
-| 布局 | `Grid` | **行列定义 + 跨行跨列**（卡片布局硬需求） |
-| 布局 | `Canvas` | 绝对定位 |
-| 布局 | `WrapPanel` | 换行排列 |
-| 布局 | `VariableSizedWrapGrid` | 换行 + **单项跨行跨列**（Grid 的行列 + WrapPanel 的换行） |
+| 布局 | ✅ `Grid` | 行列定义 + 跨行跨列 |
+| 布局 | ✅ `Canvas` | 绝对定位 |
+| 布局 | ✅ `WrapPanel` | 换行排列 |
+| 布局 | ✅ `VariableSizedWrapGrid` | 换行 + 单项跨行跨列 |
+| 布局 | ✅ `Viewbox` | 缩放子内容 |
+| 布局 | ✅ `Expander` | 折叠展开 + 高度变化重排 |
 | 布局 | `RelativePanel` | **元素间相对关系**（需附加属性，见下） |
-| 布局 | `Viewbox` | 缩放子内容 |
-| 布局 | `Expander` | 折叠展开（需高度变化重排） |
 | 基础输入 | `ToggleButton` | 布尔 + 视觉状态 |
 | 基础输入 | `RepeatButton` | 按住连续触发 |
 | 基础输入 | `HyperlinkButton` | 链接样式 |
@@ -713,26 +722,29 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 图形 | `Line` | `PaintCtx` 需加画线 |
 | 图形 | `Shape` | 基础几何绘制 |
 
-**布局这一组已覆盖 WinUI-Gallery 的 Layout 分类**：`Border`、`StackPanel`、`ScrollViewer` 已有；本轮补齐 `Grid`、`Canvas`、`WrapPanel`、`VariableSizedWrapGrid`、`RelativePanel`、`Viewbox`、`Expander`。`SplitView` 归 P1（需浮层式面板），`LayoutPanel` 是自定义布局基类，不进 gallery。
+**布局这一组已覆盖 WinUI-Gallery 的 Layout 分类**：`Border`、`StackPanel`、`ScrollViewer` 已有；本轮补齐 6 个。`SplitView` 归 P1（需浮层式面板），`LayoutPanel` 是自定义布局基类，不作为示例条目。
 
-**P0 里真正的框架改造有六项**，其余是「注册类型 + 实现 Measure/Arrange/OnPaint」的重复劳动：
+**P0 里剩下的框架改造有五项**，其余是「注册类型 + 实现 Measure/Arrange/OnPaint」的重复劳动：
 
-1. `Grid` 的行列布局算法
-2. `VariableSizedWrapGrid` 的跨行列换行（复用 Grid 的跨行列 + WrapPanel 的换行）
-3. `RelativePanel` 的**附加属性机制**（`RelativePanel.RightOf="name"` 这类写法，当前解析器不支持带点号的属性名，也没有「按名字引用兄弟元素」的能力）
-4. `Image` 的 WIC 解码与缓存
-5. `PaintCtx` 增加 `DrawLine` / 路径绘制（支撑 `Line`、`Shape`、`ProgressRing`）
-6. `RadioButton` 的组作用域
+1. `RelativePanel` 的**附加属性机制**（`RelativePanel.RightOf="name"` 这类写法，当前解析器不支持带点号的属性名，也没有「按名字引用兄弟元素」的能力）
+2. `Image` 的 WIC 解码与缓存
+3. `PaintCtx` 增加 `DrawLine` / 路径绘制（支撑 `Line`、`Shape`、`ProgressRing`）
+4. `RadioButton` 的组作用域
+5. `TextBlock` 的 `FontFamily`（等宽字体，代码片段需要）
 
-**关于 `RelativePanel` 的额外成本**：它需要两样框架目前都没有的东西——**附加属性**（`RelativePanel.RightOf`）和**按 `x:Name` 查找兄弟元素**。`x:Name` 已经记录在 `NodeDesc::name` 里，但布局期没有「从名字解析到 Widget」的索引。若这两项成本评估偏高，可把它降到 P1，用 `Grid` 的固定行列达成相近效果——但既然要覆盖 Layout 分类，建议做。`RelativePanel` 的其余朝向关系还有：`LeftOf`、`Above`、`Below`、`AlignLeftWith`、`AlignTopWith` 等。
+**已完成的三项**：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列、`TextBlock` 自动换行。
+
+**关于 `RelativePanel` 的额外成本**：它需要两样框架目前都没有的东西——**附加属性**和**按 `x:Name` 查找兄弟元素**。`x:Name` 已经记录在 `NodeDesc::name` 里，但布局期没有「从名字解析到 Widget」的索引。若成本评估偏高，可降到 P1，用 `Grid` 的固定行列达成相近效果。
 
 **P1 — 之后做（16 个）**：`ComboBox`、`Popup`、`Flyout`、`MenuFlyout`、`ToolTip`、`ContentDialog`、`TeachingTip`、`AutoSuggestBox`、`CommandBar`、`AppBarButton`、`AppBarToggleButton`、`AppBarSeparator`、`BreadcrumbBar`、`MenuBar`、`SplitView`、`RatingControl`
 
 这 16 个共同卡在一个缺失子系统上：**浮层（Popup/Flyout）**。它要处理 z-order、点外关闭、焦点陷阱、窗口外定位，成本高于 P0 任意单项——但做完这一次，其中大多数会顺带完成。
 
+> **P1 已部分提前**：`MenuBar`、`MenuFlyout`、`CommandBar` 及其按钮，加上 P2 里的 `TabView`，已合并进 **§10c** 单独规划——真实编辑器界面离不开它们，且共享同一套浮层与单选模型。分四批交付（§10c.4），第一批 `Visibility` 最便宜、可立刻做。
+
 **P2 — 按需，不承诺（51 个）**：虚拟化集合（`ListView`/`GridView`/`TreeView`/`ItemsRepeater`/`FlipView`/`ItemsView`/`TableView`/`PullToRefresh`）、日期时间（4 个）、动画过渡（7 个）、导航容器（`NavigationView`/`TabView`/`Pivot`/`SelectorBar`）、分割按钮（3 个）、`ColorPicker`、`RichEditBox`、滚动增强（`PipsPager`/`PagerControl`/`SemanticZoom`/`AnnotatedScrollBar`/`ScrollView`）、画刷（`AcrylicBrush`/`RadialGradientBrush`）、`ThemeShadow`、`IconElement`/`AnimatedIcon`、`Compact Sizing`、`Clipboard`、`Chart`、`InkCanvas`、`AnimatedVisualPlayer`、`TitleBar`、`Window`、`LayoutPanel`、命令对象（`StandardUICommand`/`XamlUICommand`）
 
-**为什么这样切**：P0 覆盖「写一个真实窗口界面」的绝大部分，且除 Grid/Image/画线/组互斥外都是低风险增量。P1 被浮层这一项统一卡住，集中攻克一次即可解锁一批。P2 里的虚拟化与动画是另一个量级（见 R4、迭代 3），混进 P0 会拖垮进度。
+**为什么这样切**：P0 覆盖「写一个真实窗口界面」的绝大部分，且除 `RelativePanel`/`Image`/画线/组互斥外都是低风险增量。P1 被浮层统一卡住，集中攻克一次即可解锁一批。P2 里的虚拟化与动画是另一个量级（见 R4、§10b.2），混进 P0 会拖垮进度。
 
 ### 10a.8 实施顺序与依赖
 
@@ -744,13 +756,20 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 4 | `theming` | 无（主题已支持） | 可立即开始 |
 | 5 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
 | 6 | `files` | **`IFileDialogService`**（10b.1） | 需先补框架 |
-| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
+| 7 | `editor` | **Visibility → Selector → 浮层 → 模态**（10c.3） | 需先补框架，分 4 批 |
+| 8 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
 
 **关键判断**：`usercontrol` 是第一个被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。排在第五意味着前四个可以先落地，把框架改造集中成一次迭代，而不是一开始就卡在设计决策上。
 
-`files` 和 `animation` 属于另一类：它们不是控件演示，而是**横切能力**的验收现场，各自要求框架补一套全新机制（COM 对话框桥接、帧时钟）。这两个的详细设计见 §10b，实施顺序上 `files` 在 `animation` 之前——前者纯增量，后者要改绘制与失效流程。
+`files`、`editor`、`animation` 属于另一类：它们不是控件演示，而是**横切能力**的验收现场，各自要求框架补一套全新机制。详细设计见 §10b 与 §10c。
 
-**关于控件覆盖数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。已完成 15 个；P0 余 16 个，P1 的 16 个等浮层子系统完成后顺带解锁，P2 的 51 个按需再议。
+**三者之间的顺序有明确理由**：
+
+1. `files` 先——纯增量，不碰渲染路径。
+2. `editor` 其次——它是**集成点**，把文件对话框、菜单、工具栏、标签页、模态确认串起来。但它内部还要再分四批（§10c.4），其中 `Visibility` 最便宜、浮层最贵。
+3. `animation` 最后——要改绘制与失效流程，且与滚动偏移的交互最微妙。
+
+**关于控件覆盖数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。已完成 15 个；P0 余 16 个，P1 的 16 个（含菜单、工具栏、`TabView` 相关）等浮层子系统完成后顺带解锁，P2 的 51 个按需再议。
 
 ### 10a.9 构建与打包
 
@@ -1003,6 +1022,217 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 
 ---
 
+---
+
+## 10c. 菜单 / 工具栏 / 多标签编辑界面（待实现能力）
+
+这一组是**面向真实编辑器应用**的能力，比控件本身重要得多：真正的程序都有一个菜单栏、一条工具栏、一排标签页，以及「关掉时有未保存改动怎么办」。
+
+它们共同压在同一套缺失机制上，所以放在一起规划，而不是拆成四个独立条目。
+
+### 10c.1 共同缺口
+
+| 缺口 | 影响 | 目前状态 |
+|---|---|---|
+| **浮层（Popup/Flyout）** | 菜单下拉、右键菜单、标签溢出列表都靠它 | **完全没有**。无 z-order、无点外关闭、无窗口外定位 |
+| **模态（ContentDialog）** | 「未保存，是否保存？」必须模态 | **完全没有**。无遮罩、无焦点陷阱 |
+| **单选模型（Selection）** | 标签栏要知道「当前是哪个」 | **没有**。`ListBox` 连选中都不支持 |
+| **命令路由** | 菜单项与工具栏按钮调用同一个动作，且随焦点变化启用/禁用 | 只有控件级 `Command`，无全局路由 |
+
+前两项已在 §10a.7 的 P1 里登记为「16 个控件被浮层卡住」。本节把它们**提前**，理由见 10c.4。
+
+### 10c.2 控件与能力
+
+#### 菜单
+
+| 项 | 说明 | 新增能力 |
+|---|---|---|
+| `MenuBar` | 顶部横排（文件 / 编辑 / 查看） | 布局 + 浮层 |
+| `MenuBarItem` | 一个可下拉的顶级项 | 浮层锚点 |
+| `MenuFlyout` | 下拉面板 | **浮层** |
+| `MenuFlyoutItem` | 单个菜单项（含图标、快捷键文本、禁用态） | 浮层内容 |
+| `MenuFlyoutSeparator` | 分隔线 | 无（复用 `Line`） |
+| `MenuFlyoutSubItem` | 二级子菜单 | 浮层嵌套 + 位置翻转 |
+
+WAML 形态（`Flyout` 是附加属性形式，与 WinUI 一致）：
+
+```xml
+<MenuBar>
+  <MenuBarItem Title="文件">
+    <MenuFlyout>
+      <MenuFlyoutItem Text="新建"  Accelerator="Ctrl+N"
+                      Command="{Binding NewCommand}"/>
+      <MenuFlyoutItem Text="打开…" Accelerator="Ctrl+O"
+                      Command="{Binding OpenCommand}"/>
+      <MenuFlyoutSeparator/>
+      <MenuFlyoutItem Text="保存"  Accelerator="Ctrl+S"
+                      Command="{Binding SaveCommand}"
+                      IsEnabled="{Binding CanSave}"/>
+      <MenuFlyoutSubItem Text="导出">
+        <MenuFlyout>
+          <MenuFlyoutItem Text="导出为 PNG" Command="{Binding ExportPngCommand}"/>
+          <MenuFlyoutItem Text="导出为 SVG" Command="{Binding ExportSvgCommand}"/>
+        </MenuFlyout>
+      </MenuFlyoutSubItem>
+    </MenuFlyout>
+  </MenuBarItem>
+  <MenuBarItem Title="编辑">…</MenuBarItem>
+</MenuBar>
+```
+
+#### 工具栏
+
+| 项 | 说明 | 新增能力 |
+|---|---|---|
+| `CommandBar` | 横排按钮组，可分主次区 | 布局 + 溢出 |
+| `AppBarButton` | 图标 + 可选文字 | 图标（依赖 `Image`/`SymbolIcon`） |
+| `AppBarToggleButton` | 可切换的工具栏按钮 | 复用 `ToggleButton` |
+| `AppBarSeparator` | 竖分隔线 | `Line` 旋转或专用绘制 |
+| 溢出（`IsCompact`） | 窗口窄时收进「⋯」 | 浮层 + 测量反馈 |
+
+```xml
+<CommandBar>
+  <CommandBar.PrimaryCommands>
+    <AppBarButton Icon="New"  Label="新建" Command="{Binding NewCommand}"/>
+    <AppBarButton Icon="Save" Label="保存" Command="{Binding SaveCommand}"/>
+    <AppBarSeparator/>
+    <AppBarToggleButton Icon="Bold" Label="粗体" IsChecked="{Binding IsBold}"/>
+  </CommandBar.PrimaryCommands>
+</CommandBar>
+```
+
+#### 多标签
+
+| 项 | 说明 | 新增能力 |
+|---|---|---|
+| `TabView` | 标签条 + 内容区 | **单选模型** + 横向滚动 |
+| `TabViewItem` | 单个标签（标题 / 可关闭 / 内容） | 关闭按钮 + 脏标记 |
+| 关闭 / 新增 | 每个标签的 `×`，末尾的 `+` | 命令 + 命中测试 |
+| 溢出 | 标签过多时出现下拉列表 | 浮层 |
+| 拖拽重排 | 可选，二期 | 拖放（`WM_DROPFILES` 之外的自定义拖拽） |
+
+```xml
+<TabView ItemsSource="{Binding Documents}"
+         SelectedItem="{Binding ActiveDocument, Mode=TwoWay}"
+         AddTabCommand="{Binding NewDocumentCommand}"
+         CloseTabCommand="{Binding CloseDocumentCommand}">
+  <TabView.ItemTemplate>
+    <DataTemplate>
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <TextBlock Text="{Binding Title}"/>
+        <!-- 未保存标记：有改动时显示 • -->
+        <TextBlock Text="•" Foreground="Accent"
+                   Visibility="{Binding IsDirty, Converter=...}"/>
+      </StackPanel>
+    </DataTemplate>
+  </TabView.ItemTemplate>
+</TabView>
+```
+
+> ⚠️ `Visibility` 与转换器当前都不存在，见 10c.3 的「绑定层补强」。
+
+#### 未保存提示
+
+这是本组里**唯一纯粹的流程问题**，也是最能体现 MVVM 价值的地方：
+
+| 场景 | 行为 |
+|---|---|
+| 关闭单个标签 | 若 `IsDirty` → 弹确认（保存 / 不保存 / 取消） |
+| 关闭窗口 | 逐个检查脏文档；多个脏文档可「全部保存」 |
+| 切换到另一文档 | **不提示**（改动仍在内存，只是焦点变了） |
+
+流程设计——**ViewModel 决定「问不问」，View 负责「怎么问」**：
+
+```cpp
+class DocumentVm {
+public:
+    void RequestClose() {
+        if (!IsDirty.Get()) { Closed.emit(); return; }
+        // 交给宿主弹窗：ViewModel 不持有对话框
+        pendingClose_ = true;
+        PromptCloseRequested.emit(FileTitle.Get());
+    }
+
+    // 宿主在用户选择后回调
+    void ResolveClose(CloseChoice choice) {
+        if (choice == CloseChoice::Save)     { Save(); Closed.emit(); }
+        else if (choice == CloseChoice::Discard) { Closed.emit(); }
+        // Cancel: 什么都不做，标签保留
+        pendingClose_ = false;
+    }
+};
+```
+
+宿主侧用 `ContentDialog` 呈现三选一，按钮文案与默认按钮（Enter 触发「保存」还是「取消」）由 View 决定——**危险操作默认应落在「取消」上**。
+
+### 10c.3 依赖的框架补强
+
+菜单/工具栏/标签栏本身是「注册类型 + 实现 Measure/Arrange/OnPaint」，真正的成本在下面四项：
+
+| 编号 | 补强项 | 说明 | 阻塞谁 |
+|---|---|---|---|
+| 10d.3.1 | **浮层子系统** | `PaintCtx` 增加「在当前控件之上绘制」的层；点外关闭；窗口边缘翻转；z-order | 菜单、子菜单、溢出列表 |
+| 10d.3.2 | **模态遮罩** | 全窗口半透明层 + 焦点陷阱 + Esc 关闭 | 未保存提示 |
+| 10d.3.3 | **单选模型** | `Selector` 基类：`SelectedIndex`/`SelectedItem`/`SelectionChanged`，`ListBox` 也接入 | `TabView`、未来的 `ComboBox` |
+| 10d.3.4 | **命令路由** | 焦点所在控件 → 向上冒泡找处理器；快捷键分发（`Ctrl+S`） | 菜单快捷键、工具栏启用态 |
+| 10d.3.5 | **绑定层补强** | `Visibility` 属性（`Visible`/`Collapsed`）+ `BoolToVisibility` 转换器 | 脏标记、禁用态的更复杂表达 |
+
+**`Visibility` 值得单独说**：目前只能绑 `IsEnabled`，而「按条件显示/隐藏」在标签栏（脏标记）、信息栏、空状态里到处都是。它比浮层便宜得多，应该**先单独做完**——不等浮层。
+
+### 10c.4 实施顺序
+
+分成四批，每批独立可交付：
+
+| 批次 | 内容 | 依赖 | 可验收的成果 |
+|---|---|---|---|
+| **A** | `Visibility` + `BoolToVisibility` | 无 | 能按条件隐藏元素；标签脏标记可用 |
+| **B** | 单选模型 + `TabView` / `TabViewItem` | A | **多标签切换、关闭、新增**都能工作；关闭暂不提示 |
+| **C** | 浮层 + `MenuBar` / `MenuFlyout` / `CommandBar` | A | 菜单可下拉、工具栏可溢出 |
+| **D** | 模态 + 未保存提示 | B | 关脏标签时弹出「保存/不保存/取消」 |
+
+**为什么这样排**：
+
+- **A 最先**，因为它最便宜且立刻被 B 用上；单独做它也能改善现有示例（`InfoBar` 之类）。
+- **B 排 C 之前**，尽管「多标签」听起来比「菜单」复杂。原因是：`TabView` 只需要**单选模型**（已能被 `ListBox` 复用），不需要浮层；而菜单没有浮层根本无法实现。先做能独立成立的那个。
+- **C 的浮层**是这一整组的最大单项成本，但它同时解锁 P1 里的 16 个控件（`ComboBox`、`Flyout`、`ToolTip`、`ContentDialog`、`AutoSuggestBox`……），所以一次投入回报最大。
+- **D 最后**，因为它是 B 和 C 的组合应用，本身不引入新机制。
+
+### 10c.5 示例：`samples/editor/`
+
+这是**第七个示例**，也是第一个「像真实程序」的示例：一个多文档文本编辑器骨架。
+
+| 区块 | 内容 | 验证 |
+|---|---|---|
+| 1 菜单栏 | 文件（新建/打开/保存/另存为）/ 编辑（撤销/剪切/复制） | 下拉、快捷键、禁用态 |
+| 2 工具栏 | 新建、保存、粗体开关 | 溢出（缩窄窗口） |
+| 3 标签栏 | 三个初始文档，可切换、可关闭、可新建 | 单选、`×`、`+`、脏标记 |
+| 4 未保存提示 | 改一个字符后关标签 | 三选一；选取消则标签保留 |
+| 5 关闭窗口守卫 | 多个脏文档 | 逐个询问或「全部保存」 |
+| 6 与文件对话框联动 | 菜单「打开」调用 §10b.1 | 打开真实文件并成为新标签 |
+
+**这个示例同时验收 §10b.1（文件对话框）和 §10d（菜单/标签）**，是把前面所有能力串起来的集成点。建议放在 `files` 之后、`animation` 之前。
+
+### 10c.6 风险
+
+| 编号 | 风险 | 影响 | 应对 |
+|---|---|---|---|
+| R20 | 浮层的 z-order 与裁剪冲突 | `ScrollViewer` 的 clip 会裁掉弹出的菜单 | 浮层不走子树绘制，而是挂在根节点的「顶层列表」里 |
+| R21 | 焦点陷阱不完整 | 模态期间 Tab 能跑到背后控件 | 模态期间把根节点标记为 `modalChild_`，命中测试直接短路 |
+| R22 | 标签关闭时绑定泄漏 | 关掉标签后旧树仍订阅 VM | 关闭前 `DetachBindings()`，并有测试断言观察者归零 |
+| R23 | 快捷键与 `TextBox` 冲突 | 在输入框里按 `Ctrl+A` 应全选文字而非触发菜单 | 命令路由先给焦点控件一次机会，未处理才冒泡 |
+| R24 | 脏标记判定不准 | 撤销回初始状态后仍显示「已修改」 | 记录「初始快照哈希」，内容相同即视为干净 |
+| R25 | 标签过多时布局退化 | 每个标签都参与测量，几十个时变慢 | 逐期：先做横向滚动，溢出下拉放二期 |
+
+### 10c.7 不做
+
+| 项 | 原因 |
+|---|---|
+| 拖拽重排标签 | 需要自研拖放（非 `WM_DROPFILES`），成本高于收益，二期再议 |
+| 标签浮动成独立窗口 | 需要多窗口管理，另一个量级 |
+| 撤销/重做栈 | 这是文档模型（`UndoStack`）而非 UI 能力，可由示例自己实现 |
+| 富文本编辑 | `RichEditBox` 属 P2，与 GUI 框架层无关 |
+
+---
 # 第五部分：迭代路线
 
 > 示例建设与框架迭代**并行推进**。示例矩阵见 10a；下面每轮的示例交付项都已标注对应小节。
@@ -1082,7 +1312,7 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 
 ## 15b. 迭代 3b：系统集成与动效（v0.8+）
 
-两项横切能力，详细设计见 §10b。**分两批做，不并行**：`files` 是纯增量，`animation` 要动绘制流程。
+三项横切能力，详细设计见 §10b 与 §10c。**顺序：文件对话框 → 编辑器界面 → 动画**，理由见下。
 
 ### 3b.A 文件选择器（先做）
 
@@ -1094,19 +1324,36 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 | 3b.A.4 | 宿主接入 + 假实现供测试 | `waml_interact` 可断言命令被调用 |
 | 3b.A.5 | `samples/files/` | 四个区块全部可交互 |
 
-**为什么排在这里**：它不阻塞任何现有工作，且示例能立刻用上——`list` 示例的「导入列表」、未来 `theming` 的「载入主题文件」都依赖它。
+**为什么最先**：纯增量，不碰渲染路径，且后续的 `editor` 示例直接用它。
 
-### 3b.B 动画（后做）
+### 3b.B 编辑器界面（中间）
+
+按 §10c.4 的四批推进，每批独立可交付：
 
 | 任务 | 说明 | 验收 |
 |---|---|---|
-| 3b.B.1 | 帧时钟 + `AdvanceAnimations` | 手动推进时间可断言中间值 |
-| 3b.B.2 | 数值属性补间（`Opacity` 先行） | 过渡期间值落在两端之间 |
-| 3b.B.3 | `Transition.*` 属性 + 白名单 | 白名单外属性报诊断 |
-| 3b.B.4 | `Expander` 高度补间 | 不再硬跳变 |
-| 3b.B.5 | `ScrollViewer` 平滑滚动 | 滚轮有约 150 ms 缓动 |
-| 3b.B.6 | **快照强制关闭动画** | 双主题哈希仍确定（门禁） |
-| 3b.B.7 | `samples/animation/` | 五个区块全部可交互 |
+| 3b.B.1 | `Visibility` + `BoolToVisibility` | 按条件隐藏元素；脏标记可用 |
+| 3b.B.2 | 单选模型（`Selector` 基类）+ `ListBox` 接入 | `SelectedIndex` 双向可用 |
+| 3b.B.3 | `TabView` / `TabViewItem` | 多标签切换、关闭、新增可用 |
+| 3b.B.4 | 浮层子系统（顶层列表 + 点外关闭 + 翻转） | 菜单能弹出且不被裁剪（R20） |
+| 3b.B.5 | `MenuBar` / `MenuFlyout` / `CommandBar` | 菜单可下拉、工具栏可缩窄溢出 |
+| 3b.B.6 | 模态 + `ContentDialog` | 遮罩、焦点陷阱、Esc 关闭 |
+| 3b.B.7 | 未保存提示流程（三选一） | 选取消则标签保留 |
+| 3b.B.8 | `samples/editor/` | 六个区块全部可交互 |
+
+**为什么在动画之前**：它的前三批不依赖绘制流程改动（`Visibility` 是属性、`Selector` 是模型、`TabView` 用横向滚动），可以安全先做；只有浮层和模态需要新的绘制层，而那是「加一个顶层列表」，不是改现有绘制路径。
+
+### 3b.C 动画（最后）
+
+| 任务 | 说明 | 验收 |
+|---|---|---|
+| 3b.C.1 | 帧时钟 + `AdvanceAnimations` | 手动推进时间可断言中间值 |
+| 3b.C.2 | 数值属性补间（`Opacity` 先行） | 过渡期间值落在两端之间 |
+| 3b.C.3 | `Transition.*` 属性 + 白名单 | 白名单外属性报诊断 |
+| 3b.C.4 | `Expander` 高度补间 | 不再硬跳变 |
+| 3b.C.5 | `ScrollViewer` 平滑滚动 | 滚轮有约 150 ms 缓动 |
+| 3b.C.6 | **快照强制关闭动画** | 双主题哈希仍确定（门禁） |
+| 3b.C.7 | `samples/animation/` | 五个区块全部可交互 |
 
 **关键约束**：动画一旦引入，**确定性快照**就必须显式关闭它，否则哈希随帧漂移。这条要写进 `Snapshot.cpp` 并有测试守住——§7.14/§7.15 已经证明「看起来能跑但显示不对」的缺陷代价很高。
 
@@ -1172,6 +1419,12 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 | R17 | 帧驱动与空闲空转 | 动画结束后仍在重绘，CPU 不降 | 仅在 `HasActiveAnimations()` 为真时续帧 |
 | R18 | 动画属性白名单蔓延 | 布局类属性每帧重算，掉帧 | 一期只开放数值型；`AffectsMeasure` 属性限用 |
 | R19 | 动画与滚动偏移交互 | 两者都改 `offset_`，可能互相覆盖 | 动画只改目标值，绘制期平移逻辑（§7.15）不动 |
+| R20 | 浮层与裁剪冲突 | `ScrollViewer` 的 clip 会把弹出的菜单裁掉 | 浮层不进子树绘制，挂在根节点的顶层列表 |
+| R21 | 焦点陷阱不完整 | 模态期间 Tab 跑到背后控件 | 模态时标记根节点，命中测试短路 |
+| R22 | 标签关闭后绑定泄漏 | 旧树仍订阅 VM，内存增长 | 关闭前 `DetachBindings()`，测试断言观察者归零 |
+| R23 | 快捷键与输入框冲突 | `Ctrl+A` 该全选文字而非触发菜单 | 命令路由先给焦点控件机会，未处理才冒泡 |
+| R24 | 脏标记判定不准 | 撤销回初始状态仍显示「已修改」 | 记录初始内容哈希，相同即视为干净 |
+| R25 | 标签过多布局退化 | 每标签都参与测量，几十个时变慢 | 一期横向滚动，溢出下拉放二期 |
 
 ## 20. 未覆盖 / 明确不做
 
@@ -1189,28 +1442,31 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 | 多模块（DLL）类型注册 | 未验证 | 明确不支持 |
 
 ## 21. 验收标准（v1.0）
-
-1. **示例矩阵齐备**（10a）：`basic`、`list`、`binding`、`theming`、`usercontrol`、`files`、`animation` 七个可独立运行的示例，`build.ps1` 无参数即全部构建。
+1. **示例矩阵齐备**（10a）：`basic`、`list`、`binding`、`theming`、`usercontrol`、`files`、`editor`、`animation` 八个可独立运行的示例，`build.ps1` 无参数即全部构建。
 2. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
 3. **系统集成可用**：`files` 示例里打开/保存/选文件夹三种对话框都能返回真实路径，且无窗口环境下不崩溃（10b.1）。
-4. **动效可用且不破坏确定性**：`animation` 示例的过渡肉眼连贯，同时双主题快照哈希仍确定（10b.2 + R16）。
-5. **控件页覆盖 P0 清单**：10b 之前的 15 个 + P0 余 16 个 = 31 个控件都有示例，每页 ≥3 个可交互示例。
-6. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
-7. **主题可切换**：Light/Dark 即时生效，无需重启。
-8. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。
-9. **单文件分发**：无 DLL、无外部资源目录。
+4. **编辑器界面可用**（§10c）：`editor` 示例能开多个标签、切换、关闭；改过内容后关标签会弹出「保存/不保存/取消」，选取消则标签保留。
+5. **动效可用且不破坏确定性**：`animation` 示例的过渡肉眼连贯，同时双主题快照哈希仍确定（10b.2 + R16）。
+6. **控件覆盖 P0 清单**：当前 15 个 + P0 余 16 个 = 31 个控件都有示例，每页 ≥3 个可交互示例。
+7. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
+8. **主题可切换**：Light/Dark 即时生效，无需重启。
+9. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。
+10. **单文件分发**：无 DLL、无外部资源目录。
 
 ## 22. 下一步（按投入产出排序）
 
-1. **`binding` / `theming` 示例**（迭代 2 同期）：不依赖任何新框架能力，可立即开工，也是验证「多示例」架构的下一步。
-2. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层 `SetDataContext(dc, own)` 已支持本地值优先，只缺标记层入口，改动面小、信息量大。
-3. **文件选择器**（迭代 3b.A、§10b.1）：纯增量，不碰渲染路径，却能立刻给所有示例加上真实文件 I/O。
-4. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：示例页的 WAML 目前属性重复较多，样式系统能显著缩短。
-5. **动画一期**（迭代 3b.B、§10b.2）：要改绘制与失效流程，风险高一个量级，应在滚动那批修复稳定之后再动；**动工前先写好 R16 的门禁测试**。
-6. **`ListBox` 选中**（迭代 3.3）：把侧栏从按钮列表换成真正的列表控件。
-7. **`TextBox` 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
-8. **绑定失败可观测到所有宿主**：Debug 下断言 `BindingErrorCount()` 为 0，让「拼错属性名」在开发期立即暴露。
-9. **`wamlc` 仍不做**：解析 8 KB 仅 175 µs，启动期成本可忽略。
+1. **`binding` / `theming` 示例**（迭代 2 同期）：不依赖任何新框架能力，可立即开工。
+2. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层已支持本地值优先，只缺标记层入口。
+3. **`Visibility` + `BoolToVisibility`**（迭代 3b.B.1、§10c.3）：**性价比最高的一项**——一天量级的工作，立刻改善所有示例的条件显示，并解锁标签脏标记。
+4. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：示例页 WAML 属性重复较多，样式系统能显著缩短。
+5. **文件选择器**（迭代 3b.A、§10b.1）：纯增量，不碰渲染路径，却能给所有示例加上真实文件 I/O。
+6. **单选模型 + `TabView`**（§10c.4 批次 B）：多标签是「像真实程序」的第一步，且不依赖浮层。
+7. **浮层 + 菜单/工具栏**（§10c.4 批次 C）：最大单项成本，但一次解锁 P1 的 16 个控件。
+8. **模态 + 未保存提示**（§10c.4 批次 D）：`editor` 示例的收尾，本身不引入新机制。
+9. **动画一期**（迭代 3b.C、§10b.2）：要改绘制与失效流程，风险最高；**动工前先写好 R16 的门禁测试**。
+10. **`TextBox` 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
+11. **绑定失败可观测到所有宿主**：Debug 下断言 `BindingErrorCount()` 为 0，让「拼错属性名」在开发期立即暴露。
+12. **`wamlc` 仍不做**：解析 8 KB 仅 175 µs，启动期成本可忽略。
 
 每完成一项都应能独立构建、跑测试、截图验证。
 
