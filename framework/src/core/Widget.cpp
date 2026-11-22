@@ -3,6 +3,10 @@
 
 #include <algorithm>
 
+// Needed for the complete StyleTriggerHost type: ~Widget resets a shared_ptr to it,
+// and shared_ptr's deleter must see the full definition.
+#include "../waml/StyleTriggers.h"
+
 namespace wui {
 
 // ---------------------------------------------------------------------------
@@ -21,9 +25,16 @@ ITextService* TextSystem::Get() { return g_textService; }
 Widget::Widget() = default;
 Widget::~Widget() {
     DetachBindings();
+    // Release the trigger host while this widget is still a valid object: its
+    // destructor unsubscribes from our slot observers, which needs `this`.
+    triggerHost_.reset();
     for (auto& c : children_) {
         if (c) c->parent_ = nullptr;
     }
+}
+
+void Widget::SetTriggerHost(std::shared_ptr<StyleTriggerHost> host) {
+    triggerHost_ = std::move(host);
 }
 
 void Widget::BindType(const TypeInfo* type) {

@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.7.0.0
+> 版本：0.7.2.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.7.0.0 已完成**地基 + 布局层 + 应用外壳**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**浮层子系统（菜单/工具栏溢出/模态）**、**26 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板，以及 MenuBar/CommandBar/TabView/ContentDialog）、两种渲染后端、**111 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `editor`）共用一套宿主。
+当前 0.7.2.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**浮层子系统（菜单/工具栏溢出/模态）**、**26 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板，以及 MenuBar/CommandBar/TabView/ContentDialog）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**148 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `editor`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 111 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 148 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -84,7 +84,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 111 个单元/集成用例 |
+| `waml_tests.exe` | 148 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -592,6 +592,36 @@ S-1-4-151873615-607647326   Allow   DeleteSubDirectoriesAndFiles, Write, Delete,
 **修复**：把 `available.w` 作为期望宽度（有界时）。
 
 **教训**：和 §7.19 同类——**「内容尺寸」与「分配尺寸」是两个问题**。单行输入框应当拉满列宽，多行文本块应当按内容收缩；两者默认行为不同，不能一个 `Measure` 通吃。
+
+## 7.22 【严重】触发器全部失效，因为样式定义比控件树先死
+
+**现象**：`<Trigger>` 的测试里 `ActiveCount()` 返回 1，证明「触发器认为自己激活了」，但被它设置的属性**一个字都没变**。所有开销都正确、所有状态都正确，效果是零。
+
+**根因**（生命周期，不是逻辑）：
+
+`StyleTriggerHost` 的每个状态持有 `const StyleTrigger*`，指向 `CompiledDocument::styles` 里的 `StyleDesc::triggers`。而实际用法是：
+
+```cpp
+auto doc = CompileWaml(...);           // unique_ptr<CompiledDocument>
+WidgetPtr root = doc->Instantiate(...); // 树建立
+// doc 在函数返回时销毁 —— 但 root 还要用很久
+```
+
+文档一销毁，宿主指向的是已释放内存。`triggers[i].setters.size()` 读出来是 0（该内存已被别的分配覆盖），于是 `Activate` 的循环执行零次、`active` 置真、什么都没写。
+
+**为什么极难发现**：
+
+1. **状态变量在宿主自己的内存里**，不受影响，所以 `ActiveCount()` 一直是对的；
+2. `setters` 为空时循环自然零次，没有崩溃、没有越界、没有任何异常信号；
+3. 症状是「什么都没发生」，而这与「触发器语法没生效」几乎无法区分。
+
+**修复**：宿主自己持有 `shared_ptr<const std::vector<std::shared_ptr<StyleDesc>>>`（`NodeDesc` 也携带同一份），生命周期由引用计数保证，与文档无关。
+
+**教训**：
+
+- **解析期的数据结构被运行期对象引用时，必须有共享所有权**。写下 `const X*` 的瞬间就要问：「X 的所有者是谁？它比我活得久吗？」
+- **自省接口会骗人**。`ActiveCount()` 这种「我是否激活」的断言让人以为逻辑没问题，因为它测的是宿主自己的状态。断言要落在**效果**上：属性值变了没有。
+- **这个 bug 只能被真实使用模式抓到**。它需要「文档释放、树存活」——而这正是 `waml_interact` 和所有示例的做法。纯单元测试如果一直持有 `doc`，会永远看不见它。
 
 ---
 
@@ -1391,14 +1421,108 @@ public:
 | 任务 | 说明 | 状态 |
 |---|---|---|
 | 2.1 `Grid` 控件 | 行列定义 + 跨行列 | **✅ 已完成** |
-| 2.2 `Style` / `Setter` | 具名样式，可 `BasedOn` | 待做 |
-| 2.3 `ResourceDictionary` | WAML 内定义颜色/尺寸常量 | 待做 |
+| 2.2 `Style` / `Setter` | 具名样式，可 `BasedOn` | **✅ 已完成** |
+| 2.3 `ResourceDictionary` | WAML 内定义颜色/尺寸常量 | **✅ 已完成**（具名字面量） |
 | 2.4 等宽字体 | FontFamily 属性 | 待做 |
 | 2.5 `StackPanel` 的 `Justify` | Start/Center/End/SpaceBetween | 待做 |
+| 2.6 **`Trigger`** | 「属性等于某值时追加 setter」，激活/恢复两态 | **✅ 已完成** |
 
-**风险**：`Style` 引入后，属性优先级（本地值 > 样式 > 默认值）需明确并测试。
+**风险（已消解）**：属性优先级（本地值 > 样式 > 默认值）需明确并测试 —— 见下方 §13.1，三条优先级各有一个测试锁定。
 
-**同期交付示例**：`samples/binding/`、`samples/theming/`（见 10a.3、10a.5，均不依赖本迭代的新能力，可与迭代 2 并行）。
+### 13.1 `Style` 的实现与取舍
+
+**语法**（`<Style>` 是资源元素，不是控件，因此不占位、不计入子元素数量）：
+
+```xml
+<Style x:Key="Surface" TargetType="Border">
+  <Setter Property="Background" Value="CardBackground"/>
+  <Setter Property="BorderThickness" Value="1"/>
+</Style>
+<Style x:Key="EditorSurface" TargetType="Border" BasedOn="{StaticResource Surface}">
+  <Setter Property="Background" Value="ControlFill"/>
+</Style>
+
+<Border Style="{StaticResource EditorSurface}" BorderThickness="0,1,0,0"/>
+<!--                                  ↑ 本地值覆盖样式，这是设计的重点 -->
+```
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 何时解析 | **加载期**，不是绘制期 | `Setter` 写了类型上不存在的属性 → 带行号的加载错误；写成绘制期查找，拼错就是**静默无效**（§7.2 同族） |
+| 优先级 | 本地值 > 样式链（基类在前）> 默认值 | 写在内联的属性必须赢，否则样式只能靠删掉才能局部覆盖 |
+| `BasedOn` | 链式，**基类先应用** | 派生样式覆盖基类，符合继承语义 |
+| `TargetType` 不同能否 `BasedOn` | **不允许** | 「从 Button 样式派生一个 TextBlock 样式」是笔误，不是特性 |
+| `Style` 声明位置 | 任意位置，**先于使用也先于声明** | 整棵树先收集再验证；要求「先声明后使用」是一条没有理由的规则 |
+| `Setter` 里的绑定 | **显式拒绝** | 样式持有的是「对所有使用者相同的字面量」，没有 per-instance 源可读；拒绝好过接受后静默不生效 |
+| 模板内是否生效 | **是** | `CloneTree` 必须搬运 `style` 指针；漏掉会让「模板外的相同标记有样式、列表行没有」 |
+
+**优先级的三条测试**（`waml_tests.exe style`）：无本地覆盖 → 样式生效；有本地覆盖 → 本地赢且样式其余项仍生效；`BasedOn` → 派生赢、基类项继承。
+
+### 13.2 `ResourceDictionary` 的实现与取舍
+
+**语法**（元素名只是分组，值是元素体）：
+
+```xml
+<ResourceDictionary>
+  <Color x:Key="Brand">#0A84FF</Color>
+  <Number x:Key="CardRadius">6</Number>
+  <Thickness x:Key="StatusPad">14,8,14,8</Thickness>
+</ResourceDictionary>
+```
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 形状 | **具名字面量表**，不是对象树 | 真正缺的能力是「这个颜色只写一次」；值树会引入生命周期、可变性与类型系统，回报不成比例 |
+| 替换时机 | **类型转换之前** | 于是同一个名字可以当颜色、数字、或整个 `Thickness` 用，不必为每种类型做一套资源 |
+| 能否互相引用 | 可以，**深度上限 8** | 调色板可以分层；有上限才能把循环变成诊断（WAML0207）而不是死循环 |
+| 用在哪 | 属性、`Setter` 的 `Value`、`BasedOn`、`Style` 本身都可以 | 一个 `{StaticResource X}` 语法覆盖全部引用点，用户不用记四种写法 |
+| 与标记扩展的关系 | **在绑定解析之前**替换 | 否则 `{StaticResource X}` 会被当成未知标记扩展（实测就是这么失败的） |
+
+> 实测踩到的坑：把替换放在「是不是绑定」判断**之后**时，`Background="{StaticResource Brand}"` 报 `unsupported markup extension 'StaticResource'`；`Setter` 里则报「必须是字面量」。两处都改成先展开、再判断，才是正确的顺序。
+
+**为什么不做 `{x:Static}` / `VisualState`**：那是另一层（状态与模板选择），而本轮要解决的是「重复的字面量」和「按值换外观」。`VisualState` 需要状态机与过渡动画，等 `animation` 落地后再做才有意义，否则会设计出一套只能用 `Setter` 模拟的状态机。
+
+### 13.3 `Trigger` 的实现与取舍
+
+**语法**（写在 `<Style>` 里，与 `<Setter>` 并列）：
+
+```xml
+<Style x:Key="Tinted" TargetType="CheckBox">
+  <Setter Property="Background" Value="CardBackground"/>
+  <Trigger Property="IsChecked" Value="True">
+    <Setter Property="Background" Value="ControlFill"/>
+  </Trigger>
+</Style>
+```
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 何时求值 | **运行时**，这是它和 `Setter` 唯一的本质区别 | 条件取决于运行中的值，加载期无法回答 |
+| 恢复方式 | **记录激活前基线**，条件不再成立时写回 | 就地覆盖、事后重算是**错的**：停用的触发器会把值永久留在元素上（勾选框取消勾选后仍是高亮色） |
+| 与本地值的关系 | **触发器不写本地设置过的槽位** | 本地 > 样式，而触发器属于样式；否则内联 `FontSize="11"` 会在触发器一激活时被悄悄改掉 |
+| 基线记录时机 | **只在该触发器首次激活时** | 第二次激活时槽位已持有触发值，把它记成基线会让停用变成空操作 |
+| 多个触发器 | **两趟**：先全部停用，再全部激活 | 单趟会让 A 的输出改变 B 的条件，结果取决于声明顺序 |
+| 继承 | 沿 `BasedOn` 链收集，基类在前 | 与 `Setter` 同一规则 |
+| 能否监视 `Ref` 属性 | **拒绝**（WAML0104） | 对象没有值相等语义，比较必然任意 |
+| 空触发器的 `Trigger` | **加载错误**（WAML0106） | 永远不会生效的条件；报错好过让人猜「为什么没反应」 |
+| 无触发器的元素 | **不分配宿主** | 绝大多数控件没有触发器，不该为此付出每个元素的代价 |
+| 重入保护 | 宿主写槽位时置 `writing_`，回调直接返回 | 触发器可以监视自己写的属性，没有这层会无限重入 |
+
+**§7.22 生命周期缺陷（本轮最难的一个）**
+
+现象：所有触发器测试都显示 `ActiveCount()==1`，但属性值**一点没变**。
+
+根因：`StyleTriggerHost` 的状态里存的是 `const StyleTrigger*`，指向 `CompiledDocument::styles` 里的 `StyleDesc`。而 `waml_interact` / 测试的用法是「`Compile` → `Instantiate` → 丢弃 `unique_ptr<CompiledDocument>`」——widget 树比它来自的文档活得更久。文档一销毁，宿主读到的是已释放内存，`triggers[i].setters` 变成空 vector，于是 `Activate` 循环零次、`active=true` 但什么都不写。
+
+它「看起来像逻辑正确」是因为 `active` 标志在宿主自己的内存里，不受影响；只有指向外部的数据是垃圾。
+
+**修复**：`StyleTriggerHost` 自己持有 `shared_ptr<const vector<shared_ptr<StyleDesc>>>`，`NodeDesc` 也携带同一份。宿主从此自给自足，不依赖任何外部生命周期。
+
+**教训**：
+
+- **「解析期的数据结构被运行期对象引用」必须有共享所有权**。加 `const X*` 的时候要问一句「X 的所有者是谁，活多久」。
+- 这个 bug 的症状极具误导性：**状态变量是对的，被观察的数据是错的**。`ActiveCount()` 这种自省接口反而让人相信逻辑没问题。断言必须落在**效果**上（属性值变了没），不能只看「触发器认为自己激活了」。
+- 如果当时只做单元测试、不做页面级验证，这个 bug 会漏掉——它需要「文档被释放、树还活着」这个真实使用模式。`waml_interact` 正是这个模式。
 
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
@@ -1557,7 +1681,7 @@ public:
 |---|---|---|
 | IME 组字、选区、剪贴板（自绘 TextBox） | **未实现** | 仅有插入/退格/删除/方向键/Home/End/回车。**中文输入不可用**，需 Go/No-Go 决策 |
 | 虚拟化列表 | 未实现 | 计划 v1.1 |
-| 样式/资源字典/触发器/动画 | 未实现 | 计划 v0.6+ |
+| `VisualState` / `FontFamily` / 等宽字体 | 未实现 | 样式、资源字典与 `Trigger` 已落地（§13.1–13.3）；`VisualState` 需要状态机与过渡，与动画一起做 |
 | 无障碍（UIA Provider） | 未实现 | 仅保留 `AutomationRole` 属性位 |
 | 原生孤岛（`NativeHost`） | 未实现 | 类型注册表预留了命名空间 |
 | D3D11 + DXGI 交换链 | 未验证 | 用 D2D WIC 目标替代 |
@@ -1603,7 +1727,7 @@ public:
 
 # 附录
 
-## A. 测试清单（111 用例）
+## A. 测试清单（148 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1631,6 +1755,9 @@ public:
 | selector | 3 | 点击选中、双向往返、键盘移动并钳制 |
 | tabview | 5 | 切换标签换内容、点×不选中、+调命令、增删后选中有效、标题来自模型 |
 | **shell** | **10** | 菜单打开/执行/关闭、点外关闭且吞掉点击、禁用命令不执行且菜单不关、子菜单两级 Esc、工具栏溢出与边界、溢出菜单携带隐藏命令、对话框模态性（吞点外）、Esc 映射取消、Enter 映射默认、快捷键解析与格式化一致 |
+| **style** | **19** | 样式生效、本地覆盖样式、`BasedOn` 继承与覆盖、裸 key 与 StaticResource 等价、后置声明可解析、单子元素容器内放 Style、以及错误路径：未定义 key（带建议）、未知属性（带建议）、非法值、类型不匹配、`BasedOn` 环、`BasedOn` 类型不一致、重复 key、缺 `TargetType`、Setter 内禁止绑定；另含模板内生效、样式计数 |
+| **resource** | **9** | 颜色/尺寸/Thickness 命名、在 Setter 内使用、资源嵌套引用、环检测、未定义 key（带建议）、重复 key、字典不计入子元素、普通属性引用 |
+| **trigger** | **13** | 激活/恢复两态、不覆盖本地值、首帧即生效、多触发器独立、`BasedOn` 继承、无触发器不分配宿主；错误路径：未知被监视属性（带建议）、空触发器、缺 `Value`、`Ref` 属性不可触发、非法值；与资源组合 |
 | *（无前缀）* | 2 | 页面级集成：basic 页滚动、滚动后按钮仍可点 |
 
 **另有 `waml_interact.exe` 的页面级验收**（不是单元测试，是真实输入驱动）：

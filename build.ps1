@@ -236,6 +236,7 @@ $CoreSources = @(
     'src\mvvm\Converters.cpp'
     'src\waml\Diagnostics.cpp'
     'src\waml\Parser.cpp'
+    'src\waml\StyleTriggers.cpp'
     'src\render\SoftwareRender.cpp'
     'src\platform\Resources.cpp'
     'src\platform\FileDialogWin32.cpp'

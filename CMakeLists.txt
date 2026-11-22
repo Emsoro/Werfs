@@ -35,6 +35,7 @@ set(FRAMEWORK_SRC
     framework/src/mvvm/Binding.cpp
     framework/src/waml/Diagnostics.cpp
     framework/src/waml/Parser.cpp
+    framework/src/waml/StyleTriggers.cpp
     framework/src/render/SoftwareRender.cpp
     framework/src/platform/Resources.cpp
 )

@@ -25,6 +25,10 @@ enum class DiagCode : uint16_t {
     BadBindingMode = 202,     // WAML0202
     UnresolvedPath = 203,     // WAML0203
     DuplicateName = 204,      // WAML0204
+    MissingStyle = 205,       // WAML0205  Style="{StaticResource X}" with no such key
+    StyleTargetMismatch = 206,// WAML0206  Style targets a different type than the element
+    StyleCycle = 207,         // WAML0207  BasedOn chain loops
+    DuplicateStyle = 208,     // WAML0208  two styles share a key
     BadTemplate = 301,        // WAML0301
 };
 

@@ -9,6 +9,7 @@
 #include "FileDialog.h"
 #include "Mvvm.h"
 #include "SoftwareRender.h"
+#include "StyleTriggers.h"
 #include "Types.h"
 #include "Waml.h"
 #include "Widget.h"
@@ -2165,8 +2166,745 @@ TEST("file dialog: fake service round-trips a path") {
 }
 
 // ---------------------------------------------------------------------------
-// Application shell (§10c.4 batches C + D): menus, command bar, modal dialog.
+// Styles (§13.2): <Style>/<Setter>, BasedOn, and property precedence.
 // ---------------------------------------------------------------------------
+namespace {
+
+// Instantiates a document and returns the widget with x:Name.
+Widget* Styled(const std::string& src, DiagnosticBag& bag, const char* name = "t") {
+    auto doc = Compile(src, bag);
+    if (!doc) return nullptr;
+    // One retained tree at a time. Keeping every tree alive let a later test's
+    // FindByName("t") hit an EARLIER test's widget, whose style had no trigger --
+    // which read as "triggers do not apply" rather than "the fixture is stale".
+    static std::vector<WidgetPtr> keep;
+    keep.clear();
+    keep.push_back(doc->Instantiate(&g_fakeText));
+    WidgetPtr root = keep.back();
+    root->ForceLayout(Size{400, 300});
+    return root->FindByName(name);
+}
+
+} // namespace
+
+TEST("style: a Setter with no local override applies") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Style x:Key="Primary" TargetType="Button">
+    <Setter Property="FontSize" Value="20"/>
+  </Style>
+  <Button x:Name="t" Content="Go" Style="{StaticResource Primary}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 20.0f, 0.01);
+}
+
+TEST("style: a local attribute overrides the style") {
+    InstallText();
+    DiagnosticBag bag;
+    // This is THE precedence rule the whole feature rests on: writing the property
+    // inline must win, or a style becomes impossible to escape without deleting it.
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Style x:Key="Primary" TargetType="Button">
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="Padding" Value="30"/>
+  </Style>
+  <Button x:Name="t" Content="Go" Style="{StaticResource Primary}" FontSize="11"/>
+</Page>)WAML",
+                       bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 11.0f, 0.01); // local wins
+    CHECK_NEAR(b->Get<Thickness>(b->SlotOf("Padding")).l, 30.0f, 0.01); // style still applies
+}
+
+TEST("style: BasedOn inherits and the derived style overrides") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Style x:Key="Base" TargetType="Button">
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Padding" Value="8"/>
+  </Style>
+  <Style x:Key="Big" TargetType="Button" BasedOn="{StaticResource Base}">
+    <Setter Property="FontSize" Value="24"/>
+  </Style>
+  <Button x:Name="t" Content="Go" Style="{StaticResource Big}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 24.0f, 0.01); // derived wins
+    CHECK_NEAR(b->Get<Thickness>(b->SlotOf("Padding")).l, 8.0f, 0.01); // inherited
+}
+
+TEST("style: BasedOn accepts a bare key as well as StaticResource") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Style x:Key="A" TargetType="Button">
+    <Setter Property="FontSize" Value="17"/>
+  </Style>
+  <Style x:Key="B" TargetType="Button" BasedOn="A">
+    <Setter Property="Padding" Value="4"/>
+  </Style>
+  <Button x:Name="t" Content="Go" Style="{StaticResource B}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 17.0f, 0.01);
+}
+
+TEST("style: Style accepts a bare key too") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Style x:Key="K" TargetType="Button">
+    <Setter Property="FontSize" Value="19"/>
+  </Style>
+  <Button x:Name="t" Content="Go" Style="K"/>
+</Page>)WAML",
+                       bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 19.0f, 0.01);
+}
+
+TEST("style: a style declared after its user still resolves") {
+    InstallText();
+    DiagnosticBag bag;
+    // Markup reads top-down, but a style block at the bottom of a page is
+    // reasonable. Requiring declaration-before-use would be a rule with no
+    // justification, so collection runs as its own pass.
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Button x:Name="t" Content="Go" Style="{StaticResource Late}"/>
+  <Style x:Key="Late" TargetType="Button">
+    <Setter Property="FontSize" Value="21"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    if (!b) {
+        std::printf("    diag: %s\n", bag.ToText().c_str());
+    }
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 21.0f, 0.01);
+}
+
+TEST("style: inside a single-child Border is not a load error") {
+    InstallText();
+    DiagnosticBag bag;
+    // <Style> is a resource, not a child: it must not count toward "at most one
+    // child" or a Border containing a style block would fail to load.
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Border>
+    <Style x:Key="S" TargetType="Border">
+      <Setter Property="CornerRadius" Value="9"/>
+    </Style>
+    <TextBlock x:Name="t" Text="hi"/>
+  </Border>
+</Page>)WAML",
+                       bag, "Border");
+    if (!b) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(!bag.HasErrors());
+}
+
+TEST("style: undefined key is a load error with a suggestion") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="Primary" TargetType="Button">
+    <Setter Property="FontSize" Value="20"/>
+  </Style>
+  <Button Content="Go" Style="{StaticResource Primry}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("WAML0205") != std::string::npos);
+    CHECK(text.find("Primary") != std::string::npos); // suggestion
+}
+
+TEST("style: a Setter naming an unknown property is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSzie" Value="20"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("WAML0102") != std::string::npos);
+    // The point of resolving at load time: the typo names its fix.
+    CHECK(text.find("FontSize") != std::string::npos);
+}
+
+TEST("style: a Setter with a bad value is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="big"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0104") != std::string::npos);
+}
+
+TEST("style: applying a style to the wrong type is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="20"/>
+  </Style>
+  <TextBlock Text="hi" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("WAML0206") != std::string::npos);
+    CHECK(text.find("wui/Button") != std::string::npos);
+    CHECK(text.find("wui/TextBlock") != std::string::npos);
+}
+
+TEST("style: a BasedOn cycle is a load error, not a hang") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="A" TargetType="Button" BasedOn="B">
+    <Setter Property="FontSize" Value="1"/>
+  </Style>
+  <Style x:Key="B" TargetType="Button" BasedOn="A">
+    <Setter Property="Padding" Value="2"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0207") != std::string::npos);
+}
+
+TEST("style: BasedOn with a mismatched target type is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="B" TargetType="Button">
+    <Setter Property="FontSize" Value="1"/>
+  </Style>
+  <Style x:Key="T" TargetType="TextBlock" BasedOn="B">
+    <Setter Property="FontSize" Value="2"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0206") != std::string::npos);
+}
+
+TEST("style: duplicate keys are rejected") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="1"/>
+  </Style>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="2"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0208") != std::string::npos);
+}
+
+TEST("style: a missing TargetType is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile("<Page><Style x:Key=\"S\"><Setter Property=\"FontSize\" Value=\"1\"/></Style></Page>",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0106") != std::string::npos);
+}
+
+TEST("style: a binding inside a Setter is refused explicitly") {
+    DiagnosticBag bag;
+    // Refusing beats accepting: a Setter holds one literal for every user of the
+    // style, so a binding there would have no per-instance source to read.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="TextBlock">
+    <Setter Property="Text" Value="{Binding Title}"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0104") != std::string::npos);
+}
+
+TEST("style: applies inside a DataTemplate") {
+    InstallText();
+    DiagnosticBag bag;
+    // CloneTree used to drop NodeDesc::style, which would have made every list row
+    // unstyled while the identical markup outside a template worked.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="Row" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="33"/>
+  </Style>
+  <ListBox ItemsSource="{Binding Items}">
+    <ListBox.ItemTemplate>
+      <DataTemplate>
+        <TextBlock Text="{Binding Title}" Style="{StaticResource Row}"/>
+      </DataTemplate>
+    </ListBox.ItemTemplate>
+  </ListBox>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) {
+        std::printf("    diag: %s\n", bag.ToText().c_str());
+        return;
+    }
+    auto vm = std::make_shared<ListVm>();
+    auto list = std::make_shared<wui::ObservableList<ListItem>>();
+    list->Add(std::make_shared<ListItem>(1));
+    vm->Items.Set(std::static_pointer_cast<RefObject>(list));
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{300, 200});
+
+    auto* box = dynamic_cast<ListBox*>(root->Children()[0].get());
+    CHECK(box != nullptr);
+    if (!box) return;
+    CHECK(box->ItemCount() == 1);
+    Widget* item = box->ItemWidgetAt(0);
+    CHECK(item != nullptr);
+    if (!item) return;
+    CHECK_NEAR(item->Get<float>(item->SlotOf("FontSize")), 33.0f, 0.01);
+}
+
+TEST("trigger: fires when the watched property matches, and restores when it does not") {
+    InstallText();
+    DiagnosticBag bag;
+    // The core behaviour: a checkbox that tints itself while checked, and -- the part
+    // that is easy to get wrong -- goes back to normal when unchecked. An
+    // implementation that only overwrites in place leaves the tint stuck.
+    Widget* cb = Styled(R"WAML(
+<Page>
+  <Style x:Key="Tinted" TargetType="CheckBox">
+    <Setter Property="Background" Value="CardBackground"/>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="Background" Value="ControlFill"/>
+    </Trigger>
+  </Style>
+  <CheckBox x:Name="t" Content="hi" Style="{StaticResource Tinted}"/>
+</Page>)WAML",
+                        bag);
+    if (!bag.ToText().empty()) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(cb != nullptr);
+    if (!cb) return;
+    CHECK(cb->TriggerHost() != nullptr);
+    // Starts unchecked: the style's own setter holds, the trigger does not.
+    CHECK(cb->TriggerHost()->ActiveCount() == 0);
+    const Color base = cb->Get<Color>(cb->SlotOf("Background"));
+
+    cb->SetSlotValue(cb->SlotOf("IsChecked"), Value::Bool(true));
+    CHECK(cb->TriggerHost()->ActiveCount() == 1);
+    const Color tinted = cb->Get<Color>(cb->SlotOf("Background"));
+    CHECK(!(tinted == base));
+
+    cb->SetSlotValue(cb->SlotOf("IsChecked"), Value::Bool(false));
+    CHECK(cb->TriggerHost()->ActiveCount() == 0);
+    // Back to exactly the style's value, not to a default and not stuck on the tint.
+    CHECK(cb->Get<Color>(cb->SlotOf("Background")) == base);
+}
+
+TEST("trigger: does not override a local attribute") {
+    InstallText();
+    DiagnosticBag bag;
+    // Local > style is the precedence users rely on. A trigger is part of the style,
+    // so it must lose too -- otherwise an inline value silently wins on first paint
+    // and loses the moment the trigger fires, which is the worst of both.
+    Widget* cb = Styled(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="FontSize" Value="30"/>
+    </Trigger>
+  </Style>
+  <CheckBox x:Name="t" Content="hi" Style="{StaticResource S}" FontSize="11"/>
+</Page>)WAML",
+                        bag);
+    CHECK(cb != nullptr);
+    if (!cb) return;
+    cb->SetSlotValue(cb->SlotOf("IsChecked"), Value::Bool(true));
+    // A trigger is part of the style, and local still wins: the inline FontSize="11"
+    // must survive even while the trigger is active.
+    CHECK(cb->TriggerHost()->ActiveCount() == 1);
+    CHECK_NEAR(cb->Get<float>(cb->SlotOf("FontSize")), 11.0f, 0.01);
+}
+
+TEST("trigger: is visible on the first paint when the property starts matching") {
+    InstallText();
+    DiagnosticBag bag;
+    // An already-true trigger must apply during instantiation, not on the first
+    // later write. Otherwise a checkbox bound to a VM whose IsChecked starts true
+    // looks wrong until the user touches it.
+    Widget* cb = Styled(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Setter Property="FontSize" Value="12"/>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="FontSize" Value="26"/>
+    </Trigger>
+  </Style>
+  <CheckBox x:Name="t" Content="hi" Style="{StaticResource S}" IsChecked="True"/>
+</Page>)WAML",
+                        bag);
+    CHECK(cb != nullptr);
+    if (!cb) return;
+    CHECK(cb->TriggerHost()->ActiveCount() == 1);
+    CHECK_NEAR(cb->Get<float>(cb->SlotOf("FontSize")), 26.0f, 0.01);
+}
+
+TEST("trigger: several triggers on one style are independent") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* cb = Styled(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="Background" Value="CardBackground"/>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="FontSize" Value="20"/>
+    </Trigger>
+    <Trigger Property="IsEnabled" Value="False">
+      <Setter Property="Background" Value="ControlFill"/>
+    </Trigger>
+  </Style>
+  <CheckBox x:Name="t" Content="hi" Style="{StaticResource S}"/>
+</Page>)WAML",
+                        bag);
+    CHECK(cb != nullptr);
+    if (!cb) return;
+    CHECK(cb->TriggerHost()->ActiveCount() == 0);
+    cb->SetSlotValue(cb->SlotOf("IsChecked"), Value::Bool(true));
+    CHECK(cb->TriggerHost()->ActiveCount() == 1);
+    CHECK_NEAR(cb->Get<float>(cb->SlotOf("FontSize")), 20.0f, 0.01);
+    // The other trigger is unaffected by the first firing.
+    const Color bg = cb->Get<Color>(cb->SlotOf("Background"));
+    cb->SetSlotValue(cb->SlotOf("IsEnabled"), Value::Bool(false));
+    CHECK(cb->TriggerHost()->ActiveCount() == 2);
+    CHECK(!(cb->Get<Color>(cb->SlotOf("Background")) == bg));
+}
+
+TEST("trigger: a trigger in a BasedOn style is inherited") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* cb = Styled(R"WAML(
+<Page>
+  <Style x:Key="Base" TargetType="CheckBox">
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="FontSize" Value="28"/>
+    </Trigger>
+  </Style>
+  <Style x:Key="Derived" TargetType="CheckBox" BasedOn="{StaticResource Base}">
+    <Setter Property="Background" Value="CardBackground"/>
+  </Style>
+  <CheckBox x:Name="t" Content="hi" Style="{StaticResource Derived}"/>
+</Page>)WAML",
+                        bag);
+    CHECK(cb != nullptr);
+    if (!cb) return;
+    cb->SetSlotValue(cb->SlotOf("IsChecked"), Value::Bool(true));
+    CHECK_NEAR(cb->Get<float>(cb->SlotOf("FontSize")), 28.0f, 0.01);
+}
+
+TEST("trigger: a watched property that does not exist is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Trigger Property="IsCekced" Value="True">
+      <Setter Property="FontSize" Value="20"/>
+    </Trigger>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("WAML0102") != std::string::npos);
+    CHECK(text.find("IsChecked") != std::string::npos); // suggestion
+}
+
+TEST("trigger: an empty trigger is a load error") {
+    DiagnosticBag bag;
+    // A trigger with no setters can never do anything; reporting it beats letting the
+    // author wonder why their condition has no effect.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Trigger Property="IsChecked" Value="True"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0106") != std::string::npos);
+}
+
+TEST("trigger: a trigger with no Value is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Trigger Property="IsChecked">
+      <Setter Property="FontSize" Value="20"/>
+    </Trigger>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0106") != std::string::npos);
+}
+
+TEST("trigger: an object-valued property cannot be triggered on") {
+    DiagnosticBag bag;
+    // A Ref property has no value equality to compare against.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Trigger Property="Command" Value="x">
+      <Setter Property="FontSize" Value="20"/>
+    </Trigger>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0104") != std::string::npos);
+}
+
+TEST("trigger: a bad trigger value is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Trigger Property="IsChecked" Value="yes">
+      <Setter Property="FontSize" Value="20"/>
+    </Trigger>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0104") != std::string::npos);
+}
+
+TEST("trigger: a setter value may come from a resource") {
+    InstallText();
+    DiagnosticBag bag;
+    // Resources and triggers compose: the palette stays in one place.
+    Widget* cb = Styled(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="On">#00AA00</Color>
+  </ResourceDictionary>
+  <Style x:Key="S" TargetType="CheckBox">
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="Background" Value="{StaticResource On}"/>
+    </Trigger>
+  </Style>
+  <CheckBox x:Name="t" Content="hi" Style="{StaticResource S}"/>
+</Page>)WAML",
+                        bag);
+    if (!bag.ToText().empty()) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(cb != nullptr);
+    if (!cb) return;
+    cb->SetSlotValue(cb->SlotOf("IsChecked"), Value::Bool(true));
+    const Color c = cb->Get<Color>(cb->SlotOf("Background"));
+    CHECK_NEAR(c.g, 0xAA / 255.0f, 0.01);
+    CHECK_NEAR(c.r, 0.0f, 0.01);
+}
+
+TEST("trigger: an element with no triggers pays nothing") {
+    InstallText();
+    DiagnosticBag bag;
+    // The host is only allocated when a style actually has triggers. This is why
+    // Widget holds a pointer rather than the state inline.
+    Widget* b = Styled(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="20"/>
+  </Style>
+  <Button x:Name="t" Content="Go" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK(b->TriggerHost() == nullptr);
+}
+
+TEST("resource: a named colour is usable in an attribute") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* b = Styled(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="Brand">#0A84FF</Color>
+  </ResourceDictionary>
+  <Border x:Name="t" Background="{StaticResource Brand}"/>
+</Page>)WAML",
+                       bag, "t");
+    if (!bag.ToText().empty()) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(b != nullptr);
+    if (!b) return;
+    const Color c = b->Get<Color>(b->SlotOf("Background"));
+    CHECK_NEAR(c.r, 0x0A / 255.0f, 0.01);
+    CHECK_NEAR(c.g, 0x84 / 255.0f, 0.01);
+    CHECK_NEAR(c.b, 1.0f, 0.01);
+}
+
+TEST("resource: usable as a style's Setter value") {
+    InstallText();
+    DiagnosticBag bag;
+    // The combination that makes the feature worth having: a palette declared once,
+    // consumed by styles, so changing the brand colour is one line.
+    Widget* b = Styled(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="Brand">#FF3B30</Color>
+    <Number x:Key="BodySize">17</Number>
+  </ResourceDictionary>
+  <Style x:Key="Card" TargetType="Border">
+    <Setter Property="Background" Value="{StaticResource Brand}"/>
+  </Style>
+  <Style x:Key="Body" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{StaticResource BodySize}"/>
+  </Style>
+  <Border x:Name="t" Style="{StaticResource Card}"/>
+</Page>)WAML",
+                       bag, "t");
+    if (!bag.ToText().empty()) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(b != nullptr);
+    if (!b) return;
+    const Color c = b->Get<Color>(b->SlotOf("Background"));
+    CHECK_NEAR(c.r, 1.0f, 0.01);
+    CHECK_NEAR(c.g, 0x3B / 255.0f, 0.01);
+}
+
+TEST("resource: a thickness can be named whole") {
+    InstallText();
+    DiagnosticBag bag;
+    Widget* b = Styled(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Thickness x:Key="CardPad">16,12,16,12</Thickness>
+  </ResourceDictionary>
+  <Border x:Name="t" Padding="{StaticResource CardPad}"/>
+</Page>)WAML",
+                       bag, "t");
+    CHECK(b != nullptr);
+    if (!b) return;
+    const Thickness pad = b->Get<Thickness>(b->SlotOf("Padding"));
+    CHECK_NEAR(pad.l, 16.0f, 0.01);
+    CHECK_NEAR(pad.t, 12.0f, 0.01);
+}
+
+TEST("resource: a resource may refer to another resource") {
+    InstallText();
+    DiagnosticBag bag;
+    // Expansion repeats, so a palette can be layered. Depth is bounded, which is
+    // what turns a cycle into a diagnostic instead of a hang.
+    Widget* b = Styled(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="Base">#123456</Color>
+    <Color x:Key="Alias">{StaticResource Base}</Color>
+  </ResourceDictionary>
+  <Border x:Name="t" Background="{StaticResource Alias}"/>
+</Page>)WAML",
+                       bag, "t");
+    if (!bag.ToText().empty()) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(b != nullptr);
+    if (!b) return;
+    const Color c = b->Get<Color>(b->SlotOf("Background"));
+    CHECK_NEAR(c.r, 0x12 / 255.0f, 0.01);
+}
+
+TEST("resource: a cycle is a diagnostic, not a hang") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="A">{StaticResource B}</Color>
+    <Color x:Key="B">{StaticResource A}</Color>
+  </ResourceDictionary>
+  <Border Background="{StaticResource A}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0207") != std::string::npos);
+}
+
+TEST("resource: an undefined key is a load error with a suggestion") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="Brand">#0A84FF</Color>
+  </ResourceDictionary>
+  <Border Background="{StaticResource Brandd}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("WAML0205") != std::string::npos);
+    CHECK(text.find("Brand") != std::string::npos);
+}
+
+TEST("resource: a duplicate key is rejected") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <ResourceDictionary>
+    <Color x:Key="K">#111111</Color>
+    <Color x:Key="K">#222222</Color>
+  </ResourceDictionary>
+  <Border Background="{StaticResource K}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0208") != std::string::npos);
+}
+
+TEST("resource: a dictionary does not count as a child element") {
+    InstallText();
+    DiagnosticBag bag;
+    // Declaring a palette inside a single-child Border must not be a load error.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Border>
+    <ResourceDictionary>
+      <Color x:Key="Tint">#00FF00</Color>
+    </ResourceDictionary>
+    <TextBlock Text="hi"/>
+  </Border>
+</Page>)WAML",
+                       bag);
+    if (!doc) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(doc != nullptr);
+}
+
 namespace {
 
 // A widget plus the categories the shell tests need.

@@ -12,6 +12,10 @@
 namespace wui {
 
 class ITextService;
+// Owns the runtime state of <Trigger> for one widget (see waml/StyleTriggers.h).
+// Forward-declared at namespace scope so Widget can hold a shared_ptr to it without
+// core depending on the WAML layer.
+class StyleTriggerHost;
 
 // Process-wide text measurement service. Controls that need to measure text
 // read it here; tests can install a deterministic implementation.
@@ -192,6 +196,12 @@ public:
     void AddSlotObserver(int slot, ISlotObserver* o);
     void RemoveSlotObserver(int slot, ISlotObserver* o);
 
+    // Attaches the runtime half of <Trigger>. Called by the WAML instantiator after
+    // the style chain, the element's own attributes and its bindings have been
+    // applied, so a trigger sees final values and never fights load-time precedence.
+    void SetTriggerHost(std::shared_ptr<StyleTriggerHost> host);
+    StyleTriggerHost* TriggerHost() const { return triggerHost_.get(); }
+
 protected:
     void SetDirtyUpwards(uint32_t flags);
     Widget* Root();
@@ -218,6 +228,10 @@ protected:
     bool ownsDataContext_ = false;
     std::vector<std::unique_ptr<Binding>> bindings_;
     std::map<int, std::vector<ISlotObserver*>> slotObservers_;
+    // Holds this widget's <Trigger> states when its style declares any. Null for the
+    // overwhelming majority of widgets, which is why it is a pointer: paying for
+    // trigger bookkeeping on every element would tax a feature most do not use.
+    std::shared_ptr<StyleTriggerHost> triggerHost_;
     Rect bounds_;
     Point paintOffset_{0, 0};
     // Owned by the root only; see SetOverlay.

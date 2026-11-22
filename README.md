@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.7.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.7.2.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -94,7 +94,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 111 个用例 |
+| `tests` | `waml_tests.exe` | 148 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -219,7 +219,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 111 个单元/集成用例 |
+| `waml_tests.exe` | 148 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -291,6 +291,48 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 - **浮层不进布局**。`MenuBar`/`CommandBar` 占位，但它们弹出的菜单、工具栏的 `⋯`、`ContentDialog` 都画在根节点上，所以放在 `ScrollViewer` 里也不会被裁掉。
 - **对话框的 `Enter` 落在主按钮、`Esc` 只落到「取消」**。丢弃数据的按钮永远不会成为默认按钮。
 
+### 写法示例：样式 / 资源 / 触发器
+
+```xml
+<Page Background="AppBackground">
+  <!-- 具名字面量：一次声明，任意字面量位置可用 -->
+  <ResourceDictionary>
+    <Color x:Key="Brand">#0A84FF</Color>
+    <Number x:Key="CardRadius">6</Number>
+    <Thickness x:Key="CardPad">16,12,16,12</Thickness>
+  </ResourceDictionary>
+
+  <!-- 具名样式：可 BasedOn 继承 -->
+  <Style x:Key="Card" TargetType="Border">
+    <Setter Property="Background" Value="CardBackground"/>
+    <Setter Property="CornerRadius" Value="{StaticResource CardRadius}"/>
+    <Setter Property="Padding" Value="{StaticResource CardPad}"/>
+  </Style>
+
+  <Style x:Key="HighlightCard" TargetType="Border" BasedOn="{StaticResource Card}">
+    <Setter Property="Background" Value="{StaticResource Brand}"/>
+  </Style>
+
+  <!-- 触发器：条件成立时追加设置，不成立时自动恢复 -->
+  <Style x:Key="TintedBox" TargetType="CheckBox">
+    <Setter Property="Background" Value="CardBackground"/>
+    <Trigger Property="IsChecked" Value="True">
+      <Setter Property="Background" Value="ControlFill"/>
+    </Trigger>
+  </Style>
+
+  <Border Style="{StaticResource Card}" BorderThickness="0,1,0,0"/>  <!-- 本地覆盖样式 -->
+  <CheckBox Content="highlight me" Style="{StaticResource TintedBox}"/>
+</Page>
+```
+
+四条约束值得记住：
+
+- **优先级是「本地 > 样式 > 默认」**，触发器也属于样式，所以内联属性永远赢。写 `FontSize="11"` 的元素不会被它的样式或触发器改掉字号。
+- **样式在加载期解析**。`Setter` 写了类型上不存在的属性、`BasedOn` 拼错、`Style` 引用不存在的 key，都是**带行号的加载错误**，不会在运行时静默无效。
+- **样式必须在同一个文件里声明**，但可以写在任何位置（写在页面末尾引用在前面也合法）。
+- **触发器会恢复**。它记录激活前的值，条件不再成立时写回；同时监视的属性被重置后，元素回到样式原本的样子，而不是永久留着触发值。
+
 ---
 
 ## 诊断
@@ -337,7 +379,9 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 
 ## 已知边界
 
-- **无样式系统**：没有 `Style`/`Setter`/`VisualState`，外观逐属性写。`editor` 里的每个 `AppBarButton` 都重复三个属性，这正是样式系统该压缩的地方。
+- **无 `VisualState` / 主题资源字典**：有 `Style`/`Setter`/`Trigger`，但没有多状态切换（`Normal`/`PointerOver`/`Pressed` 一站式的状态机）与过渡动画。触发器可以模拟简单的两态，复杂状态建议等动画落地。
+- **样式不能绑定**：`Setter` 只接受字面量（可引用资源）。样式在加载期解析成槽位值，「一个样式对所有使用者共享一份值」在这个前提下才有意义；需要按数据变化的外观用触发器或绑定到元素自身。
+- **样式不能跨文件共享**：没有合并字典，`<Style>` 只在声明它的文档内可见。
 - **无动画**：主题切换、展开、菜单弹出都是瞬时的。
 - **`DataContext` 不可绑定**：`{Binding ..., Source=...}` 在 v0.5 被明确拒绝，无法在 WAML 里给子树换数据源——这意味着**组件复用目前只能靠复制 WAML**。这是实现 `usercontrol` 示例的前置阻塞项。
 - **`TextBox` 无 IME / 选区 / 剪贴板**：只有插入、退格、删除、方向键、Home/End、回车。**中文输入不可用** —— 对一个文本编辑器示例来说这是最明显的短板，见 `CODE_PLAN.md` R10。

@@ -29,6 +29,57 @@
 <Page Background="AppBackground" Padding="0">
   <Grid RowDefinitions="Auto,Auto,*,Auto" ColumnDefinitions="1*">
 
+    <!-- ============ Styles ============ -->
+    <!--
+      Declared once, high up, so the rest of the page is about WHAT each element
+      is rather than how it looks. A style is resolved at LOAD time: a Setter
+      naming a property the target type does not have is a load error with a line
+      number, not something that silently does nothing at runtime.
+
+      Precedence is local > style > default, so `Style="{StaticResource
+      ToolButton}" Margin="0,0,8,0"` on one button tweaks just that button.
+    -->
+    <ResourceDictionary>
+      <!-- Named literals. These are substituted into any attribute or Setter
+           before type conversion, so the same name works as a colour, a number
+           or a whole thickness. Change the radius once and every card follows. -->
+      <Number x:Key="CardRadius">6</Number>
+      <Number x:Key="PanelPad">10</Number>
+      <Thickness x:Key="StatusPad">14,8,14,8</Thickness>
+    </ResourceDictionary>
+
+    <Style x:Key="Surface" TargetType="Border">
+      <Setter Property="Background" Value="CardBackground"/>
+      <Setter Property="BorderBrush" Value="CardBorder"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource CardRadius}"/>
+    </Style>
+
+    <!-- The editor area: a recessed panel inside the tab content. Derived from
+         Surface so the radius and border are declared exactly once. -->
+    <Style x:Key="EditorSurface" TargetType="Border" BasedOn="{StaticResource Surface}">
+      <Setter Property="Background" Value="ControlFill"/>
+      <Setter Property="Padding" Value="{StaticResource PanelPad}"/>
+    </Style>
+
+    <Style x:Key="ToolButton" TargetType="AppBarButton">
+      <Setter Property="FontSize" Value="12"/>
+      <!-- Save is meaningless with no document open. This is a trigger rather than a
+           per-command check because it is a purely visual consequence of one property:
+           CanSave is false, so the button dims. The command itself still refuses to
+           run, so a stale visual can never cause a bad write. -->
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Foreground" Value="TextDisabled"/>
+      </Trigger>
+    </Style>
+
+    <!-- A caption line: the status bar and the per-tab path both use it. -->
+    <Style x:Key="Caption" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="TextSecondary"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
     <!-- ============ 1. Menu bar ============ -->
     <MenuBar Grid.Row="0" Height="34" Background="CardBackground">
       <MenuBarItem Title="File">
@@ -72,16 +123,17 @@
     <!-- Deliberately more buttons than fit in a narrow window: that is what makes
          the overflow (…) reachable by simply shrinking the window. -->
     <CommandBar Grid.Row="1" Height="44">
-      <AppBarButton Icon="✚" Label="New"    Command="{Binding NewCommand}"
-                    ToolTip="New document"/>
-      <AppBarButton Icon="▤" Label="Open"   Command="{Binding OpenCommand}"
-                    ToolTip="Open a file"/>
-      <AppBarButton Icon="▼" Label="Save"   Command="{Binding SaveCommand}"
-                    ToolTip="Save the active document"/>
-      <AppBarButton Icon="✕" Label="Close"  Command="{Binding CloseTabCommand}"
-                    ToolTip="Close the active tab"/>
-      <AppBarButton Icon="↺" Label="Reopen" Command="{Binding ReopenCommand}"
-                    ToolTip="Reopen the last closed document"/>
+      <AppBarButton Icon="✚" Label="New"    Style="{StaticResource ToolButton}"
+                    Command="{Binding NewCommand}" ToolTip="New document"/>
+      <AppBarButton Icon="▤" Label="Open"   Style="{StaticResource ToolButton}"
+                    Command="{Binding OpenCommand}" ToolTip="Open a file"/>
+      <AppBarButton Icon="▼" Label="Save"   Style="{StaticResource ToolButton}"
+                    IsEnabled="{Binding CanSave}"
+                    Command="{Binding SaveCommand}" ToolTip="Save the active document"/>
+      <AppBarButton Icon="✕" Label="Close"  Style="{StaticResource ToolButton}"
+                    Command="{Binding CloseTabCommand}" ToolTip="Close the active tab"/>
+      <AppBarButton Icon="↺" Label="Reopen" Style="{StaticResource ToolButton}"
+                    Command="{Binding ReopenCommand}" ToolTip="Reopen the last closed document"/>
     </CommandBar>
 
     <!-- ============ 3 + 4. Tabs holding the editor area ============ -->
@@ -97,24 +149,22 @@
              AddCommand="{Binding NewCommand}"
              Background="CardBackground" Padding="0" Height="420">
       <Grid RowDefinitions="*,Auto" ColumnDefinitions="1*" Padding="14">
-        <Border Grid.Row="0" Background="ControlFill" CornerRadius="6" Padding="10"
-                BorderBrush="CardBorder" BorderThickness="1">
+        <Border Grid.Row="0" Style="{StaticResource EditorSurface}">
           <!-- TwoWay: typing reaches the document, and switching tabs pushes the new
                document's text back into this box. Height="0" lets the Border stretch
                it; a MinHeight keeps a usable box even in a very short window. -->
           <TextBox Text="{Binding ActiveContent, Mode=TwoWay}"
                    PlaceholderText="Start typing…" Height="0" MinHeight="120"/>
         </Border>
-        <TextBlock Grid.Row="1" Text="{Binding ActivePath}" FontSize="11"
-                   Foreground="TextSecondary" TextWrapping="Wrap" Padding="0,8,0,0"/>
+        <TextBlock Grid.Row="1" Text="{Binding ActivePath}" Style="{StaticResource Caption}"
+                   Padding="0,8,0,0"/>
       </Grid>
     </TabView>
 
     <!-- ============ 5. Status line ============ -->
-    <Border Grid.Row="3" Background="CardBackground" BorderBrush="CardBorder"
-            BorderThickness="0,1,0,0" Padding="14,8,14,8">
-      <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="TextSecondary"
-                 TextWrapping="Wrap"/>
+    <Border Grid.Row="3" Style="{StaticResource Surface}" BorderThickness="0,1,0,0"
+            Padding="{StaticResource StatusPad}">
+      <TextBlock Text="{Binding StatusText}" Style="{StaticResource Caption}"/>
     </Border>
 
     <!-- ============ 6. Unsaved-changes prompt ============ -->

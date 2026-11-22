@@ -173,6 +173,11 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Content", VType::Text, Value::Text(L"CheckBox"), AffectsMeasure);
         t->Prop("IsChecked", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
         t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        // Transparent by default so the row looks unremarkable until a style or
+        // trigger tints it.
+        t->Prop("Background", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 0, Token::None}), AffectsRender, BindingMode::OneWay,
+                true, true);
         t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
         t->Prop("Foreground", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}),
                 AffectsRender, BindingMode::OneWay, true, true);
@@ -407,6 +412,14 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Command", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
         t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
         t->Prop("ToolTip", VType::Text, Value::Text(L""), 0);
+        // FontSize and Foreground exist so a toolbar button can be STYLED like any
+        // other text-bearing control. Leaving them out meant a style targeting
+        // AppBarButton could only set layout properties, which is the sort of gap
+        // that makes a style system feel half-finished.
+        t->Prop("FontSize", VType::Number, Value::Number(12), AffectsMeasure | AffectsRender);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
         add(t);
     }
     {

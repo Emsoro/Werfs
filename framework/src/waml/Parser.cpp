@@ -10,10 +10,12 @@
 
 #include "Controls.h"
 #include "Converters.h"
+#include "StyleTriggers.h"
 #include "Widget.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 
 namespace wui {
@@ -702,6 +704,157 @@ public:
     Validator(DiagnosticBag& diag, CompiledDocument& doc, const SourceMap& map)
         : diag_(diag), doc_(doc), map_(map) {}
 
+    // Collects every <Style> found anywhere in the document into doc_.styles.
+    //
+    // Walked as a SEPARATE PASS before validation because a style may be declared
+    // after the element that uses it -- markup reads top-down, but a style block at
+    // the bottom of a page is perfectly reasonable, and requiring declaration before
+    // use would be a rule with no other justification.
+    void CollectStyles(const RawNode& raw) {
+        for (const auto& child : raw.children) {
+            if (child->tag == "Style" || child->tag == "wui/Page.Style" ||
+                child->tag == "Page.Style") {
+                CollectStyle(*child);
+            } else if (child->tag == "ResourceDictionary") {
+                CollectResourceDictionary(*child);
+            }
+            CollectStyles(*child);
+        }
+    }
+
+    // <ResourceDictionary><Color x:Key="Brand">#0A84FF</Color> ... </ResourceDictionary>
+    //
+    // The element name only groups the declarations; the VALUE is whatever the
+    // element body says. That keeps one syntax working for colours, numbers and
+    // thicknesses without inventing a typed resource system nobody asked for.
+    void CollectResourceDictionary(const RawNode& raw) {
+        for (const auto& child : raw.children) {
+            if (child->tag == "Style") {
+                CollectStyle(*child); // styles may be nested in the dictionary
+                continue;
+            }
+            ResourceValue res;
+            res.offset = child->nameOffset;
+            std::string text;
+            for (const auto& attr : child->attrs) {
+                if (attr.name == "x:Key" || attr.name == "Key") {
+                    res.key = attr.value;
+                } else if (attr.name == "Value") {
+                    text = attr.value;
+                } else if (attr.name == "xmlns" || attr.name.rfind("xmlns:", 0) == 0) {
+                    continue;
+                } else {
+                    Error(DiagCode::BadAttribute, attr,
+                          "resource '" + child->tag + "' has no attribute '" + attr.name +
+                              "' (expected x:Key, Value, or text content)");
+                }
+            }
+            // Text content wins when there is no Value attribute: <Color x:Key="Brand">
+            // #0A84FF</Color> reads better than forcing it into an attribute.
+            if (text.empty()) text = TrimCopy(child->text);
+            if (res.key.empty()) {
+                Error(DiagCode::MissingProperty, *child,
+                      "a resource requires x:Key so markup can refer to it");
+                continue;
+            }
+            if (text.empty()) {
+                Error(DiagCode::MissingProperty, *child,
+                      "resource '" + res.key + "' has no value");
+                continue;
+            }
+            if (doc_.FindResource(res.key)) {
+                Error(DiagCode::DuplicateStyle, *child,
+                      "resource '" + res.key + "' is already defined");
+                continue;
+            }
+            res.literal = text;
+            doc_.resources.push_back(std::move(res));
+        }
+    }
+
+    // Replaces every {StaticResource Key} inside a literal with its text.
+    //
+    // Substitution happens BEFORE type conversion, so a resource can stand in for a
+    // colour, a number or a whole thickness ("{StaticResource PadMargin}"). Repeated
+    // up to a small bound so a resource referring to another resource works, and a
+    // cycle stops with a diagnostic instead of looping.
+    bool ExpandResources(std::string& literal, size_t offset) {
+        constexpr int kMaxDepth = 8;
+        for (int pass = 0; pass < kMaxDepth; ++pass) {
+            const size_t open = literal.find("{StaticResource ");
+            if (open == std::string::npos) return true;
+            const size_t close = literal.find('}', open);
+            if (close == std::string::npos) {
+                Report(DiagSeverity::Error, DiagCode::BadMarkupExtension, offset,
+                       "unterminated {StaticResource ...} in '" + literal + "'");
+                return false;
+            }
+            const std::string key =
+                TrimCopy(literal.substr(open + 16, close - open - 16));
+            const ResourceValue* res = doc_.FindResource(key);
+            if (!res) {
+                std::vector<std::string> keys;
+                for (const auto& r : doc_.resources) keys.push_back(r.key);
+                auto suggestions = SuggestNames(key, keys);
+                std::string msg = "resource '" + key + "' is not defined";
+                if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+                else if (keys.empty()) msg += " (no <ResourceDictionary> values are declared)";
+                Report(DiagSeverity::Error, DiagCode::MissingStyle, offset, msg);
+                return false;
+            }
+            literal.replace(open, close - open + 1, res->literal);
+        }
+        Report(DiagSeverity::Error, DiagCode::StyleCycle, offset,
+               "resource substitution did not settle in '" + literal +
+                   "' -- do resources refer to each other in a cycle?");
+        return false;
+    }
+
+    // Resolves BasedOn links and reports cycles / unknown keys. Runs after all
+    // styles are collected, because a base style may be declared later too.
+    void ResolveStyleChains() {
+        auto& styles = doc_.pendingStyles;
+        for (auto& style : styles) {
+            if (style->basedOnKey.empty()) continue;
+            const StyleDesc* base = doc_.FindStyle(style->basedOnKey);
+            if (!base) {
+                Report(DiagSeverity::Error, DiagCode::MissingStyle, style->offset,
+                       "BasedOn style '" + style->basedOnKey + "' is not defined" +
+                           SuggestStyleHint(style->basedOnKey));
+                continue;
+            }
+            if (base == style.get()) {
+                Report(DiagSeverity::Error, DiagCode::StyleCycle, style->offset,
+                       "style '" + style->key + "' cannot derive from itself");
+                continue;
+            }
+            // A cycle is detected by walking to the root: a chain is at most
+            // styles.size() long, so a longer walk must have looped.
+            bool cyclic = false;
+            const StyleDesc* walk = base;
+            size_t guard = 0;
+            while (walk && guard++ <= styles.size()) {
+                if (walk == style.get()) {
+                    cyclic = true;
+                    break;
+                }
+                walk = walk->basedOn;
+            }
+            if (cyclic) {
+                Report(DiagSeverity::Error, DiagCode::StyleCycle, style->offset,
+                       "BasedOn chain for style '" + style->key + "' is circular");
+                continue;
+            }
+            if (base->targetType != style->targetType) {
+                Report(DiagSeverity::Error, DiagCode::StyleTargetMismatch, style->offset,
+                       "style '" + style->key + "' targets " + style->targetType +
+                           " but its BasedOn style targets " + base->targetType);
+                continue;
+            }
+            style->basedOn = base;
+        }
+    }
+
     std::shared_ptr<NodeDesc> Validate(const RawNode& raw, const std::vector<std::string>& nsAliases) {
         auto node = std::make_shared<NodeDesc>();
         node->offset = raw.nameOffset;
@@ -748,6 +901,40 @@ public:
                 }
                 continue;
             }
+            // Style is resolved before the property table: it is not a slot on any
+            // type, it is a reference to a StyleDesc. Having both a slot and a style
+            // pointer would be two sources of truth for the same thing.
+            if (attr.name == "Style") {
+                std::string key = attr.value;
+                const std::string prefix = "{StaticResource ";
+                if (key.size() > prefix.size() + 1 && key.compare(0, prefix.size(), prefix) == 0 &&
+                    key.back() == '}') {
+                    key = key.substr(prefix.size(), key.size() - prefix.size() - 1);
+                }
+                const StyleDesc* style = doc_.FindStyle(key);
+                if (!style) {
+                    std::vector<std::string> keys;
+                    CollectStyleKeys(keys);
+                    auto suggestions = SuggestNames(key, keys);
+                    std::string msg = "style '" + key + "' is not defined";
+                    if (!suggestions.empty()) {
+                        msg += " (did you mean '" + suggestions.front() + "'?)";
+                    } else if (keys.empty()) {
+                        msg += " (no <Style> elements are declared in this document)";
+                    }
+                    Error(DiagCode::MissingStyle, attr, msg);
+                    continue;
+                }
+                if (!style->AppliesTo(node->typeName)) {
+                    Error(DiagCode::StyleTargetMismatch, attr,
+                          "style '" + key + "' targets " + style->targetType +
+                              " and cannot be applied to " + node->typeName);
+                    continue;
+                }
+                node->style = style;
+                node->styleOwner = doc_.styles;
+                continue;
+            }
             const PropertyDescriptor* desc = type->FindProperty(attr.name);
             if (!desc) {
                 auto suggestions = SuggestNames(attr.name, type->PropertyNames());
@@ -764,10 +951,17 @@ public:
             entry.name = attr.name;
             entry.slot = desc->slot;
             entry.offset = attr.offset;
-            if (!attr.value.empty() && attr.value[0] == '{') {
+            // {StaticResource Key} is SUBSTITUTED FIRST, before any binding
+            // parsing. It is not a markup extension that survives into the document:
+            // the literal is rewritten and then converted like any other literal.
+            // Handling it earlier is what lets it stand in for a colour, a number or
+            // a thickness in the same attribute slot.
+            std::string literal = attr.value;
+            if (!ExpandResources(literal, attr.offset)) continue;
+            if (!literal.empty() && literal[0] == '{') {
                 BindingExpr expr;
                 std::string mkError;
-                if (!ParseBindingExpr(attr.value, *desc, attr, expr, mkError)) {
+                if (!ParseBindingExpr(literal, *desc, attr, expr, mkError)) {
                     Error(DiagCode::BadMarkupExtension, attr, mkError);
                     continue;
                 }
@@ -781,7 +975,7 @@ public:
                 Value v;
                 std::string err;
                 std::vector<std::string> suggestions;
-                if (!ConvertLiteral(attr.value, *desc, v, err, &suggestions)) {
+                if (!ConvertLiteral(literal, *desc, v, err, &suggestions)) {
                     std::string msg = err;
                     if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
                     Error(DiagCode::BadValue, attr, msg);
@@ -802,6 +996,11 @@ public:
                 HandlePropertyElement(*childRaw, *node, *type, nsAliases);
                 continue;
             }
+            // <Style> is a RESOURCE, not a child. It is collected in its own pass
+            // and reserves no space, so it must not count toward "at most one child"
+            // or be validated as a widget -- otherwise declaring a style inside a
+            // Border (which holds a single child) would be a load error.
+            if (childRaw->tag == "Style" || childRaw->tag == "ResourceDictionary") continue;
             ++logicalChildren;
         }
 
@@ -856,6 +1055,8 @@ public:
         if (model != ContentModel::SingleTemplate) {
             for (const auto& childRaw : raw.children) {
                 if (childRaw->tag.find('.') != std::string::npos) continue;
+                // Styles were collected already; they are not widgets.
+                if (childRaw->tag == "Style" || childRaw->tag == "ResourceDictionary") continue;
                 auto child = Validate(*childRaw, nsAliases);
                 if (child) node->children.push_back(std::move(child));
             }
@@ -897,6 +1098,277 @@ private:
     }
     void Warn(DiagCode code, const RawAttr& attr, std::string message) {
         Report(DiagSeverity::Warning, code, attr.offset, std::move(message));
+    }
+
+    // Reads one <Style x:Key="..." TargetType="..." BasedOn="..."> block.
+    void CollectStyle(const RawNode& raw) {
+        auto style = std::make_shared<StyleDesc>();
+        style->offset = raw.nameOffset;
+
+        std::string targetLocal;
+        for (const auto& attr : raw.attrs) {
+            if (attr.name == "x:Key" || attr.name == "Key") {
+                style->key = attr.value;
+            } else if (attr.name == "TargetType") {
+                targetLocal = attr.value;
+            } else if (attr.name == "BasedOn") {
+                style->basedOnKey = attr.value;
+                // BasedOn="{StaticResource Base}" and BasedOn="Base" mean the same
+                // thing; accepting both keeps the markup readable either way.
+                const std::string prefix = "{StaticResource ";
+                if (style->basedOnKey.size() > prefix.size() + 1 &&
+                    style->basedOnKey.compare(0, prefix.size(), prefix) == 0 &&
+                    style->basedOnKey.back() == '}') {
+                    style->basedOnKey =
+                        style->basedOnKey.substr(prefix.size(),
+                                                 style->basedOnKey.size() - prefix.size() - 1);
+                }
+            } else if (attr.name == "xmlns" || attr.name.rfind("xmlns:", 0) == 0) {
+                // namespace declarations are not properties
+            } else {
+                Error(DiagCode::BadAttribute, attr,
+                      "'Style' has no attribute '" + attr.name +
+                          "' (expected x:Key, TargetType, BasedOn)");
+            }
+        }
+
+        if (style->key.empty()) {
+            Error(DiagCode::MissingProperty, raw,
+                  "'Style' requires x:Key so elements can refer to it");
+            return;
+        }
+        if (targetLocal.empty()) {
+            Error(DiagCode::MissingProperty, raw,
+                  "style '" + style->key + "' requires TargetType");
+            return;
+        }
+        // A style key must be unique: two definitions of the same key means
+        // whichever was found first silently wins, which is undebuggable.
+        if (doc_.FindStyle(style->key)) {
+            Error(DiagCode::DuplicateStyle, raw,
+                  "style '" + style->key + "' is already defined");
+            return;
+        }
+
+        const std::string qualified = "wui/" + targetLocal;
+        const TypeInfo* target = TypeRegistry::Instance().Find(qualified);
+        if (!target) {
+            std::vector<std::string> names = TypeRegistry::Instance().AllNames();
+            for (auto& n : names) n = n.substr(n.find('/') + 1);
+            auto suggestions = SuggestNames(targetLocal, names);
+            std::string msg = "'" + targetLocal + "' is not a known WAML element";
+            if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+            Error(DiagCode::UnknownElement, raw, "TargetType: " + msg);
+            return;
+        }
+        style->targetType = qualified;
+        style->type = target;
+
+        // Setters, then triggers. Each is validated against the target type
+        // immediately: a Setter naming a property the type does not have is a load
+        // error, not a silent no-op. That is the whole reason resolution happens now
+        // rather than at paint time.
+        for (const auto& child : raw.children) {
+            if (child->tag == "Setter") {
+                CollectSetter(*child, *style, *target);
+            } else if (child->tag == "Trigger") {
+                CollectTrigger(*child, *style, *target);
+            } else {
+                Error(DiagCode::BadContent, *child,
+                      "'Style' accepts only <Setter> and <Trigger> children (found '" +
+                          child->tag + "')");
+            }
+        }
+
+        doc_.pendingStyles.push_back(std::move(style));
+        ++doc_.styleCount;
+    }
+
+    void CollectSetter(const RawNode& raw, StyleDesc& style, const TypeInfo& target) {
+        CollectSetterInto(raw, style.setters, target);
+    }
+
+    void CollectSetter(const RawNode& raw, StyleTrigger& trigger, const TypeInfo& target) {
+        CollectSetterInto(raw, trigger.setters, target);
+    }
+
+    // One implementation for both containers: a Setter inside a <Style> and a Setter
+    // inside a <Trigger> are the same syntax with the same validation, and having two
+    // copies would be a way for them to drift.
+    bool CollectSetterInto(const RawNode& raw, std::vector<StyleSetter>& out,
+                           const TypeInfo& target) {
+        StyleSetter setter;
+        setter.offset = raw.nameOffset;
+        std::string literal;
+        bool hasLiteral = false;
+
+        for (const auto& attr : raw.attrs) {
+            if (attr.name == "Property") {
+                setter.propertyName = attr.value;
+            } else if (attr.name == "Value") {
+                literal = attr.value;
+                hasLiteral = true;
+            } else if (attr.name == "xmlns" || attr.name.rfind("xmlns:", 0) == 0) {
+                continue;
+            } else {
+                Error(DiagCode::BadAttribute, attr,
+                      "'Setter' has no attribute '" + attr.name +
+                          "' (expected Property, Value)");
+            }
+        }
+
+        if (setter.propertyName.empty()) {
+            Error(DiagCode::MissingProperty, raw, "'Setter' requires Property");
+            return false;
+        }
+        if (!hasLiteral) {
+            Error(DiagCode::MissingProperty, raw,
+                  "setter for '" + setter.propertyName + "' requires Value");
+            return false;
+        }
+
+        const PropertyDescriptor* desc = target.FindProperty(setter.propertyName);
+        if (!desc) {
+            auto suggestions = SuggestNames(setter.propertyName, target.PropertyNames());
+            std::string msg = "'" + target.Name() + "' has no property '" +
+                              setter.propertyName + "'";
+            if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+            Error(DiagCode::UnknownProperty, raw, msg);
+            return false;
+        }
+        if (!desc->writableInWaml) {
+            Error(DiagCode::ReadOnlyProperty, raw,
+                  "property '" + setter.propertyName + "' is read-only and cannot be styled");
+            return false;
+        }
+        // Expand BEFORE the "is this a binding" test. A setter whose value is a
+        // resource is a literal once substituted, so it must not be mistaken for a
+        // binding -- and a genuine binding is still refused, which is the honest
+        // answer because a style holds one literal for every user of it.
+        if (!ExpandResources(literal, raw.nameOffset)) return false;
+        if (!literal.empty() && literal[0] == '{') {
+            Error(DiagCode::BadValue, raw,
+                  "setter for '" + setter.propertyName +
+                      "' must be a literal; a binding in a style is not supported");
+            return false;
+        }
+        Value v;
+        std::string err;
+        std::vector<std::string> suggestions;
+        if (!ConvertLiteral(literal, *desc, v, err, &suggestions)) {
+            std::string msg = err;
+            if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+            Error(DiagCode::BadValue, raw, msg);
+            return false;
+        }
+        setter.slot = desc->slot;
+        setter.value = std::move(v);
+        out.push_back(std::move(setter));
+        return true;
+    }
+
+    // Style keys, for "did you mean" suggestions. Reads BOTH containers because
+    // this runs during validation, by which time the collect pass has already moved
+    // its results into doc_.styles -- consulting only pendingStyles made every
+    // suggestion empty, which reads as "you get no help" rather than a bug.
+    void CollectStyleKeys(std::vector<std::string>& keys) const {
+        for (const auto& s : doc_.pendingStyles) keys.push_back(s->key);
+        if (doc_.styles) {
+            for (const auto& s : *doc_.styles) keys.push_back(s->key);
+        }
+    }
+
+    // <Trigger Property="IsChecked" Value="True">
+    //   <Setter Property="Background" Value="{StaticResource CheckedTint}"/>
+    // </Trigger>
+    //
+    // The watched property and the "when" value are validated here exactly like a
+    // Setter's, because a trigger watching a property that does not exist would
+    // otherwise be permanently inactive with no explanation -- the same silent
+    // failure a mistyped Setter would have.
+    void CollectTrigger(const RawNode& raw, StyleDesc& style, const TypeInfo& target) {
+        StyleTrigger trigger;
+        trigger.offset = raw.nameOffset;
+        std::string propertyName;
+        std::string literal;
+        bool hasValue = false;
+
+        for (const auto& attr : raw.attrs) {
+            if (attr.name == "Property") {
+                propertyName = attr.value;
+            } else if (attr.name == "Value") {
+                literal = attr.value;
+                hasValue = true;
+            } else if (attr.name == "xmlns" || attr.name.rfind("xmlns:", 0) == 0) {
+                continue;
+            } else {
+                Error(DiagCode::BadAttribute, attr,
+                      "'Trigger' has no attribute '" + attr.name +
+                          "' (expected Property, Value)");
+            }
+        }
+
+        if (propertyName.empty()) {
+            Error(DiagCode::MissingProperty, raw, "'Trigger' requires Property");
+            return;
+        }
+        if (!hasValue) {
+            Error(DiagCode::MissingProperty, raw,
+                  "trigger on '" + propertyName + "' requires Value");
+            return;
+        }
+        const PropertyDescriptor* watched = target.FindProperty(propertyName);
+        if (!watched) {
+            auto suggestions = SuggestNames(propertyName, target.PropertyNames());
+            std::string msg = "'" + target.Name() + "' has no property '" + propertyName +
+                              "' to trigger on";
+            if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+            Error(DiagCode::UnknownProperty, raw, msg);
+            return;
+        }
+        if (watched->type == VType::Ref) {
+            Error(DiagCode::BadValue, raw,
+                  "trigger on '" + propertyName +
+                      "': object-valued properties cannot be compared by value");
+            return;
+        }
+        if (!ExpandResources(literal, raw.nameOffset)) return;
+        Value when;
+        std::string err;
+        std::vector<std::string> suggestions;
+        if (!ConvertLiteral(literal, *watched, when, err, &suggestions)) {
+            std::string msg = err;
+            if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+            Error(DiagCode::BadValue, raw, msg);
+            return;
+        }
+        trigger.watchedName = propertyName;
+        trigger.watchedSlot = watched->slot;
+        trigger.when = std::move(when);
+
+        for (const auto& child : raw.children) {
+            if (child->tag != "Setter") {
+                Error(DiagCode::BadContent, *child,
+                      "'Trigger' accepts only <Setter> children (found '" + child->tag + "')");
+                continue;
+            }
+            CollectSetter(*child, trigger, target);
+        }
+        if (trigger.setters.empty()) {
+            // A trigger with no setters does nothing. Reporting it beats letting the
+            // author wonder why their condition has no effect.
+            Error(DiagCode::MissingProperty, raw,
+                  "trigger on '" + propertyName + "' has no <Setter> children");
+            return;
+        }
+        style.triggers.push_back(std::move(trigger));
+    }
+
+    std::string SuggestStyleHint(const std::string& key) const {
+        std::vector<std::string> keys;
+        CollectStyleKeys(keys);
+        auto suggestions = SuggestNames(key, keys);
+        return suggestions.empty() ? std::string() : " (did you mean '" + suggestions.front() + "'?)";
     }
 
     // <ListBox.ItemTemplate> <DataTemplate> ... </DataTemplate> </ListBox.ItemTemplate>
@@ -1254,6 +1726,25 @@ std::unique_ptr<CompiledDocument> ParseWaml(std::string_view source, const Parse
     doc->file = options.fileName;
     const SourceMap map(source);
     Validator validator(diagnostics, *doc, map);
+    // Three passes, in this order:
+    //   1. collect every <Style> BEFORE validating elements, so an element can
+    //      refer to a style declared later in the file;
+    //   2. resolve BasedOn BEFORE validating elements too, so NodeDesc::style
+    //      points at a chain whose links are already filled in -- resolving
+    //      afterwards would leave every node holding a half-built chain;
+    //   3. validate the element tree, which needs FindStyle to be complete.
+    validator.CollectStyles(*raw);
+    validator.ResolveStyleChains();
+    // Freeze the collected styles into the document. Ownership moves to the
+    // shared_ptr so NodeDesc::style pointers stay valid for the document's whole
+    // life, including inside template instances that outlive this function.
+    auto styles = std::make_shared<std::vector<std::shared_ptr<StyleDesc>>>();
+    styles->swap(doc->pendingStyles);
+    doc->styles = styles;
+    // Resources expand while the tree is validated, so they must all be collected
+    // by now -- including any declared at the bottom of the file, which is why the
+    // collect pass above covers the whole tree rather than stopping at the first
+    // widget.
     doc->root = validator.Validate(*raw, {});
     if (diagnostics.HasErrors()) return nullptr;
     return doc;
@@ -1279,6 +1770,11 @@ std::shared_ptr<NodeDesc> CloneTree(const NodeDesc& src) {
     copy->properties = src.properties;
     copy->inlineText = src.inlineText;
     copy->offset = src.offset;
+    // The style pointer is shared, not cloned: StyleDesc lives in the
+    // CompiledDocument, which outlives every template instance. Dropping it here was
+    // the difference between a styled list row and an unstyled one.
+    copy->style = src.style;
+    copy->styleOwner = src.styleOwner;
     if (src.templateRoot) copy->templateRoot = CloneTree(*src.templateRoot);
     for (const auto& c : src.children) copy->children.push_back(CloneTree(*c));
     for (auto& p : copy->properties) {
@@ -1298,6 +1794,41 @@ std::shared_ptr<DataTemplate> BuildTemplate(const NodeDesc& tmplNode, ITextServi
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// StyleDesc
+// ---------------------------------------------------------------------------
+bool StyleDesc::AppliesTo(const std::string& qualifiedTypeName) const {
+    // Walking the BasedOn chain is what makes `BasedOn` mean "inherit these" rather
+    // than "copy these": a style derived from a TextBlock style is still a
+    // TextBlock style, and ApplyTo must agree with that for a derived style used on
+    // the base type's element.
+    for (const StyleDesc* s = this; s != nullptr; s = s->basedOn) {
+        if (s->targetType == qualifiedTypeName) return true;
+    }
+    return false;
+}
+
+const StyleDesc* CompiledDocument::FindStyle(const std::string& key) const {
+    // During the collect pass only pendingStyles is populated; after it, only
+    // `styles` is. Checking both keeps one lookup routine valid in every pass
+    // without the caller having to know which phase it is in.
+    for (const auto& s : pendingStyles) {
+        if (s->key == key) return s.get();
+    }
+    if (!styles) return nullptr;
+    for (const auto& s : *styles) {
+        if (s->key == key) return s.get();
+    }
+    return nullptr;
+}
+
+const ResourceValue* CompiledDocument::FindResource(const std::string& key) const {
+    for (const auto& r : resources) {
+        if (r.key == key) return &r;
+    }
+    return nullptr;
+}
+
 WidgetPtr InstantiateNode(const NodeDesc& node, ITextService* text) {
     if (!node.type) return nullptr;
     if (node.typeName == "wui/DataTemplate") return nullptr; // Built by BuildTemplate().
@@ -1305,6 +1836,26 @@ WidgetPtr InstantiateNode(const NodeDesc& node, ITextService* text) {
     if (!widget) return nullptr;
     widget->BindType(node.type);
     if (!node.name.empty()) widget->SetName(node.name);
+
+    // Styles first, base-most first, so a derived style overrides its parent and
+    // the node's own attributes override both. This is the precedence users expect
+    // and the reason a style never has to be "turned off": writing the attribute
+    // inline wins.
+    if (node.style) {
+        // Collect the chain root-first. Depth is bounded by the cycle check in the
+        // validator, so a small fixed array avoids an allocation per node.
+        const StyleDesc* chain[16];
+        size_t depth = 0;
+        for (const StyleDesc* s = node.style; s != nullptr && depth < 16; s = s->basedOn) {
+            chain[depth++] = s;
+        }
+        while (depth > 0) {
+            --depth;
+            for (const auto& setter : chain[depth]->setters) {
+                widget->SetSlotValue(setter.slot, setter.value);
+            }
+        }
+    }
 
     for (const auto& entry : node.properties) {
         if (entry.templateNode) {
@@ -1332,6 +1883,30 @@ WidgetPtr InstantiateNode(const NodeDesc& node, ITextService* text) {
         if (childWidget) widget->AddChild(childWidget);
     }
     widget->AttachBindings(text);
+
+    // Triggers attach LAST, after the style chain, the element's own attributes and
+    // its bindings. Order matters both ways:
+    //  * after the style, so a trigger's baseline is the styled value it should
+    //    restore when it deactivates -- not the raw default;
+    //  * after local attributes, so "local beats style" already holds and a trigger
+    //    cannot quietly override an inline value;
+    //  * after bindings, so a trigger that watches a BOUND property sees the bound
+    //    value immediately instead of the default (a checkbox bound to a VM whose
+    //    IsChecked starts true must look checked on the first paint).
+    if (node.style) {
+        std::vector<const StyleDesc*> chain;
+        for (const StyleDesc* s = node.style; s != nullptr; s = s->basedOn) chain.push_back(s);
+        // Attach wants base-most first; the walk above produced derived-first.
+        std::reverse(chain.begin(), chain.end());
+        // Slots this element set inline. A trigger must not write them: local >
+        // style, and a trigger belongs to the style.
+        std::vector<int> localSlots;
+        for (const auto& entry : node.properties) {
+            if (!entry.binding.isBinding) localSlots.push_back(entry.slot);
+        }
+        widget->SetTriggerHost(
+            StyleTriggerHost::Attach(widget.get(), chain, localSlots, node.styleOwner));
+    }
     return widget;
 }
 

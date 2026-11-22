@@ -609,6 +609,11 @@ void CheckBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const Rect box{bounds_.x + margin.l, bounds_.y + margin.t, bounds_.w - margin.H(),
                    bounds_.h - margin.V()};
     if (box.w <= 0 || box.h <= 0) return;
+    // Background is painted so a style or trigger can tint the whole row. Without
+    // it, "highlight the checked item" -- the most obvious use of a trigger -- has
+    // nowhere to draw, and the property would have to be faked with a Border.
+    const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    if (bg.a > 0.0f) ctx.FillRoundRect(box, 4.0f, bg);
     const float size = 18.0f;
     const Rect glyph{box.x + 3, box.y + (box.h - size) * 0.5f, size, size};
     const bool checked = Get<bool>(SlotOf("IsChecked"));
@@ -2460,8 +2465,12 @@ float AppBarButton::ToolbarWidth() const {
     // the label at 26, so "Reopen" wrapped to "Reo/pen".
     constexpr float kIconGutter = 26.0f; // 8 inset + 16 glyph + 2 gap
     constexpr float kTrailing = 8.0f;
-    float labelW = static_cast<float>(label.size()) * 12.0f * 0.55f;
-    if (ITextService* svc = TextSystem::Get()) labelW = svc->Measure(label, 12.0f, WeightNormal).w;
+    // Measured at the control's own FontSize, so a style that shrinks the text also
+    // shrinks the button instead of leaving it padded out for text that is no
+    // longer there.
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float labelW = static_cast<float>(label.size()) * fontSize * 0.55f;
+    if (ITextService* svc = TextSystem::Get()) labelW = svc->Measure(label, fontSize, WeightNormal).w;
     return std::max(kAppBarIconOnly, kIconGutter + labelW + kTrailing);
 }
 
@@ -2499,12 +2508,16 @@ void AppBarButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         return;
     }
     // Icon and label share the row; the label is small so the toolbar stays a bar
-    // rather than growing into a second menu.
-    ctx.DrawText(icon, Rect{bounds_.x + 8.0f, bounds_.y, 16.0f, bounds_.h}, fg, 14.0f,
-                 WeightNormal, TextAlign::Center);
+    // rather than growing into a second menu. Both sizes follow FontSize so a style
+    // can shrink the whole button, not just its label.
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const Color labelFg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    const Color iconFg = enabled ? fg : labelFg;
+    ctx.DrawText(icon, Rect{bounds_.x + 8.0f, bounds_.y, 16.0f, bounds_.h},
+                 enabled ? iconFg : fg, fontSize + 2.0f, WeightNormal, TextAlign::Center);
     ctx.DrawText(label, Rect{bounds_.x + 26.0f, bounds_.y,
                              std::max(0.0f, bounds_.w - 30.0f), bounds_.h},
-                 fg, 12.0f, WeightNormal, TextAlign::Left);
+                 enabled ? labelFg : fg, fontSize, WeightNormal, TextAlign::Left);
 }
 
 Widget* AppBarButton::HitTest(const Point& p) {
