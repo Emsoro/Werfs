@@ -63,7 +63,8 @@ build.ps1  CMakeLists.txt
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 2 个示例（gallery / list）共用同一 Win32+D2D 宿主 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 3 个示例（gallery / list / basic）共用同一 Win32+D2D 宿主 |
+| **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言，避免「拿 gallery 的期望去测别的页」 |
 
 ## 3. 产物
 
@@ -715,8 +716,8 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 | 顺序 | 示例 | 依赖的框架能力 | 状态 |
 |---|---|---|---|
-| 1 | `list` | 无 | **✅ 已完成**（本轮交付） |
-| 2 | `basic` | 无（现有能力足够） | 可立即开始 |
+| 1 | `basic` | 无 | **✅ 已完成** |
+| 2 | `list` | 无 | **✅ 已完成** |
 | 3 | `binding` | 无 | 可立即开始 |
 | 4 | `theming` | 无（主题已支持） | 可立即开始 |
 | 5 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
@@ -756,7 +757,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 0.1 抽出共享宿主 | `samples/shared/AppHost.{h,cpp}`：窗口、D2D、DPI、输入分发、主题 | 现有 gallery 改为调用它，行为不变 |
 | 0.2 页面与宿主解耦 | 宿主只认「一个根 Widget + 一个 DataContext」 | 换 WAML 不改编译单元 |
 | 0.3 抽出示例资源 | `resources/` 的 rc/manifest/ico 提到 `samples/shared/resources/` | 各示例共享同一份图标与清单 |
-| 0.4 `samples/basic/` | 五个基础控件示例（10a.2） | 可独立运行、可交互 |
+| 0.4 `samples/basic/` | 五个基础控件示例（10a.2） | ✅ 已交付 |
 | 0.5 `build.ps1` 目标 | `basic` 目标 + 产物 `waml_basic.exe` | `pwsh -File build.ps1 basic` |
 
 **为什么先做 0.1–0.3**：不做的话，后面每加一个示例就多一份复制粘贴，违反「框架不认识示例」的原则，也会让 §R6（代码漂移）提前发生。

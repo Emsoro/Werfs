@@ -64,7 +64,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('release', 'debug', 'all', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'list', 'samples')]
+                 'basic', 'list', 'samples')]
     [string]$Target = 'release',
 
     [switch]$Clean,
@@ -388,19 +388,23 @@ function Build-Bench {
 # Resource.h can take precedence when building that sample.
 $GalleryIncludes = @($Sample, (Join-Path $Sample 'resources'))
 $ListSampleDir = Join-Path $SamplesRoot 'list'
-$SnapshotIncludes = $GalleryIncludes + @($ListSampleDir, (Join-Path $ListSampleDir 'resources'))
+$BasicSampleDir = Join-Path $SamplesRoot 'basic'
+# Tools that bind several samples need every sample's headers.
+$AllSampleIncludes = $GalleryIncludes +
+    @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
+      $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'))
 
 function Build-Snapshot {
     $exe = Build-Executable -ExeName 'waml_snapshot' -ObjName 'snapshot' -Config 'release' `
         -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\Snapshot.cpp')) `
-        -ExtraIncludes $SnapshotIncludes
+        -ExtraIncludes $AllSampleIncludes
     Write-Host "  snapshot -> $exe" -ForegroundColor DarkGray
 }
 
 function Build-Interact {
     $exe = Build-Executable -ExeName 'waml_interact' -ObjName 'interact' -Config 'release' `
         -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\Interact.cpp')) `
-        -ExtraIncludes $GalleryIncludes
+        -ExtraIncludes $AllSampleIncludes
     Write-Host "  interact -> $exe" -ForegroundColor DarkGray
 }
 
@@ -446,10 +450,33 @@ function Build-Gallery {
         -ResName 'gallery' -Config $Config
 }
 
-function Build-ListSample {
-    param([string]$Config = 'release')
-    return Build-Sample -ExeName 'waml_list' -ObjName 'list' `
-        -Dir (Join-Path $SamplesRoot 'list') -ResName 'list' -Config $Config
+# Sample registry: name -> executable, resource base name, target name.
+#
+# One line per sample. Adding a sample means adding an entry here and nothing
+# else; keeping the list in one place is why the dispatch below can stay a
+# simple loop instead of growing a branch per sample.
+$SampleRegistry = @(
+    @{ Name = 'gallery'; Exe = 'waml_demo'; Res = 'gallery'; Target = 'release' }
+    @{ Name = 'list';    Exe = 'waml_list'; Res = 'list';    Target = 'list' }
+    @{ Name = 'basic';   Exe = 'waml_basic'; Res = 'basic';  Target = 'basic' }
+)
+
+function Build-RegisteredSample {
+    param(
+        [Parameter(Mandatory)][hashtable]$Entry,
+        [string]$Config = 'release'
+    )
+    return Build-Sample -ExeName $Entry.Exe -ObjName $Entry.Name -ResName $Entry.Res `
+        -Dir (Join-Path $SamplesRoot $Entry.Name) -Config $Config
+}
+
+function Get-SampleEntry {
+    param([Parameter(Mandatory)][string]$Name)
+    $entry = $SampleRegistry | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+    if (-not $entry) {
+        throw "Unknown sample '$Name'. Known: $(($SampleRegistry | ForEach-Object { $_.Name }) -join ', ')"
+    }
+    return $entry
 }
 
 # Builds the resource script of one sample into that sample's own .res file.
@@ -503,18 +530,20 @@ try {
             Build-Bench
             Build-Snapshot
             Build-Interact
-            Build-Gallery -Config 'release' | Out-Null
-            Build-ListSample -Config 'release' | Out-Null
+            foreach ($entry in $SampleRegistry) {
+                Build-RegisteredSample -Entry $entry -Config 'release' | Out-Null
+            }
             Build-Probe -Config 'release' | Out-Null
-        }
-        'list' {
-            Build-Resource
-            Build-ListSample -Config 'release' | Out-Null
         }
         'samples' {
             Build-Resource
-            Build-Gallery -Config 'release' | Out-Null
-            Build-ListSample -Config 'release' | Out-Null
+            foreach ($entry in $SampleRegistry) {
+                Build-RegisteredSample -Entry $entry -Config 'release' | Out-Null
+            }
+        }
+        { $_ -in @('basic', 'list') } {
+            Build-Resource
+            Build-RegisteredSample -Entry (Get-SampleEntry $Target) -Config 'release' | Out-Null
         }
         'tests'   { Build-Resource; Build-Tests }
         'bench'   { Build-Resource; Build-Bench }

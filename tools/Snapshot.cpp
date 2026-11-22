@@ -8,6 +8,7 @@
 #include "Diagnostics.h"
 #include "GalleryVm.h"  // sample: the Gallery page's ViewModel
 #include "ListVm.h"     // sample: the list page's ViewModel
+#include "BasicVm.h"    // sample: the basic controls page's ViewModel
 #include "Mvvm.h"
 #include "Resource.h"  // WAML_RESOURCE_TYPE / IDR_WAML_GALLERY
 #include "Resources.h" // LoadWaml honours the debug/release switch
@@ -85,11 +86,16 @@ int main(int argc, char** argv) {
     // shared by all samples, so binding the wrong VM would produce a page full
     // of empty values that still renders "successfully" -- a silent wrong
     // picture. The file name is a reliable enough signal here.
-    const bool isListPage =
-        loaded.origin.find("List.waml") != std::string::npos || wamlPath.find("List.waml") != std::string::npos;
+    const std::string source = loaded.origin + " " + wamlPath;
+    const bool isListPage = source.find("List.waml") != std::string::npos;
+    const bool isBasicPage = source.find("Basic.waml") != std::string::npos;
 
     std::shared_ptr<RefObject> vmRef;
-    if (isListPage) {
+    if (isBasicPage) {
+        auto basicVm = std::make_shared<sample::BasicViewVm>();
+        std::printf("vm: BasicViewVm\n");
+        vmRef = std::static_pointer_cast<RefObject>(basicVm);
+    } else if (isListPage) {
         auto listVm = std::make_shared<sample::ListViewVm>();
         std::printf("vm: ListViewVm (%zu rows)\n", static_cast<size_t>(listVm->ItemCount.Get()));
         vmRef = std::static_pointer_cast<RefObject>(listVm);

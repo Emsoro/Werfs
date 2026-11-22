@@ -91,7 +91,9 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
 | `probe` | `waml_probe.exe` | 资源门禁，**构建后自动运行** |
+| `basic` | `waml_basic.exe` | 基础控件示例 |
 | `list` | `waml_list.exe` | 集合与布局示例 |
+| `samples` | 全部示例 | 一次构建所有示例 |
 | `probedbg` | 同上 | 调试构建的门禁 |
 | `res` | `.res` | 只编译资源 |
 | `icon` | `app.ico` | 重新生成图标 |
@@ -155,8 +157,8 @@ framework/src/
 samples/                ← 示例，单向依赖框架
     shared/                共享宿主：窗口、D2D、DPI、输入分发（不含任何页面逻辑）
     gallery/               控件总览页
+    basic/                 **已实现** 基础控件：TextBlock/Button/TextBox/CheckBox/Border
     list/                  **已实现** 集合与布局：ListBox + Grid/WrapPanel/Canvas/VariableSizedWrapGrid/Viewbox/Expander
-    basic/                 （规划 1）基础控件
     binding/               （规划 2）四种绑定模式对照
     theming/               （规划 3）Light/Dark 主题
     usercontrol/           （规划 4）父子组件、两个独立数据源
@@ -174,14 +176,14 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 顺序 | 示例 | 内容 | 状态 |
 |---|---|---|---|
-| 1 | `list` | **集合 + 布局**：ListBox/DataTemplate、Grid、WrapPanel、VariableSizedWrapGrid、Canvas、Viewbox、Expander | **已实现** |
-| 2 | `basic` | TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | 规划中 |
+| 1 | `basic` | **基础控件**：TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | **已实现** |
+| 2 | `list` | **集合 + 布局**：ListBox/DataTemplate、Grid、WrapPanel、VariableSizedWrapGrid、Canvas、Viewbox、Expander | **已实现** |
 | 3 | `binding` | 四种绑定模式并排对照 | 规划中 |
 | 4 | `theming` | Light/Dark 切换与 token | 规划中 |
 | 5 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
 | 6 | `gallery` | 把全部控件页组织成可浏览的图库（产品形态） | 演进中 |
 
-`list` 先做，正因为它是**布局能力的验收现场**——把六个布局面板装进一个真实页面，比单独演示每个面板更能暴露问题（也确实暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷）。
+两个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（把六个面板装进一个真实页面，也确实因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷）。
 
 `usercontrol` 排在第五，因为它依赖的能力（`DataContext` 可绑定）目前还不存在；放在中段可以让前面几个示例先落地，而不是一开始就卡在设计决策上。
 

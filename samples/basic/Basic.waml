@@ -1,0 +1,116 @@
+<?waml version="0.1"?>
+<!--
+  samples/basic — the five basic controls, one data source.
+
+  This is the page a newcomer reads first, so it stays deliberately small: no
+  lists, no templates, and layout only as much as needed to stack cards. Each
+  card teaches exactly one control and one binding behaviour.
+
+  Bound to sample::BasicViewVm in BasicVm.h.
+-->
+<Page Background="AppBackground" Padding="0">
+  <ScrollViewer>
+    <StackPanel Orientation="Vertical" Margin="24" Spacing="16">
+
+      <!-- ================= Header ================= -->
+      <TextBlock Text="{Binding Heading}" FontSize="30" FontWeight="SemiBold"
+                 Foreground="TextPrimary"/>
+      <TextBlock Text="{Binding Blurb}" FontSize="13" Foreground="TextSecondary"
+                 TextWrapping="Wrap"/>
+
+      <!-- ================= 1. TextBlock ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="1 · TextBlock" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Text, FontSize and Foreground are set in markup; this line wraps because TextWrapping=&quot;Wrap&quot; is on."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <TextBlock Text="Normal weight, 14pt, secondary colour." FontSize="14"
+                     Foreground="TextSecondary"/>
+          <TextBlock Text="Semibold weight, 18pt, primary colour." FontSize="18"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="Accent colour, 14pt." FontSize="14" Foreground="Accent"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 2. Button + OneWay count ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="2 · Button and Command" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="{Binding ClickSummary}" FontSize="12"
+                     Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Click me" Command="{Binding ClickCommand}"/>
+            <Button Content="Reset" Command="{Binding ResetCommand}"/>
+            <!-- OneWay: the label follows the VM, and cannot write back to it. -->
+            <TextBlock Text="{Binding ClickCount, StringFormat='clicks: {0}'}"
+                       FontSize="13" Foreground="TextSecondary"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 3. TextBox + TwoWay ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="3 · TextBox with TwoWay binding" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="Type in the box: the echo below is a second binding to the same property, so it updates as you type."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <TextBox Text="{Binding Greeting, Mode=TwoWay}"
+                   PlaceholderText="Type something…"/>
+          <TextBlock Text="{Binding Greeting, StringFormat='echo: {0}'}" FontSize="13"
+                     Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 4. CheckBox + derived text ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="4 · CheckBox" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="The box writes its state back to the ViewModel; the caption below is derived from it."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <CheckBox Content="I have read enough to start" IsChecked="{Binding IsAgreed}"/>
+          <TextBlock Text="{Binding AgreementText}" FontSize="13"
+                     Foreground="TextSecondary"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 5. Border ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="5 · Border" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Every card on this page is a Border: background, brush, thickness, radius and padding."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Border Background="ControlFill" BorderBrush="CardBorder" BorderThickness="1"
+                  CornerRadius="0" Padding="12">
+            <TextBlock Text="Sharp corners (CornerRadius=0), filled background"
+                       FontSize="13" Foreground="TextPrimary"/>
+          </Border>
+          <Border Background="Accent" CornerRadius="12" Padding="12">
+            <TextBlock Text="Accent fill, rounded 12, no border" FontSize="13"
+                       Foreground="TextOnAccent"/>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= Footer ================= -->
+      <TextBlock Text="That is every basic control. See samples/list for collections and layout panels."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"
+                 Padding="0,0,0,16"/>
+
+    </StackPanel>
+  </ScrollViewer>
+</Page>

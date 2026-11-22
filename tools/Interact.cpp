@@ -6,6 +6,7 @@
 #include "Controls.h"
 #include "Core.h"
 #include "Diagnostics.h"
+#include "BasicVm.h"    // sample: the basic controls page's ViewModel
 #include "GalleryVm.h"  // sample: the Gallery page's ViewModel
 #include "Mvvm.h"
 #include "Resource.h"  // WAML_RESOURCE_TYPE / IDR_WAML_GALLERY
@@ -37,13 +38,15 @@ void Assert(bool cond, const char* what) { Expect(cond, what); }
 // Sample ViewModel, shared with the other tools.
 using Vm = sample::GalleryVm;
 
-std::string ReadFile(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
+// The basic sample has a different ViewModel. Running the gallery assertions
+// against it would report failures that say nothing about the page, so the two
+// pages get separate checks that both drive real hit tests and real input.
+bool IsBasicPage(const std::string& origin, const std::string& path) {
+    return origin.find("Basic.waml") != std::string::npos ||
+           path.find("Basic.waml") != std::string::npos;
 }
+
+// Checks that only make sense on samples/basic/Basic.waml.
 
 Widget* FindFirst(Widget* w, const char* typeName) {
     if (!w) return nullptr;
@@ -78,6 +81,89 @@ Widget* ButtonWithText(Widget* root, const std::wstring& content) {
 
 } // namespace
 
+int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm) {
+    std::printf("\n[1] TextBlock bound from ViewModel\n");
+    Widget* heading = nullptr;
+    std::function<void(Widget*)> findHeading = [&](Widget* w) {
+        if (!w || heading) return;
+        const int slot = w->SlotOf("Text");
+        if (slot >= 0 && w->Get<std::wstring>(slot) == L"Basic controls") heading = w;
+        for (auto& c : w->Children()) findHeading(c.get());
+    };
+    findHeading(root);
+    Expect(heading != nullptr, "heading text came from the VM");
+    Expect(vm->Heading.Get() == L"Basic controls", "VM heading matches the page");
+
+    std::printf("\n[2] Button -> command -> VM -> label\n");
+    Widget* click = ButtonWithText(root, L"Click me");
+    Expect(click != nullptr, "found 'Click me' button");
+    const int before = vm->ClickCount.Get();
+    if (click) {
+        root->ForceLayout(Size{700, 1200});
+        ClickAt(root, click);
+    }
+    Expect(vm->ClickCount.Get() == before + 1, "click executed ClickCommand");
+    Expect(vm->ClickSummary.Get().find(L"First click") != std::wstring::npos ||
+               vm->ClickSummary.Get().find(L"Still counting") != std::wstring::npos ||
+               vm->ClickSummary.Get().find(L"Five or more") != std::wstring::npos,
+           "command also updated the derived summary");
+    Widget* reset = ButtonWithText(root, L"Reset");
+    Expect(reset != nullptr, "found Reset button");
+    if (reset) {
+        root->ForceLayout(Size{700, 1200});
+        ClickAt(root, reset);
+    }
+    Expect(vm->ClickCount.Get() == 0, "Reset restored the count");
+
+    std::printf("\n[3] TextBox TwoWay\n");
+    Widget* boxWidget = FindFirst(root, "wui/TextBox");
+    Expect(boxWidget != nullptr, "found TextBox");
+    if (auto* tb = dynamic_cast<TextBox*>(boxWidget)) {
+        tb->SetCaretToEnd();
+        tb->OnChar(L'!');
+        Expect(vm->Greeting.Get() == L"Hello, WAML!", "typing wrote back to Greeting");
+        vm->Greeting.Set(L"from-vm");
+        Expect(tb->Get<std::wstring>(tb->SlotOf("Text")) == L"from-vm",
+               "VM change flowed back into the TextBox");
+    } else {
+        Expect(false, "TextBox has the expected type");
+    }
+
+    std::printf("\n[4] CheckBox TwoWay + derived caption\n");
+    Widget* check = FindFirst(root, "wui/CheckBox");
+    Expect(check != nullptr, "found CheckBox");
+    if (check) {
+        const bool wasChecked = vm->IsAgreed.Get();
+        const Rect& b = check->Bounds();
+        Widget* hit = root->HitTest(Point{b.x + 8, b.y + b.h * 0.5f});
+        Expect(hit == check, "hit test lands on the CheckBox");
+        if (hit) {
+            hit->OnPointerDown(Point{b.x + 8, b.y + b.h * 0.5f});
+            hit->OnPointerUp(Point{b.x + 8, b.y + b.h * 0.5f});
+        }
+        Expect(vm->IsAgreed.Get() != wasChecked, "click toggled IsAgreed in the VM");
+        Expect(vm->AgreementText.Get().find(vm->IsAgreed.Get() ? L"agreed" : L"Not agreed") !=
+                   std::wstring::npos,
+               "the caption followed the box state");
+    }
+
+    std::printf("\n[5] no ListBox on this page\n");
+    // The basic page deliberately has no list; asserting its absence keeps the
+    // page from quietly growing into a second list sample.
+    Expect(FindFirst(root, "wui/ListBox") == nullptr, "basic page has no ListBox");
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
+
+std::string ReadFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     // Same delivery switch as the demo: an explicit path wins, otherwise the
@@ -108,6 +194,18 @@ int main(int argc, char** argv) {
 
     FakeTextService text;
     TextSystem::Set(&text);
+
+    // Dispatch on the page so each sample is driven against its own ViewModel.
+    // Asserting the gallery's expectations against another page would produce
+    // failures that say nothing about the code under test.
+    if (IsBasicPage(loaded.origin, argc > 1 ? argv[1] : "")) {
+        auto basicVm = std::make_shared<sample::BasicViewVm>();
+        WidgetPtr basicRoot = doc->Instantiate(&text);
+        basicRoot->SetDataContext(std::static_pointer_cast<RefObject>(basicVm));
+        basicRoot->ForceLayout(Size{700, 1200});
+        return RunBasicChecks(basicRoot.get(), basicVm);
+    }
+
     auto vm = std::make_shared<Vm>();
     vm->Title.Set(L"demo"); // this tool asserts against a known title
     vm->SeedItems(3);
