@@ -8,6 +8,7 @@
 #include "Diagnostics.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
+#include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "Mvvm.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (default page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
@@ -89,6 +90,7 @@ int main(int argc, char** argv) {
     const std::string source = loaded.origin + " " + wamlPath;
     const bool isListPage = source.find("List.waml") != std::string::npos;
     const bool isBasicPage = source.find("Basic.waml") != std::string::npos;
+    const bool isEditorPage = source.find("Editor.waml") != std::string::npos;
 
     std::shared_ptr<RefObject> vmRef;
     if (isBasicPage) {
@@ -99,6 +101,10 @@ int main(int argc, char** argv) {
         auto listVm = std::make_shared<sample::ListViewVm>();
         std::printf("vm: ListViewVm (%zu rows)\n", static_cast<size_t>(listVm->ItemCount.Get()));
         vmRef = std::static_pointer_cast<RefObject>(listVm);
+    } else if (isEditorPage) {
+        auto editorVm = std::make_shared<sample::EditorVm>();
+        std::printf("vm: EditorVm (%zu documents)\n", editorVm->DocumentCount());
+        vmRef = std::static_pointer_cast<RefObject>(editorVm);
     } else {
         // Default: the basic page. There is no gallery sample any more; every
         // page belongs to exactly one sample, and an unknown one is a mistake

@@ -35,6 +35,8 @@
 
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "Core.h"
 
@@ -62,6 +64,15 @@ struct HostOptions {
     // apparent size on 100% and 200% displays.
     float widthDip = 420.0f;
     float heightDip = 560.0f;
+
+    // Keyboard shortcuts: "Ctrl+S" -> the command to run. Dispatch order is
+    // focused control first, then this table, so Ctrl+S in a TextBox is handled
+    // by the box if the box wants it and reaches the table otherwise.
+    //
+    // A table rather than WAML attributes because shortcuts are application-wide:
+    // two controls declaring the same chord would otherwise both fire, and the
+    // one that fired would depend on tree order.
+    std::vector<std::pair<std::wstring, wui::RefPtr>> accelerators;
 };
 
 // Runs the sample until the window closes. `makeVm` returns the root

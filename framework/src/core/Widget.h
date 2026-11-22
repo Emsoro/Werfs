@@ -142,6 +142,23 @@ public:
     void SetName(std::string name) { name_ = std::move(name); }
     const std::string& Name() const { return name_; }
 
+    // --- overlays (menus, dialogs) ------------------------------------------
+    // The overlay is owned by the ROOT and painted after the whole tree, so it
+    // is never clipped by a ScrollViewer and never scrolls with content. A
+    // control passes a layer it owns; the tree does NOT take ownership, because
+    // a menu is normally a member of the control that opened it.
+    //
+    // Calling this on any widget forwards to the root, and reading it reads the
+    // root's value, so `anyWidget->Overlay()` is the same everywhere.
+    void SetOverlay(OverlayLayer* layer);
+    OverlayLayer* Overlay() const;
+    // Where this widget is on screen, in window space (bounds + paint offset).
+    Rect WindowBounds() const { return VisualBounds(); }
+
+    Widget* ChildAt(size_t index) const {
+        return index < children_.size() ? children_[index].get() : nullptr;
+    }
+
     // --- scrolled content ---------------------------------------------------
     // A ScrollViewer arranges its child in unscrolled coordinates and sets this
     // offset so paint moves up and hit testing moves down by the same amount.
@@ -203,6 +220,8 @@ protected:
     std::map<int, std::vector<ISlotObserver*>> slotObservers_;
     Rect bounds_;
     Point paintOffset_{0, 0};
+    // Owned by the root only; see SetOverlay.
+    OverlayLayer* overlay_ = nullptr;
     Size desired_;
     bool layoutDirty_ = true;
     bool paintDirty_ = true;

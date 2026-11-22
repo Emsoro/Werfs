@@ -7,8 +7,11 @@
 #include "Core.h"
 #include "Diagnostics.h"
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
+#include "EditorVm.h"   // sample: the multi-document editor's ViewModel
+#include "FileDialog.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "Mvvm.h"
+#include "Overlay.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (this tool defaults to the basic page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
 #include "SoftwareRender.h"
@@ -41,6 +44,11 @@ void Assert(bool cond, const char* what) { Expect(cond, what); }
 bool IsBasicPage(const std::string& origin, const std::string& path) {
     return origin.find("Basic.waml") != std::string::npos ||
            path.find("Basic.waml") != std::string::npos;
+}
+
+bool IsEditorPage(const std::string& origin, const std::string& path) {
+    return origin.find("Editor.waml") != std::string::npos ||
+           path.find("Editor.waml") != std::string::npos;
 }
 
 // Checks that only make sense on samples/basic/Basic.waml.
@@ -186,13 +194,219 @@ int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm)
     return g_failures == 0 ? 0 : 1;
 }
 
-std::string ReadFile(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
+// Checks for samples/editor/Editor.waml. This is the integration page, so the
+// checks walk the whole story rather than a single control:
+//   a tab strip drives the ViewModel, the toolbar and menu reach the same
+//   commands, editing marks the document dirty, and closing a dirty tab asks.
+int RunEditorChecks(Widget* root, const std::shared_ptr<sample::EditorVm>& vm) {
+    std::printf("\n[1] the tab strip is seeded from the document list\n");
+    Widget* tabWidget = FindFirst(root, "wui/TabView");
+    Expect(tabWidget != nullptr, "found the TabView");
+    if (!tabWidget) return g_failures == 0 ? 0 : 1;
+    auto* tabs = dynamic_cast<TabView*>(tabWidget);
+    Expect(tabs != nullptr, "TabView has the expected type");
+    if (!tabs) return g_failures == 0 ? 0 : 1;
+
+    Expect(tabs->ItemCount() == 3, "three documents seeded");
+    Expect(vm->DocumentCount() == 3, "the ViewModel agrees");
+    Expect(tabs->SelectedIndex() == 0, "the first tab is active");
+
+    std::printf("\n[2] clicking a tab switches the active document\n");
+    {
+        const Rect t1 = tabs->TabBounds(1);
+        tabs->OnPointerDown(Point{t1.x + 8, t1.y + t1.h * 0.5f});
+        tabs->OnPointerUp(Point{t1.x + 8, t1.y + t1.h * 0.5f});
+        Expect(tabs->SelectedIndex() == 1, "the second tab is selected");
+        Expect(vm->ActiveIndex.Get() == 1, "the selection reached the ViewModel");
+        Expect(vm->ActiveTitle.Get() == L"notes.txt", "the active document followed");
+        // The editor area shows the NEW document's text, not the old one's: this is
+        // the TwoWay binding doing its job in the reverse direction.
+        Expect(vm->ActiveContent.Get().find(L"second document") != std::wstring::npos,
+               "the editor area holds the second document's text");
+    }
+
+    std::printf("\n[3] the + button creates a document\n");
+    {
+        const int before = static_cast<int>(tabs->ItemCount());
+        const Rect add = tabs->AddButtonBounds();
+        tabs->OnPointerDown(Point{add.x + 4, add.y + 4});
+        tabs->OnPointerUp(Point{add.x + 4, add.y + 4});
+        Expect(static_cast<int>(tabs->ItemCount()) == before + 1, "+ added a tab");
+        Expect(vm->DocumentCount() == static_cast<size_t>(before) + 1,
+               "the ViewModel created the document");
+        Expect(tabs->SelectedIndex() == before, "the new tab became active");
+    }
+
+    std::printf("\n[4] typing marks the document dirty\n");
+    // The TextBox in the editor area is bound TwoWay to ActiveContent. Driving it
+    // is what a user typing does.
+    Widget* editorBox = FindFirst(root, "wui/TextBox");
+    Expect(editorBox != nullptr, "found the editor TextBox");
+    auto doc = vm->ActiveDoc();
+    Expect(doc != nullptr, "there is an active document");
+    if (doc) {
+        Expect(!doc->IsDirty.Get(), "a newly created document starts clean");
+        if (auto* tb = dynamic_cast<TextBox*>(editorBox)) {
+            tb->SetCaretToEnd();
+            tb->OnChar(L'x');
+        }
+        Expect(doc->IsDirty.Get(), "typing marked it dirty");
+        Expect(doc->TabLabel.Get().find(L"\u2022") != std::wstring::npos,
+               "the tab label gained the unsaved dot");
+        // Undoing the edit must make it clean again: the flag is derived, not set.
+        if (auto* tb = dynamic_cast<TextBox*>(editorBox)) {
+            tb->OnKeyDown(KeyBack);
+        }
+        Expect(!doc->IsDirty.Get(), "deleting the character made it clean again");
+    }
+
+    std::printf("\n[5] closing a CLEAN tab removes it without asking\n");
+    {
+        const int before = static_cast<int>(tabs->ItemCount());
+        // Make sure the active document is clean before pressing ×: a document that
+        // still had edits would (correctly) raise the prompt instead.
+        if (auto d = vm->ActiveDoc()) d->MarkSaved();
+        tabs->ClearCloseRequest();
+        const Rect close = tabs->CloseButtonBounds(static_cast<size_t>(tabs->SelectedIndex()));
+        tabs->OnPointerDown(Point{close.x + 2, close.y + 2});
+        tabs->OnPointerUp(Point{close.x + 2, close.y + 2});
+        root->ForceLayout(Size{860, 660});
+        Expect(!vm->PromptOpen.Get(), "no prompt for a clean document");
+        Expect(static_cast<int>(tabs->ItemCount()) == before - 1, "the tab was removed");
+    }
+
+    std::printf("\n[6] closing a DIRTY tab asks first\n");
+    {
+        // Dirty the active document through the model (same path the TextBox uses).
+        auto active = vm->ActiveDoc();
+        Expect(active != nullptr, "there is still an active document");
+        if (active) {
+            active->SetContent(active->Content.Get() + L"edited");
+            Expect(active->IsDirty.Get(), "the document is dirty");
+        }
+        const int before = static_cast<int>(tabs->ItemCount());
+        tabs->ClearCloseRequest();
+        const Rect close = tabs->CloseButtonBounds(static_cast<size_t>(tabs->SelectedIndex()));
+        tabs->OnPointerDown(Point{close.x + 2, close.y + 2});
+        tabs->OnPointerUp(Point{close.x + 2, close.y + 2});
+        root->ForceLayout(Size{860, 660});
+        Expect(vm->PromptOpen.Get(), "the ViewModel raised the prompt");
+        Expect(static_cast<int>(tabs->ItemCount()) == before,
+               "and the tab is STILL there -- nothing was removed yet");
+
+        std::printf("\n[7] cancelling the prompt keeps the tab\n");
+        vm->ResolveClose(sample::CloseChoice::Cancel);
+        root->ForceLayout(Size{860, 660});
+        Expect(!vm->PromptOpen.Get(), "the prompt closed");
+        Expect(static_cast<int>(tabs->ItemCount()) == before, "the tab survived a cancel");
+        Expect(vm->PendingCloseIndex() == -1, "no close is pending any more");
+    }
+
+    std::printf("\n[8] discarding the prompt removes the tab\n");
+    {
+        const int before = static_cast<int>(tabs->ItemCount());
+        tabs->ClearCloseRequest();
+        const Rect close = tabs->CloseButtonBounds(static_cast<size_t>(tabs->SelectedIndex()));
+        tabs->OnPointerDown(Point{close.x + 2, close.y + 2});
+        tabs->OnPointerUp(Point{close.x + 2, close.y + 2});
+        root->ForceLayout(Size{860, 660});
+        Expect(vm->PromptOpen.Get(), "the prompt is up again");
+        vm->ResolveClose(sample::CloseChoice::Discard);
+        root->ForceLayout(Size{860, 660});
+        Expect(static_cast<int>(tabs->ItemCount()) == before - 1, "discard closed the tab");
+    }
+
+    std::printf("\n[9] the menu bar opens and its commands reach the ViewModel\n");
+    {
+        Widget* menuWidget = FindFirst(root, "wui/MenuBar");
+        Expect(menuWidget != nullptr, "found the MenuBar");
+        auto* menu = dynamic_cast<MenuBar*>(menuWidget);
+        Expect(menu != nullptr, "MenuBar has the expected type");
+        if (menu) {
+            Expect(menu->Items().size() == 3, "File / Edit / Help");
+            menu->OpenMenu(0);
+            OverlayLayer* layer = root->Overlay();
+            Expect(layer != nullptr && layer->Active(), "the File menu is open");
+            if (layer) {
+                // The first item is "New": choosing it must create a document.
+                const int before = static_cast<int>(vm->DocumentCount());
+                const Rect box = layer->Bounds();
+                layer->OnPointerDown(Point{box.x + box.w * 0.5f, box.y + 6.0f + 15.0f});
+                Expect(static_cast<int>(vm->DocumentCount()) == before + 1,
+                       "New from the menu created a document");
+                Expect(!layer->Active(), "and the menu closed");
+                Expect(root->Overlay() == nullptr, "the overlay slot was released");
+            }
+        }
+    }
+
+    std::printf("\n[10] the toolbar carries the same commands and overflows\n");
+    {
+        Widget* barWidget = FindFirst(root, "wui/CommandBar");
+        Expect(barWidget != nullptr, "found the CommandBar");
+        auto* bar = dynamic_cast<CommandBar*>(barWidget);
+        Expect(bar != nullptr, "CommandBar has the expected type");
+        if (bar) {
+            root->ForceLayout(Size{860, 660});
+            Expect(!bar->IsOverflowing(), "a wide window shows every button");
+            root->ForceLayout(Size{240, 660});
+            Expect(bar->IsOverflowing(), "a narrow window overflows");
+            root->ForceLayout(Size{860, 660});
+        }
+    }
+
+    std::printf("\n[11] the page still lays out with no document open\n");
+    {
+        // Close everything through the model, then re-lay out: an editor with no
+        // documents must not dereference a null active document.
+        while (vm->DocumentCount() > 0) {
+            auto d = vm->ActiveDoc();
+            if (d) d->SetContent(d->Content.Get() + L"!");
+            vm->RequestClose(vm->ActiveIndex.Get());
+            vm->ResolveClose(sample::CloseChoice::Discard);
+        }
+        std::printf("    (documents closed; laying out)\n");
+        root->ForceLayout(Size{860, 660});
+        std::printf("    (layout done)\n");
+        Expect(vm->DocumentCount() == 0, "every document was closed");
+        Expect(vm->ActiveIndex.Get() == -1, "the selection reset to none");
+        Expect(vm->ActiveTitle.Get() == L"(no document)", "the labels fell back cleanly");
+        // Paint once. This is the check that matters: an editor with no documents
+        // still has a tab strip (empty), a toolbar and a status line, and painting
+        // those must not dereference a null active document. The recording context
+        // is enough -- it drives every OnPaint in the tree without needing D2D.
+        RecordingPaintContext recorder;
+        root->PaintTree(recorder, MakePalette(ThemeKind::Light));
+        Expect(recorder.OpCount() > 0, "the empty editor still paints");
+        std::printf("    (%zu paint ops)\n", recorder.OpCount());
+    }
+
+    std::printf("\n[12] the tab strip survives re-layout after every close\n");
+    {
+        // Reopen something so the strip is not empty, then lay out twice. A strip
+        // whose width cache went stale while empty computes tab rects from a vector
+        // it never refilled -- that crash showed up only on the SECOND layout after
+        // the list had shrunk, which is why this drives it explicitly.
+        vm->NewDocument();
+        root->ForceLayout(Size{860, 660});
+        root->ForceLayout(Size{860, 660});
+        Widget* tabWidget2 = FindFirst(root, "wui/TabView");
+        if (auto* tabs2 = dynamic_cast<TabView*>(tabWidget2)) {
+            Expect(tabs2->ItemCount() == 1, "the reopened strip has one tab");
+            // The × geometry must be sane again: a zero-width tab draws its close
+            // button off the end and makes the tab unclosable.
+            const Rect tab = tabs2->TabBounds(0);
+            Expect(tab.w > 0.0f, "the tab has a non-zero width");
+            const Rect close = tabs2->CloseButtonBounds(0);
+            Expect(close.x + close.w <= tab.x + tab.w + 0.5f,
+                   "the close button sits inside the tab");
+        }
+    }
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
 }
+
 
 // Checks for samples/list/List.waml: DataTemplate rows, per-item context and
 // dynamic add/remove.
@@ -332,6 +546,18 @@ int main(int argc, char** argv) {
         root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
         root->ForceLayout(Size{700, 1200});
         return RunBasicChecks(root.get(), vm);
+    }
+
+    if (IsEditorPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::EditorVm>();
+        // No dialog service: the harness must never open a real dialog (R15). The
+        // editor's Open/Save As report "no service installed" instead, which is
+        // exactly the headless contract.
+        SetFileDialogService(nullptr);
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{860, 660});
+        return RunEditorChecks(root.get(), vm);
     }
 
     auto listVm = std::make_shared<sample::ListViewVm>();

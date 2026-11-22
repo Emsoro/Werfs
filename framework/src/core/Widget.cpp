@@ -270,6 +270,13 @@ void Widget::PaintTreeAt(PaintCtx& ctx, const ThemePalette& palette, const Point
 
     bounds_.x = savedPosition.x;
     bounds_.y = savedPosition.y;
+
+    // Overlays are painted last, by the root, and never inside this subtree's
+    // clip. Doing it here (rather than in PaintChildrenAt) is what lets a menu
+    // opened from inside a ScrollViewer draw over the whole window.
+    if (overlay_ && overlay_->Active() && parent_ == nullptr) {
+        overlay_->Paint(ctx, palette);
+    }
 }
 
 void Widget::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
@@ -327,6 +334,21 @@ void Widget::SetFocused(bool focused) {
     if (focused_ == focused) return;
     focused_ = focused;
     SetDirtyUpwards(AffectsRender);
+}
+
+void Widget::SetOverlay(OverlayLayer* layer) {
+    // The root owns it, so the overlay survives painting as a child of any
+    // control and is drawn after the whole tree (never inside a clip).
+    Widget* root = Root();
+    if (!root) return;
+    root->overlay_ = layer;
+    root->SetDirtyUpwards(AffectsRender);
+}
+
+OverlayLayer* Widget::Overlay() const {
+    const Widget* root = this;
+    while (root->parent_) root = root->parent_;
+    return root->overlay_;
 }
 
 void Widget::OnSlotChanged(int, const Value&) {}

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "Controls.h"
+
+#include "Overlay.h"
+
 #include <cstdio>
 #include <cstdlib>
 
@@ -143,8 +146,12 @@ void TextBlock::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 Size Border::Measure(const Size& available) {
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
-    const Size inner{std::max(0.0f, available.w - margin.H() - pad.H()),
-                     std::max(0.0f, available.h - margin.V() - pad.V())};
+    // Border thickness takes space, exactly like padding. Ignoring it made a
+    // bordered card clip its own content by the border width.
+    const Thickness border = Get<Thickness>(SlotOf("BorderThickness"));
+    const float chromeH = margin.H() + pad.H() + border.H();
+    const float chromeV = margin.V() + pad.V() + border.V();
+    const Size inner{std::max(0.0f, available.w - chromeH), std::max(0.0f, available.h - chromeV)};
     float w = 0;
     float h = 0;
     for (auto& c : LayoutChildren()) {
@@ -153,7 +160,7 @@ Size Border::Measure(const Size& available) {
         h = std::max(h, s.h);
     }
     // ApplySizeConstraints applies an explicit Width/Height on top of this.
-    desired_ = Size{w + margin.H() + pad.H(), h + margin.V() + pad.V()};
+    desired_ = Size{w + chromeH, h + chromeV};
     ApplySizeConstraints();
     return desired_;
 }
@@ -162,9 +169,11 @@ void Border::Arrange(const Rect& finalRect) {
     bounds_ = finalRect;
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
-    const Rect content{finalRect.x + margin.l + pad.l, finalRect.y + margin.t + pad.t,
-                       std::max(0.0f, finalRect.w - margin.H() - pad.H()),
-                       std::max(0.0f, finalRect.h - margin.V() - pad.V())};
+    const Thickness border = Get<Thickness>(SlotOf("BorderThickness"));
+    const Rect content{finalRect.x + margin.l + pad.l + border.l,
+                       finalRect.y + margin.t + pad.t + border.t,
+                       std::max(0.0f, finalRect.w - margin.H() - pad.H() - border.H()),
+                       std::max(0.0f, finalRect.h - margin.V() - pad.V() - border.V())};
     for (auto& c : LayoutChildren()) c->Arrange(content);
 }
 
@@ -180,8 +189,19 @@ void Border::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         else ctx.FillRect(box, bg);
     }
     const Color border = ResolveColor(Get<Color>(SlotOf("BorderBrush")), palette);
-    const float borderW = Get<float>(SlotOf("BorderThickness"));
-    if (border.a > 0 && borderW > 0) ctx.StrokeRect(box, border, borderW, radius);
+    const Thickness thickness = Get<Thickness>(SlotOf("BorderThickness"));
+    if (border.a <= 0) return;
+
+    // Per-edge strokes, so "0,1,0,0" draws a single divider line. PaintCtx has no
+    // per-edge stroke primitive, so the edges that are present are drawn as thin
+    // filled strips -- correct for the 1px hairlines a divider actually uses, and
+    // avoids a fourth drawing primitive for a case that only ever needs 1-2 px.
+    if (thickness.t > 0) ctx.FillRect(Rect{box.x, box.y, box.w, thickness.t}, border);
+    if (thickness.b > 0)
+        ctx.FillRect(Rect{box.x, box.y + box.h - thickness.b, box.w, thickness.b}, border);
+    if (thickness.l > 0) ctx.FillRect(Rect{box.x, box.y, thickness.l, box.h}, border);
+    if (thickness.r > 0)
+        ctx.FillRect(Rect{box.x + box.w - thickness.r, box.y, thickness.r, box.h}, border);
 }
 
 // ---------------------------------------------------------------------------
@@ -362,12 +382,66 @@ void Page::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     if (bg.a > 0) ctx.FillRect(bounds_, bg);
 }
 
+Size Page::Measure(const Size& available) {
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const Size inner{std::max(0.0f, available.w - pad.H()),
+                     std::max(0.0f, available.h - pad.V())};
+    // A page is a vertical column of regions: menu bar, toolbar, content, status.
+    // Every child is measured, and the tallest arrangement wins -- the page fills
+    // what it is given, so a page taller than the window simply clips like a
+    // window does rather than growing a scrollbar nobody asked for.
+    float totalH = 0;
+    float maxW = 0;
+    for (auto& c : LayoutChildren()) {
+        const Size s = c->Measure(Size{inner.w, inner.h});
+        totalH += s.h;
+        maxW = std::max(maxW, s.w);
+    }
+    desired_ = Size{available.w > 0 ? available.w : maxW + pad.H(), totalH + pad.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
 void Page::Arrange(const Rect& finalRect) {
     bounds_ = finalRect;
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
-    const Rect content{finalRect.x + pad.l, finalRect.y + pad.t, std::max(0.0f, finalRect.w - pad.H()),
-                       std::max(0.0f, finalRect.h - pad.V())};
-    for (auto& c : LayoutChildren()) c->Arrange(content);
+    const float contentW = std::max(0.0f, finalRect.w - pad.H());
+    const float contentTop = finalRect.y + pad.t;
+    const float contentH = std::max(0.0f, finalRect.h - pad.V());
+
+    // Children stack vertically. Children WITH an explicit Height keep it; the
+    // leftover height is shared equally among the children that have none.
+    //
+    // Explicit height is the signal because it is what markup already says: a menu
+    // bar is Height="34" and must stay 34, while the content region declares no
+    // height and is the one that should fill. "The last child grows" was the first
+    // attempt and it is wrong for the ordinary page shape -- with a status line last,
+    // the status line would absorb every spare pixel.
+    //
+    // When every child has a height, nothing grows and the page simply does not
+    // fill the window; that is a deliberate page, not an accident.
+    const auto kids = LayoutChildren();
+    if (kids.empty()) return;
+
+    float fixedH = 0;
+    int flexible = 0;
+    for (auto& c : kids) {
+        const float explicitH = c->SlotOf("Height") >= 0 ? c->Get<float>(c->SlotOf("Height")) : 0.0f;
+        if (explicitH > 0) fixedH += explicitH;
+        else {
+            fixedH += c->DesiredSize().h;
+            ++flexible;
+        }
+    }
+    const float slack = flexible > 0 ? std::max(0.0f, contentH - fixedH) / flexible : 0.0f;
+
+    float y = contentTop;
+    for (auto& c : kids) {
+        const float explicitH = c->SlotOf("Height") >= 0 ? c->Get<float>(c->SlotOf("Height")) : 0.0f;
+        const float h = explicitH > 0 ? explicitH : c->DesiredSize().h + slack;
+        c->Arrange(Rect{finalRect.x + pad.l, y, contentW, h});
+        y += h;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -582,9 +656,102 @@ Size TextBox::Measure(const Size& available) {
     Size t{static_cast<float>(text.size()) * fontSize * 0.55f, fontSize * 1.33f};
     if (ITextService* svc = TextSystem::Get()) t = svc->Measure(text, fontSize, WeightNormal);
     desired_ = Size{std::max(160.0f, t.w + pad.H() + margin.H()), std::max(30.0f, t.h + pad.V() + margin.V())};
-    (void)available;
+    // Apply the caller's width, so a text box fills the column it is given instead
+    // of sizing to its own text: a single-line measurement of a long paragraph is
+    // metres wide, which made every dialog containing a text box overflow.
+    if (available.w > 0 && available.w < 1.0e6f) desired_.w = available.w;
+    // An unbounded height constraint is "as tall as you like", not "be a million
+    // pixels tall". Taking it literally produced a 999927-pixel control inside a
+    // star row: the box existed, was laid out, and drew its text a million pixels
+    // down, so the editor area looked empty. A text box's natural height is one
+    // line unless the markup says otherwise, which ApplySizeConstraints then
+    // overrides.
+    if (available.h > 0 && available.h < 1.0e6f) {
+        const float explicitH = SlotOf("Height") >= 0 ? Get<float>(SlotOf("Height")) : 0.0f;
+        if (explicitH <= 0) desired_.h = std::min(desired_.h, available.h);
+    }
     ApplySizeConstraints();
+    // MinHeight is re-applied after the clamp above: ApplySizeConstraints already did
+    // it, but the clamp can have cut the value below the minimum.
+    const int sMinH = SlotOf("MinHeight");
+    if (sMinH >= 0) {
+        const float minH = Get<float>(sMinH);
+        if (minH > 0) desired_.h = std::max(desired_.h, minH);
+    }
     return desired_;
+}
+
+void TextBox::Arrange(const Rect& finalRect) {
+    bounds_ = finalRect;
+    // A multi-line editor box is the whole point of the sample: the document text
+    // needs somewhere to be drawn. Drawing starts at the top and stops at the
+    // bottom edge; lines beyond it are clipped rather than overflowing the card.
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    desired_ = Size{bounds_.w, bounds_.h};
+    (void)margin;
+    (void)pad;
+}
+
+std::vector<std::wstring> TextBox::BuildDisplayLines(float wrapWidth, float fontSize,
+                                                    int weight) const {
+    std::vector<std::wstring> lines;
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    ITextService* svc = TextSystem::Get();
+    const float lineH = svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
+    // A box only one line tall has no room to wrap into; wrapping there would
+    // change what a single-line field looks like.
+    const bool canWrap = bounds_.h >= lineH * 1.9f && wrapWidth > 0.0f;
+    if (!canWrap) {
+        // Single line: show as much as fits, which is the classic behaviour of a
+        // one-line field with more text than room.
+        lines.push_back(text);
+        return lines;
+    }
+
+    std::wstring current;
+    size_t i = 0;
+    while (i <= text.size()) {
+        // Take the next word, up to a space or an explicit newline.
+        size_t end = i;
+        while (end < text.size() && text[end] != L' ' && text[end] != L'\n') ++end;
+        std::wstring word = text.substr(i, end - i);
+
+        const bool hardBreak = end < text.size() && text[end] == L'\n';
+        auto width = [&](const std::wstring& s) {
+            return svc ? svc->Measure(s, fontSize, weight).w
+                       : static_cast<float>(s.size()) * fontSize * 0.55f;
+        };
+        if (!current.empty() && width(current + L" " + word) > wrapWidth) {
+            lines.push_back(current);
+            current.clear();
+        }
+        // A single word longer than the line breaks by character, so a path or a
+        // long identifier cannot overflow the box.
+        while (width(word) > wrapWidth && wrapWidth > 0.0f) {
+            size_t take = word.size();
+            while (take > 1 && width(word.substr(0, take)) > wrapWidth) --take;
+            if (!current.empty()) {
+                lines.push_back(current);
+                current.clear();
+            }
+            lines.push_back(word.substr(0, take));
+            word = word.substr(take);
+        }
+        if (!word.empty()) {
+            if (!current.empty()) current += L" ";
+            current += word;
+        }
+        if (hardBreak) {
+            lines.push_back(current);
+            current.clear();
+        }
+        if (end >= text.size()) break;
+        i = end + 1;
+    }
+    if (!current.empty()) lines.push_back(current);
+    if (lines.empty()) lines.push_back(L"");
+    return lines;
 }
 
 void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
@@ -601,14 +768,31 @@ void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const Rect textBox{box.x + pad.l, box.y + pad.t, box.w - pad.H(), box.h - pad.V()};
     const std::wstring text = Get<std::wstring>(SlotOf("Text"));
     const float fontSize = Get<float>(SlotOf("FontSize"));
+    const int weight = WeightNormal;
+
     if (text.empty() && !focused_) {
         ctx.DrawText(Get<std::wstring>(SlotOf("PlaceholderText")), textBox,
-                     palette.colors[static_cast<int>(Token::TextSecondary)], fontSize, WeightNormal,
+                     palette.colors[static_cast<int>(Token::TextSecondary)], fontSize, weight,
                      TextAlign::Left);
         return;
     }
-    ctx.DrawText(text, textBox, ResolveColor(Get<Color>(SlotOf("Foreground")), palette), fontSize,
-                 WeightNormal, TextAlign::Left);
+
+    const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(fontSize)
+                                          : fontSize * 1.33f;
+    const Color fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    // Clip to the box: content past the bottom edge belongs to a scroll offset the
+    // box does not have yet, and drawing it over the card below looks like a
+    // rendering bug.
+    ctx.PushClip(textBox);
+    const std::vector<std::wstring> lines = BuildDisplayLines(textBox.w, fontSize, weight);
+    float y = textBox.y;
+    for (const auto& line : lines) {
+        if (y + lineH > textBox.y + textBox.h + 0.5f) break;
+        ctx.DrawText(line, Rect{textBox.x, y, textBox.w, lineH}, fg, fontSize, weight,
+                     TextAlign::Left);
+        y += lineH;
+    }
+    ctx.PopClip();
     if (focused_) {
         float caretX = textBox.x;
         if (ITextService* svc = TextSystem::Get()) {
@@ -1757,6 +1941,15 @@ Size TabView::Measure(const Size& available) {
             desired += s.h;
         }
     }
+    // An explicit Height wins over the content height, and the content then gets the
+    // difference. Without this a TabView declared to fill a page reported only
+    // tab-strip-plus-content height, so it sat at the top of its grid row and the
+    // content region had nothing to fill -- the editor area was a tall empty frame
+    // with the text box stuck to its top edge. ApplySizeConstraints already honours
+    // Height for the DESIRED size; this makes the same number available to Arrange
+    // so the child is actually stretched into it.
+    const float explicitH = SlotOf("Height") >= 0 ? Get<float>(SlotOf("Height")) : 0.0f;
+    if (explicitH > 0) desired = std::max(desired, explicitH);
     desired_ = Size{outerW, desired};
     ApplySizeConstraints();
     return desired_;
@@ -1889,11 +2082,21 @@ Widget* TabView::HitTest(const Point& p) {
 
 void TabView::RequestClose(size_t index) {
     if (index >= ItemCount()) return;
+    // closeRequested_ stays sticky so a caller (and a test) can ask "what was the
+    // last close request?" after the fact.
     closeRequested_ = static_cast<int>(index);
     // Publish it. The ViewModel decides whether to remove the tab, because only
     // it knows about unsaved changes.
+    //
+    // Published as an edge, not a level: index first, then back to -1. A level
+    // only signal breaks the second close of the same index -- the observable
+    // property sees an equal value, suppresses the notification, and × appears to
+    // stop working. The ViewModel's contract is "act on values >= 0, ignore the
+    // reset", and doing the reset here keeps that from being something each
+    // sample has to remember.
     if (slotCloseRequested_ >= 0) {
-        SetSlotValue(slotCloseRequested_, Value::Number(closeRequested_), true);
+        SetSlotValue(slotCloseRequested_, Value::Number(index), true);
+        SetSlotValue(slotCloseRequested_, Value::Number(-1), true);
     }
     Invalidate(AffectsRender);
 }
@@ -1952,5 +2155,675 @@ bool TabView::OnKeyDown(int vk) {
         return true;
     }
     return Widget::OnKeyDown(vk);
+}
+
+// ===========================================================================
+// Application shell: MenuBar, CommandBar, ContentDialog
+//
+// These three all need the SAME missing thing -- a layer that draws above the
+// document -- so they are grouped rather than scattered through the file. Their
+// common shape: they live in the layout (so they reserve space), but what they
+// open does not.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// MenuBar
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kMenuBarHeight = 34.0f;
+constexpr float kMenuTitlePad = 14.0f;
+} // namespace
+
+MenuBar::MenuBar() {
+    BindType(TypeRegistry::Instance().Find("wui/MenuBar"));
+}
+
+MenuBar::~MenuBar() {
+    // The overlay is owned by the root, which may already be gone; clearing our
+    // pointer before the layer dies keeps a repaint during teardown from reading
+    // freed memory.
+    if (layer_) {
+        Widget* root = Root();
+        if (root && root->Overlay() == layer_) root->SetOverlay(nullptr);
+    }
+}
+
+std::vector<MenuBarItem*> MenuBar::Items() const {
+    std::vector<MenuBarItem*> out;
+    for (const auto& c : children_) {
+        if (auto* item = dynamic_cast<MenuBarItem*>(c.get())) out.push_back(item);
+    }
+    return out;
+}
+
+void MenuBar::UpdateWidths() {
+    const std::vector<MenuBarItem*> items = Items();
+    titleWidths_.resize(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        // Hold the title in a local: MenuTitle() returns by value, and calling it
+        // twice per title (once to measure, once to draw) would allocate twice in
+        // the common path.
+        const std::wstring title = items[i]->MenuTitle();
+        float w = kMenuTitlePad * 2;
+        if (ITextService* svc = TextSystem::Get()) {
+            w += svc->Measure(title, 13.0f, WeightNormal).w;
+        } else {
+            w += static_cast<float>(title.size()) * 13.0f * 0.55f;
+        }
+        titleWidths_[i] = w;
+    }
+}
+
+Size MenuBar::Measure(const Size& available) {
+    UpdateWidths();
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float explicitH = Get<float>(SlotOf("Height"));
+    const float h = explicitH > 0 ? explicitH : kMenuBarHeight;
+    float w = margin.H();
+    for (float tw : titleWidths_) w += tw;
+    desired_ = Size{available.w > 0 ? available.w : w, h + margin.V()};
+    ApplySizeConstraints();
+    for (auto& c : children_) c->Measure(Size{0, h});
+    return desired_;
+}
+
+void MenuBar::Arrange(const Rect& finalRect) {
+    bounds_ = finalRect;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    float x = finalRect.x + margin.l;
+    const float y = finalRect.y + margin.t;
+    const float h = std::max(0.0f, finalRect.h - margin.V());
+    for (size_t i = 0; i < children_.size(); ++i) {
+        // The bar's children are not drawn; they own the item models and are given
+        // the title's rect so a templated item can use it later.
+        const float w = i < titleWidths_.size() ? titleWidths_[i] : 0.0f;
+        children_[i]->Arrange(Rect{x, y, w, h});
+        x += w;
+    }
+}
+
+Rect MenuBar::TitleBounds(size_t index) const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    float x = bounds_.x + margin.l;
+    for (size_t i = 0; i < index && i < titleWidths_.size(); ++i) x += titleWidths_[i];
+    const float w = index < titleWidths_.size() ? titleWidths_[index] : 0.0f;
+    return Rect{x, bounds_.y + margin.t, w, std::max(0.0f, bounds_.h - margin.V())};
+}
+
+void MenuBar::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    if (bg.a > 0) {
+        ctx.FillRect(bounds_, bg);
+    } else {
+        // With no background the bar still needs to be separated from the page,
+        // otherwise the titles appear to float in the content.
+        const Color line = palette.colors[static_cast<int>(Token::CardBorder)];
+        ctx.FillRect(Rect{bounds_.x, bounds_.y + bounds_.h - 1.0f, bounds_.w, 1.0f},
+                     Color{line.r, line.g, line.b, 0.7f});
+    }
+
+    const Color fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+    const std::vector<MenuBarItem*> items = Items();
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Rect title = TitleBounds(i);
+        const bool isOpen = static_cast<int>(i) == openIndex_;
+        if (isOpen) {
+            ctx.FillRoundRect(Rect{title.x + 2, title.y + 4, title.w - 4, title.h - 8}, 4.0f,
+                              palette.colors[static_cast<int>(Token::ControlFillHover)]);
+        }
+        ctx.DrawText(items[i]->MenuTitle(), title, fg, 13.0f, WeightNormal, TextAlign::Center);
+        if (isOpen) {
+            ctx.FillRect(Rect{title.x + 6.0f, title.y + title.h - 4.0f, title.w - 12.0f, 2.0f},
+                         accent);
+        }
+    }
+}
+
+Widget* MenuBar::HitTest(const Point& p) { return bounds_.Contains(p) ? this : nullptr; }
+
+void MenuBar::OnPointerDown(const Point& local) {
+    const std::vector<MenuBarItem*> items = Items();
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (TitleBounds(i).Contains(local)) {
+            if (openIndex_ == static_cast<int>(i)) CloseMenu();
+            else OpenMenu(i);
+            return;
+        }
+    }
+    CloseMenu();
+}
+
+void MenuBar::OnPointerMove(const Point& local) {
+    // Once a menu is open, sliding across the titles switches menus without a
+    // click. This is the behaviour that makes a menu bar feel native.
+    if (openIndex_ < 0) return;
+    const std::vector<MenuBarItem*> items = Items();
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (TitleBounds(i).Contains(local)) {
+            if (openIndex_ != static_cast<int>(i)) OpenMenu(i);
+            return;
+        }
+    }
+}
+
+void MenuBar::OpenMenu(size_t index) {
+    const std::vector<MenuBarItem*> items = Items();
+    if (index >= items.size()) return;
+    // Rebuilding on every open is what keeps enabled state honest: a menu built
+    // once at load would show "Save" clickable with nothing to save.
+    std::vector<PopupMenuItem> model = items[index]->BuildItems();
+    RefreshMenuEnabled(model);
+    if (model.empty()) return;
+
+    const Rect title = TitleBounds(index);
+    auto layer = MakeMenuLayer(std::move(model), Point{title.x, title.y + title.h},
+                               [this] { CloseMenu(); });
+    SetMenuHoverOnOpen(layer.get(), true);
+    // Release the previous layer only NOW, at a safe point: the previous close
+    // retired it precisely so this could not happen while its stack frame lived.
+    retiredLayer_.reset();
+    ownedLayer_ = std::move(layer);
+    layer_ = ownedLayer_.get();
+    openIndex_ = static_cast<int>(index);
+    SetOverlay(layer_);
+    Invalidate(AffectsRender);
+}
+
+void MenuBar::RetireLayer() {
+    if (!ownedLayer_) return;
+    // Do not free it here: CloseMenu may be running inside this very object's
+    // OnPointerDown. Handing ownership to retiredLayer_ keeps the object alive until
+    // the next open (or destruction), by which time no frame of ours is on the stack.
+    retiredLayer_ = std::move(ownedLayer_);
+    layer_ = nullptr;
+}
+
+void MenuBar::CloseMenu() {
+    if (openIndex_ < 0 && !layer_) return;
+    openIndex_ = -1;
+    // Clear the root's overlay BEFORE retiring the layer: a repaint in between would
+    // otherwise call into a layer that is on its way out.
+    if (layer_) {
+        if (Widget* root = Root()) {
+            if (root->Overlay() == layer_) root->SetOverlay(nullptr);
+        }
+        RetireLayer();
+    }
+    Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// MenuBarItem / MenuFlyout / item leaves
+// ---------------------------------------------------------------------------
+Size MenuBarItem::Measure(const Size& available) {
+    (void)available;
+    desired_ = Size{0, 0};
+    return desired_;
+}
+
+Size MenuFlyout::Measure(const Size& available) {
+    (void)available;
+    desired_ = Size{0, 0};
+    return desired_;
+}
+
+std::vector<PopupMenuItem> MenuFlyout::BuildItems() {
+    std::vector<PopupMenuItem> out;
+    for (const auto& child : children_) {
+        if (auto* item = dynamic_cast<MenuFlyoutItem*>(child.get())) {
+            out.push_back(item->Build());
+        } else if (auto* sub = dynamic_cast<MenuFlyoutSubItem*>(child.get())) {
+            out.push_back(sub->Build());
+        } else if (dynamic_cast<MenuFlyoutSeparator*>(child.get())) {
+            PopupMenuItem sep;
+            sep.kind = PopupMenuItem::Kind::Separator;
+            out.push_back(std::move(sep));
+        }
+    }
+    return out;
+}
+
+std::vector<PopupMenuItem> MenuBarItemImpl::BuildItems() {
+    for (const auto& child : children_) {
+        if (auto* flyout = dynamic_cast<MenuFlyout*>(child.get())) return flyout->BuildItems();
+    }
+    return {};
+}
+
+Size MenuFlyoutItem::Measure(const Size& available) {
+    (void)available;
+    desired_ = Size{0, 0};
+    return desired_;
+}
+
+PopupMenuItem MenuFlyoutItem::Build() {
+    PopupMenuItem item;
+    item.text = Get<std::wstring>(SlotOf("Text"));
+    item.hint = Get<std::wstring>(SlotOf("Hint"));
+    item.icon = WideToUtf8(Get<std::wstring>(SlotOf("Icon")));
+    item.command = Get<RefPtr>(SlotOf("Command"));
+    item.checked = Get<bool>(SlotOf("IsChecked"));
+    item.kind = Get<int>(SlotOf("Kind")) == 1 ? PopupMenuItem::Kind::Toggle
+                                              : PopupMenuItem::Kind::Command;
+    return item;
+}
+
+Size MenuFlyoutSeparator::Measure(const Size& available) {
+    (void)available;
+    desired_ = Size{0, 0};
+    return desired_;
+}
+
+Size MenuFlyoutSubItem::Measure(const Size& available) {
+    (void)available;
+    desired_ = Size{0, 0};
+    return desired_;
+}
+
+PopupMenuItem MenuFlyoutSubItem::Build() {
+    PopupMenuItem item;
+    item.kind = PopupMenuItem::Kind::Submenu;
+    item.text = Get<std::wstring>(SlotOf("Text"));
+    for (const auto& child : children_) {
+        if (auto* flyout = dynamic_cast<MenuFlyout*>(child.get())) {
+            item.children = flyout->BuildItems();
+            break;
+        }
+    }
+    return item;
+}
+
+// ---------------------------------------------------------------------------
+// AppBarButton
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kAppBarButtonHeight = 32.0f;
+constexpr float kAppBarIconOnly = 38.0f;
+constexpr float kAppBarSeparatorWidth = 13.0f;
+} // namespace
+
+bool AppBarButton::IsSeparator() const {
+    const int slot = SlotOf("IsSeparator");
+    return slot >= 0 && Get<bool>(slot);
+}
+
+float AppBarButton::ToolbarWidth() const {
+    if (IsSeparator()) return kAppBarSeparatorWidth;
+    const std::wstring label = Get<std::wstring>(SlotOf("Label"));
+    if (label.empty()) return kAppBarIconOnly;
+    // The icon gutter (8 for inset + 16 for the glyph + 2 breathing room) plus the
+    // label plus the same inset on the right. Computing this from the same numbers
+    // OnPaint uses is what keeps a label from wrapping inside its own button: the
+    // first version reserved only 16 px for the gutter while the paint path started
+    // the label at 26, so "Reopen" wrapped to "Reo/pen".
+    constexpr float kIconGutter = 26.0f; // 8 inset + 16 glyph + 2 gap
+    constexpr float kTrailing = 8.0f;
+    float labelW = static_cast<float>(label.size()) * 12.0f * 0.55f;
+    if (ITextService* svc = TextSystem::Get()) labelW = svc->Measure(label, 12.0f, WeightNormal).w;
+    return std::max(kAppBarIconOnly, kIconGutter + labelW + kTrailing);
+}
+
+Size AppBarButton::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    desired_ = Size{ToolbarWidth() + margin.H(), kAppBarButtonHeight + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void AppBarButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    if (IsSeparator()) {
+        const float cx = bounds_.x + bounds_.w * 0.5f;
+        const Color line = palette.colors[static_cast<int>(Token::CardBorder)];
+        ctx.FillRect(Rect{cx, bounds_.y + 4.0f, 1.0f, std::max(0.0f, bounds_.h - 8.0f)}, line);
+        return;
+    }
+    const bool enabled = Get<bool>(SlotOf("IsEnabled"));
+    if (enabled && (hovered_ || pressed_)) {
+        ctx.FillRoundRect(Rect{bounds_.x, bounds_.y, bounds_.w, bounds_.h}, 4.0f,
+                          palette.colors[static_cast<int>(
+                              pressed_ ? Token::ControlFillPressed : Token::ControlFillHover)]);
+    }
+    const Color fg = enabled ? palette.colors[static_cast<int>(Token::TextPrimary)]
+                             : palette.colors[static_cast<int>(Token::TextDisabled)];
+
+    const std::wstring icon = Get<std::wstring>(SlotOf("Icon"));
+    const std::wstring label = Get<std::wstring>(SlotOf("Label"));
+    if (label.empty()) {
+        if (!icon.empty()) {
+            ctx.DrawText(icon, bounds_, fg, 15.0f, WeightNormal, TextAlign::Center);
+        }
+        return;
+    }
+    // Icon and label share the row; the label is small so the toolbar stays a bar
+    // rather than growing into a second menu.
+    ctx.DrawText(icon, Rect{bounds_.x + 8.0f, bounds_.y, 16.0f, bounds_.h}, fg, 14.0f,
+                 WeightNormal, TextAlign::Center);
+    ctx.DrawText(label, Rect{bounds_.x + 26.0f, bounds_.y,
+                             std::max(0.0f, bounds_.w - 30.0f), bounds_.h},
+                 fg, 12.0f, WeightNormal, TextAlign::Left);
+}
+
+Widget* AppBarButton::HitTest(const Point& p) {
+    if (IsSeparator()) return nullptr;     // cannot be clicked
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr; // disabled = not a hit
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void AppBarButton::OnPointerDown(const Point& local) { (void)local; }
+
+void AppBarButton::OnPointerUp(const Point& local) {
+    if (bounds_.Contains(local)) Invoke();
+}
+
+void AppBarButton::Invoke() {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    auto command = Get<RefPtr>(SlotOf("Command"));
+    if (!command) return;
+    if (auto* cmd = dynamic_cast<ICommand*>(command.get())) {
+        if (cmd->CanExecute()) cmd->Execute();
+    }
+}
+
+bool AppBarButton::OnKeyDown(int vk) {
+    if (vk == KeySpace || vk == KeyReturn) {
+        Invoke();
+        return true;
+    }
+    return Widget::OnKeyDown(vk);
+}
+
+PopupMenuItem AppBarButton::BuildItem() {
+    PopupMenuItem item;
+    item.kind = PopupMenuItem::Kind::Command;
+    // The overflow menu shows the text label; an icon-only button would be
+    // anonymous there, so fall back to the tooltip.
+    item.text = Get<std::wstring>(SlotOf("Label"));
+    if (item.text.empty()) item.text = Get<std::wstring>(SlotOf("ToolTip"));
+    item.icon = WideToUtf8(Get<std::wstring>(SlotOf("Icon")));
+    item.command = Get<RefPtr>(SlotOf("Command"));
+    item.enabled = Get<bool>(SlotOf("IsEnabled"));
+    return item;
+}
+
+// ---------------------------------------------------------------------------
+// CommandBar
+// ---------------------------------------------------------------------------
+CommandBar::CommandBar() {
+    BindType(TypeRegistry::Instance().Find("wui/CommandBar"));
+}
+
+CommandBar::~CommandBar() {
+    if (Widget* root = Root()) {
+        if (ownedLayer_ && root->Overlay() == ownedLayer_.get()) root->SetOverlay(nullptr);
+    }
+}
+
+std::vector<WidgetPtr> CommandBar::Buttons() const {
+    std::vector<WidgetPtr> out;
+    for (const auto& c : children_) {
+        if (dynamic_cast<AppBarButton*>(c.get())) out.push_back(c);
+    }
+    return out;
+}
+
+float CommandBar::ButtonWidth(const Widget& button) const {
+    if (auto* bar = dynamic_cast<const AppBarButton*>(&button)) return bar->ToolbarWidth();
+    return 0.0f;
+}
+
+void CommandBar::UpdateLayoutOfButtons() {
+    const std::vector<WidgetPtr> buttons = Buttons();
+    widths_.resize(buttons.size());
+    naturalWidth_ = 0.0f;
+    for (size_t i = 0; i < buttons.size(); ++i) {
+        widths_[i] = buttons[i]->DesiredSize().w > 0 ? buttons[i]->DesiredSize().w
+                                                     : ButtonWidth(*buttons[i]);
+        naturalWidth_ += widths_[i];
+    }
+}
+
+Size CommandBar::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float explicitH = Get<float>(SlotOf("Height"));
+    const float h = explicitH > 0 ? explicitH : 44.0f;
+    const float availW = std::max(0.0f, available.w - margin.H() - pad.H());
+
+    const std::vector<WidgetPtr> buttons = Buttons();
+    for (const auto& b : buttons) b->Measure(Size{kAppBarIconOnly, h});
+    UpdateLayoutOfButtons();
+
+    // Overflow: reserve room for the "..." button and collapse trailing buttons
+    // until the rest fits. Reserving first is what stops a bar that barely
+    // overflows from immediately overflowing again by one button.
+    const float overflowW = kAppBarIconOnly;
+    const bool needsOverflow = naturalWidth_ > availW;
+    const float budget = needsOverflow ? std::max(0.0f, availW - overflowW) : availW;
+    overflow_ = 0;
+    float used = 0.0f;
+    for (size_t i = 0; i < widths_.size(); ++i) {
+        if (used + widths_[i] > budget) {
+            overflow_ = static_cast<int>(widths_.size() - i);
+            break;
+        }
+        used += widths_[i];
+    }
+
+    desired_ = Size{available.w > 0 ? available.w : naturalWidth_ + pad.H() + margin.H(),
+                    h + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void CommandBar::Arrange(const Rect& finalRect) {
+    bounds_ = finalRect;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float h = std::max(0.0f, finalRect.h - margin.V() - pad.V());
+    float x = finalRect.x + margin.l + pad.l;
+    const float y = finalRect.y + margin.t + pad.t;
+    const size_t visible = widths_.size() - static_cast<size_t>(std::max(0, overflow_));
+    for (size_t i = 0; i < children_.size(); ++i) {
+        if (i >= visible) {
+            // Hidden behind the overflow button: arranged to nothing so it cannot
+            // steal a click or paint over the bar.
+            children_[i]->Arrange(Rect{0, 0, 0, 0});
+            continue;
+        }
+        const float w = i < widths_.size() ? widths_[i] : 0.0f;
+        children_[i]->Arrange(Rect{x, y, w, h});
+        x += w;
+    }
+}
+
+Rect CommandBar::ButtonBounds(size_t index) const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    float x = bounds_.x + margin.l + pad.l;
+    const float y = bounds_.y + margin.t + pad.t;
+    const float h = std::max(0.0f, bounds_.h - margin.V() - pad.V());
+    for (size_t i = 0; i < index && i < widths_.size(); ++i) x += widths_[i];
+    return Rect{x, y, index < widths_.size() ? widths_[index] : 0.0f, h};
+}
+
+Rect CommandBar::OverflowBounds() const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float h = std::max(0.0f, bounds_.h - margin.V() - pad.V());
+    const float right = bounds_.x + margin.l + bounds_.w - margin.H() - pad.r;
+    return Rect{right - kAppBarIconOnly, bounds_.y + margin.t + pad.t, kAppBarIconOnly, h};
+}
+
+void CommandBar::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    if (bg.a > 0) ctx.FillRect(bounds_, bg);
+    const Color line = palette.colors[static_cast<int>(Token::CardBorder)];
+    ctx.FillRect(Rect{bounds_.x, bounds_.y + bounds_.h - 1.0f, bounds_.w, 1.0f},
+                 Color{line.r, line.g, line.b, 0.6f});
+
+    // Visible buttons are painted by the tree; only the overflow affordance is
+    // drawn here.
+    if (overflow_ > 0) {
+        const Rect box = OverflowBounds();
+        ctx.FillRoundRect(box, 4.0f, palette.colors[static_cast<int>(Token::ControlFill)]);
+        ctx.DrawText(L"\u22ef", box, palette.colors[static_cast<int>(Token::TextPrimary)],
+                     16.0f, WeightNormal, TextAlign::Center);
+    }
+}
+
+Widget* CommandBar::HitTest(const Point& p) {
+    if (!bounds_.Contains(p)) return nullptr;
+    if (overflow_ > 0 && OverflowBounds().Contains(p)) return this;
+    // Fall through to the visible buttons so their own hit rules (disabled,
+    // separator) apply instead of being overridden here.
+    const size_t visible = widths_.size() - static_cast<size_t>(std::max(0, overflow_));
+    for (size_t i = 0; i < visible && i < children_.size(); ++i) {
+        if (Widget* hit = children_[i]->HitTest(p)) return hit;
+    }
+    return this; // the bar itself, so clicks on padding do not reach the page
+}
+
+void CommandBar::OnPointerDown(const Point& local) {
+    if (overflow_ > 0 && OverflowBounds().Contains(local)) OpenOverflow();
+}
+
+void CommandBar::OnPointerUp(const Point&) {}
+
+void CommandBar::OnPointerMove(const Point&) {}
+
+void CommandBar::OpenOverflow() {
+    if (overflow_ <= 0) return;
+    const size_t visible = widths_.size() - static_cast<size_t>(overflow_);
+    std::vector<PopupMenuItem> model;
+    for (size_t i = visible; i < children_.size(); ++i) {
+        if (auto* button = dynamic_cast<AppBarButton*>(children_[i].get())) {
+            PopupMenuItem item = button->BuildItem();
+            item.enabled = Get<bool>(SlotOf("IsEnabled"));
+            model.push_back(std::move(item));
+        }
+    }
+    if (model.empty()) return;
+    RefreshMenuEnabled(model);
+
+    const Rect box = OverflowBounds();
+    auto layer = MakeMenuLayer(std::move(model), Point{box.x, box.y + box.h}, [this] {
+        if (Widget* root = Root()) {
+            if (ownedLayer_ && root->Overlay() == ownedLayer_.get()) root->SetOverlay(nullptr);
+        }
+        // Same hazard as the menu bar: this callback runs inside the layer's own
+        // OnPointerDown, so the layer must not be freed from here. Retiring it hands
+        // ownership to retiredLayer_ until the next open.
+        retiredLayer_ = std::move(ownedLayer_);
+        Invalidate(AffectsRender);
+    });
+    retiredLayer_.reset();
+    ownedLayer_ = std::move(layer);
+    SetOverlay(ownedLayer_.get());
+    Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// ContentDialog
+// ---------------------------------------------------------------------------
+namespace {
+// Result codes published to the ViewModel. Deliberately small numbers so a
+// sample can map them onto its own enum without an out-of-band table.
+constexpr int kDialogPrimary = 1;
+constexpr int kDialogSecondary = 2;
+constexpr int kDialogClose = 0;
+} // namespace
+
+ContentDialog::ContentDialog() {
+    BindType(TypeRegistry::Instance().Find("wui/ContentDialog"));
+    slotIsOpen_ = SlotOf("IsOpen");
+    slotResult_ = SlotOf("Result");
+    slotPrimary_ = SlotOf("PrimaryButtonText");
+    slotSecondary_ = SlotOf("SecondaryButtonText");
+}
+
+ContentDialog::~ContentDialog() {
+    if (Widget* root = Root()) {
+        if (ownedLayer_ && root->Overlay() == ownedLayer_.get()) root->SetOverlay(nullptr);
+    }
+}
+
+Size ContentDialog::Measure(const Size& available) {
+    (void)available;
+    // A dialog is not in the flow: it reserves no space where it is declared.
+    desired_ = Size{0, 0};
+    return desired_;
+}
+
+void ContentDialog::OnSlotChanged(int slot, const Value& value) {
+    if (slot == slotIsOpen_) {
+        const bool want = value.type == VType::Bool ? value.flag : false;
+        if (want && !open_) Show();
+        else if (!want && open_) Close(ResultNone);
+    }
+}
+
+void ContentDialog::Show() {
+    if (open_) return;
+    std::vector<DialogButton> buttons;
+    const std::wstring primary = Get<std::wstring>(slotPrimary_);
+    DialogButton p;
+    p.text = primary.empty() ? L"OK" : primary;
+    p.result = kDialogPrimary;
+    p.isDefault = true;
+    buttons.push_back(p);
+
+    if (int secondarySlot = SlotOf("SecondaryButtonText"); secondarySlot >= 0) {
+        const std::wstring secondary = Get<std::wstring>(secondarySlot);
+        if (!secondary.empty()) {
+            DialogButton s;
+            s.text = secondary;
+            s.result = kDialogSecondary;
+            buttons.push_back(s);
+        }
+    }
+    if (int closeSlot = SlotOf("CloseButtonText"); closeSlot >= 0) {
+        const std::wstring close = Get<std::wstring>(closeSlot);
+        if (!close.empty()) {
+            DialogButton c;
+            c.text = close;
+            c.result = kDialogClose;
+            c.isCancel = true;
+            buttons.push_back(c);
+        }
+    }
+
+    open_ = true;
+    // Close() is invoked from the layer's own button handler, so the layer must
+    // survive the call: retire it (see MenuBar::RetireLayer) rather than freeing it,
+    // and release it on the next Show() or on destruction.
+    retiredLayer_.reset();
+    ownedLayer_ = MakeDialogLayer(Get<std::wstring>(SlotOf("Title")),
+                                  Get<std::wstring>(SlotOf("Message")), std::move(buttons),
+                                  [this](int result) { Close(result); },
+                                  [this] { open_ = false; });
+    SetOverlay(ownedLayer_.get());
+    Invalidate(AffectsRender);
+}
+
+void ContentDialog::Close(int result) {
+    if (!open_ && result == ResultNone) return;
+    open_ = false;
+    result_ = result;
+    if (slotResult_ >= 0) SetSlotValue(slotResult_, Value::Number(result), true);
+    if (slotIsOpen_ >= 0) SetSlotValue(slotIsOpen_, Value::Bool(false), true);
+    if (ownedLayer_) {
+        if (Widget* root = Root()) {
+            if (root->Overlay() == ownedLayer_.get()) root->SetOverlay(nullptr);
+        }
+        // Not reset(): we are inside this layer's OnPointerDown. Keep it alive until
+        // the next Show(), which is guaranteed not to be inside its stack frame.
+        retiredLayer_ = std::move(ownedLayer_);
+    }
+    Invalidate(AffectsRender);
 }
 } // namespace wui

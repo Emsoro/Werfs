@@ -1,7 +1,7 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.6.0.0
-> 日期：2026-11-22
+> 版本：0.7.0.0
+> 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
 > 参考项目（**不提交**）：`WinUI-Gallery-3.0.4/`（控件设计）、`microsoft-ui-xaml-winui3-release-2.7.0/`（XAML 解析）
@@ -12,9 +12,9 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.6.0.0 已完成**地基 + 布局层**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**15 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板）、两种渲染后端、**83 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `gallery`）共用一套宿主。
+当前 0.7.0.0 已完成**地基 + 布局层 + 应用外壳**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**浮层子系统（菜单/工具栏溢出/模态）**、**26 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板，以及 MenuBar/CommandBar/TabView/ContentDialog）、两种渲染后端、**111 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `editor`）共用一套宿主。
 
-**下一阶段的主线是「示例矩阵」**（§10a）：把单个 `gallery` 拆成六个可独立运行的示例——`basic`（✅ 基础控件）、`list`（✅ 集合与布局）、`usercontrol`（**父子组件、两个数据源**）、`binding`（四种模式对照）、`theming`（主题）、`gallery`（集大成的目录）。它同时是框架能力的验收矩阵：`usercontrol` 要求的能力当今框架**还没有**，这正是下一块要补的（§14）。
+**`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
 ---
 
@@ -31,9 +31,11 @@ framework/src/         框架：不认识任何示例
     render/            SoftwareRender（测试）、D2DRender（真实）
 
 samples/                示例树：单向依赖框架
-    shared/SampleHost   窗口、D2D、DPI、输入分发（不含任何页面逻辑）
+    shared/SampleHost   窗口、D2D、DPI、输入分发、浮层分派（不含任何页面逻辑）
     basic/              Basic.waml + BasicVm.h + App.cpp + resources/
     list/               List.waml  + ListVm.h  + App.cpp + resources/
+    editor/             Editor.waml + EditorVm.{h,cpp} + App.cpp + resources/
+                        ↑ 菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框
 
 tests/  bench/  tools/ 框架级工具，不依赖示例
 build.ps1  CMakeLists.txt
@@ -41,45 +43,49 @@ build.ps1  CMakeLists.txt
 
 **铁律**：`framework/` 里**没有**任何示例的 `.waml`、ViewModel 或 `IDR_WAML_*`。资源 id 属于示例，定义在各自的 `<Name>Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
 
-新增示例 = 复制 `samples/basic/` 改名、改资源 id、在 `build.ps1` 的 `$SampleRegistry` 加一行即可，框架零改动。
+新增示例 = 复制 `samples/basic/` 改名、改资源 id、在 `build.ps1` 的 `$SampleRegistry` 加一行即可，框架零改动。示例若需要真正的逻辑（而不是全写在头文件里），把它放进自己的 `.cpp`——`Build-Sample` 会把示例目录下**所有** `.cpp` 一起编译，工具则通过 `$SampleVmSources` 拿到同一份实现。
 
-> 资源头文件必须**每示例唯一**（`BasicResource.h` / `ListResource.h`）。同名的 `Resource.h` 会让同时引入两者的工具静默拿到其中一个，表现为「`IDR_WAML_*` 未声明」。
+> 资源头文件必须**每示例唯一**（`BasicResource.h` / `ListResource.h` / `EditorResource.h`）。同名的 `Resource.h` 会让同时引入两者的工具静默拿到其中一个，表现为「`IDR_WAML_*` 未声明」。
 ## 2. 能力清单
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 99 用例 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 111 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
-| **15 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** | ✅ | 类型注册表 16 项（含 DataTemplate） |
+| **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
 | **Grid 行列布局**：`ColumnDefinitions="1*,2*,auto"` + `Grid.Row/Column/RowSpan/ColumnSpan` + 间距 | ✅ | 5 个测试锁定星号分配、固定混合、跨列、间距、auto 自适应 |
 | **WrapPanel / VariableSizedWrapGrid**：换行流式 + 跨行列贴片（占用网格算法） | ✅ | 2 个测试锁定换行与跨行不重叠 |
 | **Canvas**：绝对定位（`Canvas.Left/Top`） | ✅ | 2 个测试锁定偏移与显式尺寸 |
 | **Viewbox**：等比缩放子内容 | ✅ | 1 个测试锁定缩小适配 |
 | **Expander**：折叠展开 + 点击头部切换 | ✅ | 1 个测试锁定两态高度 |
 | **TextBlock 自动换行**（`TextWrapping="Wrap"`） | ✅ | list 示例长段落渲染验证 |
+| **TextBlock / TextBox 多行**：显式换行 + 按宽度折行；`TextBox` 在星号行内不再按「无界高度」撑开 | ✅ | editor 示例整篇文档渲染 |
 | ScrollViewer（滚轮 + 键盘 + 自绘滚动条） | ✅ | 6 个测试：滚动范围、钳制、空白处滚轮、视口外不可点、四角探测、**绘制像素随滚动变化** |
 | D2D 真实渲染 + 确定性快照 | ✅ | 两次渲染 SHA 相同 |
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 2 个示例（basic / list）共用同一 Win32+D2D 宿主 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 3 个示例（basic / list / editor）共用同一 Win32+D2D 宿主 |
 | **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
-| **文件选择器**（打开 / 保存 / 选文件夹） | ✅ 框架就绪 | `IFileDialogService` + Win32 实现；示例待做（§10b.1） |
+| **文件选择器**（打开 / 保存 / 选文件夹） | ✅ **已接入示例** | `IFileDialogService` + Win32 实现；`editor` 的 File ▸ Open / Save as 真实可弹（§10b.1） |
 | **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
 | **Visibility + 转换器** | ✅ | `Collapsed` 不占位不点击；4 个内置转换器；未知名字是加载错误（7 用例） |
-| **浮层**（Popup / Flyout） | ⬜ 规划 | z-order、点外关闭、边缘翻转，见 §10c.3 |
-| **模态**（ContentDialog） | ⬜ 规划 | 遮罩 + 焦点陷阱，见 §10c.3 |
+| **浮层**（Popup / Flyout） | ✅ | `OverlayLayer` 挂在根节点、整树绘制后叠加、点外关闭、边缘翻转；8 用例 |
+| **模态**（ContentDialog） | ✅ | 半透明遮罩 + 吞掉点外点击 + Esc 只映射到「取消」；`IsOpen`/`Result` 双向绑定；4 用例 |
+| **菜单栏**（MenuBar / MenuFlyout / 二级子菜单） | ✅ | 数据驱动菜单模型、快捷键文本、禁用项、悬停切换；5 用例 |
+| **工具栏 + 溢出**（CommandBar / AppBarButton） | ✅ | 窗口变窄时尾部按钮收进「⋯」，不裁剪；3 用例 |
+| **快捷键表**（`Ctrl+N/O/S/W`） | ✅ | `ParseAccelerator`/`FormatAccelerator` 同一字符串；焦点控件优先（R23）；2 用例 |
 | **单选模型**（Selector 基类） | ✅ | `SelectedIndex`/`SelectedItem` 双向；`ListBox` 点击与键盘选中；7 用例 |
-| **TabView**（多标签切换/关闭/新增） | ✅ | 数据驱动标签条、×关闭请求、+新增、横向溢出不依赖浮层；5 用例 |
+| **TabView**（多标签切换/关闭/新增） | ✅ | 数据驱动标签条、×关闭请求、+新增、脏标记；**`CloseRequested` 已改为 TwoWay 并做成边沿信号**，关闭真正能回到 ViewModel（§7.16） |
 
 ## 3. 产物
 
 | 产物 | 作用 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 84 个单元/集成用例 |
-| `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换） |
+| `waml_basic.exe` / `waml_list.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
+| `waml_tests.exe` | 111 个单元/集成用例 |
+| `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
 | `waml_bench.exe` | 性能基线 |
@@ -496,6 +502,99 @@ S-1-4-151873615-607647326   Allow   DeleteSubDirectoriesAndFiles, Write, Delete,
 
 ---
 
+## 7.16 【严重】点击标签的 × 什么都不发生（关闭功能完全失效）
+
+**现象**：`TabView` 的 × 能正常画出来、能正常命中（点上去也不切换标签），但**标签永远不消失**。切换和 `+` 新增都正常，只有关闭死掉。用户报的原话是「多标签切换、关闭、新建这些也没有」。
+
+**根因有两层，第二层决定了第一层的修复方式**：
+
+1. **属性声明成 `OneWay`**。`CloseRequested` 的语义是「控件通知 ViewModel：用户要求关掉第 N 个」，于是很自然地写成「只由控件发布」。但在本框架里 **`OneWay` 绑定会忽略目标侧发起的槽位变化** —— `Binding::OnSlotChanged` 只在 `TwoWay`/`OneWayToSource` 时回写源。所以 × 把值写进槽位后，**没有任何监听者读它**，请求凭空消失。
+
+2. **改 `TwoWay` 之后仍然只关一次**。`ObservableProperty::Set` 在值相等时不通知；连点同一个标签的 × 第二次会写入同样的索引 → 不通知 → 又失效。
+
+**修复**：
+
+- 把 `CloseRequested` 声明为 **`TwoWay`**，并在属性注册处写清楚理由：它是控件的**回写通道**，和 `SelectedIndex` 同一性质，不是「只读的输出属性」。
+- 发布时做成**边沿信号**：先写索引，再写回 `-1`。ViewModel 的契约变成「只处理 ≥ 0 的值，忽略复位」。复位由控件负责，而不是要求每个 ViewModel 记得清空 —— 否则每个示例都得自己实现一遍。
+- 新增测试「关闭 ⇒ 提示 ⇒ 取消 ⇒ 标签保留」的完整驱动（`waml_interact` 第 6–8 项）。
+
+**教训**：
+
+- **`OneWay` 不是「单向」而是「忽略目标写入」**。凡是控件主动产出、ViewModel 消费的属性，必须 `TwoWay`。这一条应当写进属性注册的默认值讨论里：默认 `OneWay` 对「显示」类属性是对的，对「事件」类属性必然静默失效。
+- **同一索引重复触发**是事件型属性的通病。值相等的短路优化会把第二次事件吃掉，而「第一次能关、第二次关不掉」这种症状最难被当成一个 bug 报告。
+- 这个缺陷和 §7.2（绑定路径拼错静默）是同一族：**没有可观测出口的状态变化等于没发生**。
+
+---
+
+## 7.17 【严重】菜单打开就崩溃（返回 `const&` 绑到临时）
+
+**现象**：带 `MenuBar` 的页面一进入 `Measure` 就访问违例（`0xC0000005`），而且**位置漂移**：有时在实例化、有时在布局、有时在绘制，同一个二进制跑三次有两次正常。这种不稳定最容易误判成内存破坏或线程问题。
+
+**根因**：`MenuBarItem::MenuTitle()` 声明为 `virtual const std::wstring&`，而实现是 `return Title();`，`Title()` 返回**按值**的 `std::wstring`（它从属性槽解码出来）。于是返回的是一个绑定到临时量的引用，**表达式结束即悬空**。
+
+它之所以「有时能跑」：悬空的 `std::wstring` 读的是刚释放的栈/堆内存，通常还残留着正确内容。测量一次侥幸读对；下一次被别的调用覆盖就变成垃圾指针 → 崩溃。
+
+**修复**：接口改为**按值返回** `std::wstring`。标题通常只有几个字符，拷贝成本可以忽略；而「引用一个可能不存在的对象」是不可接受的。
+
+**教训**：
+
+- **不要把 `const &` 作为「省一次拷贝」的默认选择**。当被引用的值需要计算、解码或解码后再转换时，返回引用几乎必然悬空。`const&` 只适合「访问已存在的成员」。
+- **崩溃位置漂移 = 读未初始化/已释放内存**，而不是「逻辑分支不同」。遇到这种症状应当先怀疑生命周期，而不是先怀疑并发。
+- 这类缺陷 `--selftest` 也能抓到一半：它在崩溃前可能只跑一轮布局。所以示例的验证必须要求**多次布局 + 一次真实绘制**，`waml_interact` 的每一项都比对状态。
+
+---
+
+## 7.18 【中】浮层关闭时把自己删掉（use-after-free）
+
+**现象**：点中菜单项后命令确实执行了，但随后崩溃；有时不崩，表现为下一次打开菜单异常。
+
+**根因**：菜单项的点击链路是「层自己的 `OnPointerDown` → `Activate()` → `Close()` → 回调 → 拥有者 `reset()` 掉这个层」。**对象在自己的成员函数栈帧上被销毁**，返回时 `this` 已经无效。
+
+**修复**：引入 `RetireLayer()`。关闭只把层**移交**给 `retiredLayer_`，真正释放推迟到下一次打开（或销毁）。代价是多留一帧的内存，换掉一整类悬空指针。
+
+**教训**：**「回调里删自己」必须显式设计**。任何「拥有者通过回调得知子对象完成」的接口，都要问一句「回调期间子对象还活着吗」。推迟释放是最简单可靠的答案。
+
+---
+
+## 7.19 【中】`Border` 的 `BorderThickness` 只能是数字
+
+**现象**：状态栏要「只要上边框」，写 `BorderThickness="0,1,0,0"` 直接编译失败：`'0,1,0,0' is not a valid number`。
+
+**根因**：这个属性注册成 `VType::Number`，只能表达四边等宽。而单边分割线是**最普通的界面需求**（状态栏、工具栏、卡片分隔）。顺带修掉的相关问题：`Border` 之前**不把边框算进尺寸**，有边框的卡片会把自己的内容裁掉 1px。
+
+**修复**：改为 `VType::Thickness`；四边分别绘制（`PaintCtx` 没有单边描边原语，用细长填充矩形即可）；`Measure`/`Arrange` 把边框厚度算进 chrome，和 padding 同等对待。
+
+**教训**：**属性类型的选择就是能力边界**。一个「数字」看起来够用，但只要有一个调用方需要不对称值，它就必须是 Thickness。注册属性时应当问「四边会不会不同」——对 `Margin`/`Padding` 我们都答对了，对 `BorderThickness` 答错了。
+
+---
+
+## 7.20 【中】星号行里的 `TextBox` 被撑到 999927 像素高
+
+**现象**：`editor` 的编辑区看起来是空的。文档文本绑定正确（槽位里有内容）、控件边界正确（`bounds` 有值），但屏幕上什么都没有。
+
+**根因**（两层）：
+
+1. `Grid` 给星号行的子元素下发**无界高度**（`1e6` 作为「无限」哨兵）。
+2. `TextBox::Measure` 把这个高度**当真**，于是 `desired_.h = 999927`，再被 `Arrange` 一字不差地接受。文本从顶部开始绘制，第一行画在框内、其余全部在窗口之外 —— 视觉上就是「空白编辑区里有字但看不见」。
+
+**修复**：无界高度是「你想多高都行」，不是「你有一百万像素」。`TextBox` 遇到 ≥ `1e6` 的高度约束时不再采纳，而是用自己的自然高度（一行）；显式 `Height` 与 `MinHeight` 仍然生效。同时把 `TextBox` 改成支持多行渲染（显式换行 + 按宽度折行 + 超出底部裁剪），否则编辑器里的长文档仍然只能看到第一行。
+
+**教训**：**哨兵值必须在一处被识别，在其余所有地方被拒绝**。`1e6` 这个约定在 `ScrollViewer`/`Grid`/`Canvas` 里各写了一遍，`TextBox` 就是漏掉的那一个。正确的做法是把它变成一个具名常量或一次适配（`ClampUnbounded()`），而不是让每个 `Measure` 都自己判断。
+
+---
+
+## 7.21 【低】`TextBox` 不填满交给它的宽度
+
+**现象**：编辑区里的输入框没有铺满卡片，右侧留出一大片空白。
+
+**根因**：`Measure` 用**文本宽度**作为期望宽度（`max(160, textWidth)`），完全忽略 `available.w`。
+
+**修复**：把 `available.w` 作为期望宽度（有界时）。
+
+**教训**：和 §7.19 同类——**「内容尺寸」与「分配尺寸」是两个问题**。单行输入框应当拉满列宽，多行文本块应当按内容收缩；两者默认行为不同，不能一个 `Measure` 通吃。
+
+---
+
 # 第四部分：目标架构
 
 ## 8. 分层
@@ -550,19 +649,22 @@ ExampleCard ×N    每个示例教**一个**概念：
 samples/
   1. basic/        基础：单个组件、单一数据源            ✅
   2. list/         集合：DataTemplate 与布局面板         ✅
-  3. binding/      绑定：四种模式的完整对照              可立即开始
-  4. theming/      主题：Light/Dark 与 token             可立即开始
-  5. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
-  6. files/        系统：打开/保存/选文件夹               需先补 IFileDialog（10b.1）
-  7. editor/       集成：菜单 + 工具栏 + 多标签 + 未保存提示  需先补 Visibility/浮层/模态（10c）
-  8. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
+  3. editor/       集成：菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框  ✅
+  4. binding/      绑定：四种模式的完整对照              可立即开始
+  5. theming/      主题：Light/Dark 与 token             可立即开始
+  6. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
+  7. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
 ```
 
-**为什么 `usercontrol` 排第五**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前几个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
+**`files/` 已并入 `editor/`（本轮决定）**：原计划第 6 个示例 `files` 有四个区块（打开 / 另存为 / 选文件夹 / 读取预览）。逐条对照后发现它们**全部是编辑器的子集**——编辑器本来就要「打开文件成为新标签」「另存为」「读取内容显示」；只有「选文件夹」一项是编辑器不需要的，而它只是同一个 WinUI 对话框的一个标志位（`FOS_PICKFOLDERS`），没有独立的框架能力。
 
-后三个（`files`、`editor`、`animation`）不是「控件演示」，而是**横切能力**的验收：它们要求框架提供全新机制，所以排在所有控件类示例之后，见 §10b、§10c。
+拆成两个示例的代价是：**同一套对话框接线维护两遍**，而且第二个示例会因为「只验证对话框、没有真实用途」而退化成按钮演示。合并后 `editor` 的 File 菜单就是那段能力的验收现场，`waml_interact` 的第 9 项直接断言「菜单里的 New 真的创建了文档」。
 
-`editor` 是**集成点**——它同时用到文件对话框、菜单、工具栏、标签栏和模态确认，是把前面所有能力串起来的那个示例，因此排在 `files` 之后。
+因此示例总数从 8 个收敛到 7 个，且顺序不再有「系统集成」这一档 —— `editor` 直接跨到了集成层。
+
+**为什么 `usercontrol` 排第六**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前几个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
+
+`editor` 不是「控件演示」，而是**横切能力的验收**：它把文件对话框、菜单、工具栏、标签页、模态确认串在一个页面里，因此它的完成同时意味着 §10b.1 与 §10c 全部落地。
 
 **依赖方向**：示例之间**不互相引用**。每个示例自带 WAML、ViewModel 和资源 id。
 
@@ -752,22 +854,19 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 |---|---|---|---|
 | 1 | `basic` | 无 | **✅ 已完成** |
 | 2 | `list` | 无 | **✅ 已完成** |
-| 3 | `binding` | 无 | 可立即开始 |
-| 4 | `theming` | 无（主题已支持） | 可立即开始 |
-| 5 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
-| 6 | `files` | **`IFileDialogService`**（10b.1） | 需先补框架 |
-| 7 | `editor` | **Visibility → Selector → 浮层 → 模态**（10c.3） | 需先补框架，分 4 批 |
-| 8 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
+| 3 | `editor` | **Visibility → Selector → 浮层 → 模态**（10c.3）+ **`IFileDialogService`**（10b.1） | **✅ 已完成**（四批全落地） |
+| 4 | `binding` | 无 | 可立即开始 |
+| 5 | `theming` | 无（主题已支持） | 可立即开始 |
+| 6 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
+| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
+| ~~—~~ | ~~`files`~~ | — | **已并入 `editor`**（§10b.1 说明理由） |
 
-**关键判断**：`usercontrol` 是第一个被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。排在第五意味着前四个可以先落地，把框架改造集中成一次迭代，而不是一开始就卡在设计决策上。
+**`editor` 从第七位提前到第三位**。原顺序把它排在 `files` 之后、`animation` 之前，理由是「它是集成点，要等前面能力齐备」。实际做下来发现这个顺序判断反了：
 
-`files`、`editor`、`animation` 属于另一类：它们不是控件演示，而是**横切能力**的验收现场，各自要求框架补一套全新机制。详细设计见 §10b 与 §10c。
+- 它依赖的四批能力（Visibility / Selector+TabView / 浮层 / 模态）**互不阻塞**，而且前两批早已完成；
+- 更重要的是，**只有把整套东西放进一个真实页面，缺陷才会暴露**。本轮一口气修掉了 6 个问题（§7.16–7.21），其中「× 关不掉标签」和「菜单打开就崩」两项**在单控件测试里完全测不出来** —— 它们分别需要「控件 + ViewModel + 绑定模式」和「控件 + 真实布局 + 真实绘制」的组合才会触发。继续排在末位意味着这些缺陷会继续潜伏。
 
-**三者之间的顺序有明确理由**：
-
-1. `files` 先——纯增量，不碰渲染路径。
-2. `editor` 其次——它是**集成点**，把文件对话框、菜单、工具栏、标签页、模态确认串起来。但它内部还要再分四批（§10c.4），其中 `Visibility` 最便宜、浮层最贵。
-3. `animation` 最后——要改绘制与失效流程，且与滚动偏移的交互最微妙。
+**关键判断（保留）**：`usercontrol` 仍是第一个被框架能力卡住的示例，信息量最大——它逼出「组件复用」这一层设计。`animation` 最后，因为要改绘制与失效流程。
 
 **关于控件覆盖数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。已完成 15 个；P0 余 16 个，P1 的 16 个（含菜单、工具栏、`TabView` 相关）等浮层子系统完成后顺带解锁，P2 的 51 个按需再议。
 
@@ -892,21 +991,25 @@ private:
 
 | 编号 | 任务 | 验收 |
 |---|---|---|
-| 10b.1.1 | `IFileDialogService` 接口 + 全局注册点 | 无宿主时返回 `accepted=false`，不崩 |
-| 10b.1.2 | Win32 实现（`IFileOpenDialog` / `IFileSaveDialog` + `FOS_PICKFOLDERS` / `FOS_ALLOWMULTISELECT`） | 三种模式都能弹出并返回正确路径 |
-| 10b.1.3 | COM 生命周期（`CoCreateInstance` + `CoTaskMemFree`） | 连续弹 100 次无泄漏、无崩溃 |
-| 10b.1.4 | 宿主接入 `SampleHost` | 示例窗口里点击能弹出 |
-| 10b.1.5 | 假实现供无窗口测试 | `waml_interact` 能断言「命令被调用」 |
-| 10b.1.6 | `samples/files/` 示例 | 见下 |
+| 10b.1.1 | `IFileDialogService` 接口 + 全局注册点 | 无宿主时返回 `accepted=false`，不崩 | **✅** |
+| 10b.1.2 | Win32 实现（`IFileOpenDialog` / `IFileSaveDialog` + `FOS_PICKFOLDERS` / `FOS_ALLOWMULTISELECT`） | 三种模式都能弹出并返回正确路径 | **✅** |
+| 10b.1.3 | COM 生命周期（`CoCreateInstance` + `CoTaskMemFree`） | 连续弹 100 次无泄漏、无崩溃 | **✅** |
+| 10b.1.4 | 宿主接入 | 示例窗口里点击能弹出 | **✅** `editor/App.cpp` 注册 Win32 实现 |
+| 10b.1.5 | 假实现供无窗口测试 | `waml_interact` 能断言「命令被调用」 | **✅** 测试注入 fake；interact 显式注册 nullptr |
+| ~~10b.1.6~~ | ~~`samples/files/` 示例~~ | **已并入 `samples/editor/`** | **合并** |
 
-#### 示例：`samples/files/`
+#### 示例：~~`samples/files/`~~ → 并入 `samples/editor/`
 
-| 区块 | 内容 |
-|---|---|
-| 1 打开文件 | 选文件 → 路径显示在界面 |
-| 2 另存为 | 预设文件名 + 扩展名 + 过滤器 |
-| 3 选文件夹 | `FOS_PICKFOLDERS`，只返回目录 |
-| 4 只读演示 | 选中的文件读前 20 行显示（顺带验证平台层文件读取） |
+原计划的四个区块逐一对照后再看，全是编辑器的一部分：
+
+| 原区块 | 合并后的归属 | 在 editor 里的位置 |
+|---|---|---|
+| 1 打开文件 | File ▸ Open（支持多选，每个文件成为一个标签） | `EditorVm::OpenDocument` |
+| 2 另存为 | File ▸ Save as…（预设文件名、扩展名、过滤器） | `EditorVm::SaveDocumentAsImpl` |
+| 3 选文件夹 | **不并入** —— 编辑器不选文件夹。`FOS_PICKFOLDERS` 仍由服务支持，只是没有示例页演示 | 平台层保留能力 |
+| 4 读取预览 | 打开的文本直接成为文档内容（比「显示前 20 行」更有用） | `EditorVm::ReadTextFile` |
+
+**为什么合并**：拆开的话，「选文件夹」那一个区块会独占一个示例，而它只是同一个对话框加一个标志位；而 1、2、4 三个区块如果单独做，会退化成「按钮 → 弹框 → 显示路径」的纯演示，**没有真实用途来暴露接线错误**。合并后它们都承担关键路径：打开的文件必须真的成为可编辑的标签，否则示例本身就不成立。这比「四个区块各点一次」严格得多。
 
 **不做的部分**：不做最近文件、不做拖放（`WM_DROPFILES` 属另一能力）、不做路径记忆持久化。
 
@@ -916,7 +1019,7 @@ private:
 |---|---|---|
 | R13 对话框阻塞 UI 线程 | 模态对话框期间不重绘 | 可接受（与系统行为一致）；不引入异步 |
 | R14 COM 初始化顺序 | 宿主未 `CoInitialize` 时弹框失败 | `SampleHost` 已有 `ole32` 初始化，做成显式前置断言 |
-| R15 无窗口环境 | 测试与 CI 无桌面 | 服务接口可注入假实现，测试永远不碰真对话框 |
+| R15 无窗口环境 | 测试与 CI 无桌面 | 服务接口可注入假实现，测试永远不碰真对话框；`waml_interact` 显式 `SetFileDialogService(nullptr)` |
 
 ### 10b.2 动画
 
@@ -1181,14 +1284,14 @@ public:
 
 ### 10c.4 实施顺序
 
-分成四批，每批独立可交付：
+分成四批，每批独立可交付。**四批已全部完成**（本轮）：
 
-| 批次 | 内容 | 依赖 | 可验收的成果 |
-|---|---|---|---|
-| **A** | `Visibility` + `BoolToVisibility` | 无 | 能按条件隐藏元素；标签脏标记可用 |
-| **B** | 单选模型 + `TabView` / `TabViewItem` | A | **多标签切换、关闭、新增**都能工作；关闭暂不提示 |
-| **C** | 浮层 + `MenuBar` / `MenuFlyout` / `CommandBar` | A | 菜单可下拉、工具栏可溢出 |
-| **D** | 模态 + 未保存提示 | B | 关脏标签时弹出「保存/不保存/取消」 |
+| 批次 | 内容 | 依赖 | 可验收的成果 | 状态 |
+|---|---|---|---|---|
+| **A** | `Visibility` + `BoolToVisibility` | 无 | 能按条件隐藏元素；标签脏标记可用 | **✅** |
+| **B** | 单选模型 + `TabView` / `TabViewItem` | A | **多标签切换、关闭、新增**都能工作；关闭暂不提示 | **✅** |
+| **C** | 浮层 + `MenuBar` / `MenuFlyout` / `CommandBar` | A | 菜单可下拉、工具栏可溢出 | **✅** |
+| **D** | 模态 + 未保存提示 | B | 关脏标签时弹出「保存/不保存/取消」 | **✅** |
 
 **为什么这样排**：
 
@@ -1197,31 +1300,51 @@ public:
 - **C 的浮层**是这一整组的最大单项成本，但它同时解锁 P1 里的 16 个控件（`ComboBox`、`Flyout`、`ToolTip`、`ContentDialog`、`AutoSuggestBox`……），所以一次投入回报最大。
 - **D 最后**，因为它是 B 和 C 的组合应用，本身不引入新机制。
 
+**批次 C 的实际落地形态**（与规划略有出入，记录理由）：
+
+| 规划项 | 实际实现 | 为什么 |
+|---|---|---|
+| `Popup` / `Flyout` 控件 | **`OverlayLayer` 接口**，不是控件 | 浮层不进布局树，做成控件会「参与测量但不可见」，反而要处处特判 |
+| 独立的 `MenuFlyout` 弹出控件 | 菜单层 + `PopupMenuItem` 数据模型 | 菜单内容是数据而不是控件树，ViewModel 才能构造它（见 §10c.2 的取舍） |
+| 命令路由（`10d.3.4`） | **宿主级快捷键表** + 焦点控件优先 | 命令路由要「向上冒泡找处理器」，需要控件注册表；快捷键表覆盖了 `Ctrl+N/O/S/W` 且只需一次查找 |
+| 焦点陷阱 | 模态层**吞掉所有键**（含 Tab） | 完整焦点陷阱需要焦点链；吞键达到同样效果且没有新状态 |
+
 ### 10c.5 示例：`samples/editor/`
 
-这是**第七个示例**，也是第一个「像真实程序」的示例：一个多文档文本编辑器骨架。
+这是**第三个示例**（顺序上紧跟 `list`），也是第一个「像真实程序」的示例：一个多文档文本编辑器骨架。它同时吸收了原计划的 `files` 示例。
 
-| 区块 | 内容 | 验证 |
+**实现文件**：`samples/editor/` = `Editor.waml`（39 节点 / 22 绑定）+ `EditorVm.h` + `EditorVm.cpp` + `App.cpp` + `resources/`。
+
+| 区块 | 内容 | 验证方式 |
 |---|---|---|
-| 1 菜单栏 | 文件（新建/打开/保存/另存为）/ 编辑（撤销/剪切/复制） | 下拉、快捷键、禁用态 |
-| 2 工具栏 | 新建、保存、粗体开关 | 溢出（缩窄窗口） |
-| 3 标签栏 | 三个初始文档，可切换、可关闭、可新建 | 单选、`×`、`+`、脏标记 |
-| 4 未保存提示 | 改一个字符后关标签 | 三选一；选取消则标签保留 |
-| 5 关闭窗口守卫 | 多个脏文档 | 逐个询问或「全部保存」 |
-| 6 与文件对话框联动 | 菜单「打开」调用 §10b.1 | 打开真实文件并成为新标签 |
+| 1 菜单栏 | File（New/Open/Save/Save as/Close▸）/ Edit / Help | `interact` 第 9 项：下拉、点项执行命令、关闭、释放浮层槽 |
+| 2 工具栏 | New / Open / Save / Close / Reopen | `interact` 第 10 项：宽窗全显示、窄窗溢出 |
+| 3 标签栏 | 三个初始文档：切换、`×` 关闭、`+` 新建、脏标记 • | `interact` 第 1–3 项 |
+| 4 编辑区 | `TextBox` TwoWay 绑 `ActiveContent`，多行折行显示 | `interact` 第 4 项：打字 → 脏标记出现；删掉 → 恢复干净 |
+| 5 状态栏 | 路径 + saved/modified + 标签数 | 快照目视 + `interact` 第 11 项（空文档时回落文案） |
+| 6 未保存提示 | 关脏标签 → 保存 / 不保存 / 取消 | `interact` 第 6–8 项：提示出现、标签仍在、取消保留、放弃移除 |
+| 7 文件对话框联动 | File ▸ Open 真实弹出并成为新标签；Save as 落盘 | `EditorVm::OpenDocument` / `SaveDocumentAsImpl`；无窗口时服务为 nullptr |
 
-**这个示例同时验收 §10b.1（文件对话框）和 §10d（菜单/标签）**，是把前面所有能力串起来的集成点。建议放在 `files` 之后、`animation` 之前。
+**三条被刻意编码的规则**（`EditorVm.h` 顶部注释，也是这个示例真正的教学内容）：
+
+1. **ViewModel 决定「问不问」，View 决定「怎么问」**。`EditorVm` 里没有任何对话框对象，它只把 `PromptOpen` / `PromptMessage` 置真；`ContentDialog` 是 WAML 里声明一次的那个元素。这条让整个关闭流程可以在无窗口环境里被断言（`interact` 第 6–8 项就是这么做的）。
+2. **关闭脏文档不能丢数据**。所有入口（`×`、菜单、未来的窗口关闭）都汇到 `RequestClose`，而「取消」分支**什么都没删** —— 因为删除发生在用户同意之后。
+3. **「脏」是内容而不是标志位**。`Document::RecomputeDirty` 拿当前文本与打开/保存时的快照比较，所以「打一个字再删掉」会回到干净状态。存一个 `bool dirty` 的写法做不到这一点（与 §7.2 同族：状态漂移）。
+
+**快捷键**：`Ctrl+N/O/S/W` 通过 `HostOptions::accelerators` 注册，`ParseAccelerator` 与菜单上的 `Hint="Ctrl+N"` 用**同一个字符串**解析，所以菜单显示的快捷键和真正生效的快捷键不会漂移（R23：焦点控件先拿到按键，输入框里的 `Ctrl+A` 仍是选文字）。
+
+**与原计划的差异**：原第 5 区块「关闭窗口守卫」未单独做 —— 关窗口时的逐个询问需要 `WM_CLOSE` 拦截与「全部保存」批量流程，而它的核心机制（模态 + 脏检查）与第 6 区块完全相同，只是多一层循环。留作 v0.8 收尾项：它不引入新能力，却是真实使用中最容易出问题的地方，先让单标签流程稳定更划算。
 
 ### 10c.6 风险
 
-| 编号 | 风险 | 影响 | 应对 |
-|---|---|---|---|
-| R20 | 浮层的 z-order 与裁剪冲突 | `ScrollViewer` 的 clip 会裁掉弹出的菜单 | 浮层不走子树绘制，而是挂在根节点的「顶层列表」里 |
-| R21 | 焦点陷阱不完整 | 模态期间 Tab 能跑到背后控件 | 模态期间把根节点标记为 `modalChild_`，命中测试直接短路 |
-| R22 | 标签关闭时绑定泄漏 | 关掉标签后旧树仍订阅 VM | 关闭前 `DetachBindings()`，并有测试断言观察者归零 |
-| R23 | 快捷键与 `TextBox` 冲突 | 在输入框里按 `Ctrl+A` 应全选文字而非触发菜单 | 命令路由先给焦点控件一次机会，未处理才冒泡 |
-| R24 | 脏标记判定不准 | 撤销回初始状态后仍显示「已修改」 | 记录「初始快照哈希」，内容相同即视为干净 |
-| R25 | 标签过多时布局退化 | 每个标签都参与测量，几十个时变慢 | 逐期：先做横向滚动，溢出下拉放二期 |
+| 编号 | 风险 | 影响 | 应对 | 结果 |
+|---|---|---|---|---|
+| R20 | 浮层的 z-order 与裁剪冲突 | `ScrollViewer` 的 clip 会裁掉弹出的菜单 | 浮层不走子树绘制，而是挂在根节点的「顶层列表」里 | **✅** `Widget::SetOverlay` 转发到根，`PaintTreeAt` 在整树之后绘制 |
+| R21 | 焦点陷阱不完整 | 模态期间 Tab 能跑到背后控件 | 模态期间命中测试短路 | **✅ 简化方案**：`DialogLayer::OnKeyDown` 吞掉所有键（含 Tab），不需要焦点链 |
+| R22 | 标签关闭时绑定泄漏 | 关掉标签后旧树仍订阅 VM | 关闭前 `DetachBindings()` | 部分：`ListBox::RebuildItems` 已 detach；`TabView` 的内容是**单个复用子树**，不发散新建，所以不产生新订阅 |
+| R23 | 快捷键与 `TextBox` 冲突 | 在输入框里按 `Ctrl+A` 应全选文字而非触发菜单 | 命令路由先给焦点控件一次机会，未处理才冒泡 | **✅** `WM_KEYDOWN` 顺序：浮层 → 焦点控件 → 快捷键表 |
+| R24 | 脏标记判定不准 | 撤销回初始状态后仍显示「已修改」 | 记录「初始快照哈希」，内容相同即视为干净 | **✅** `Document` 直接比较文本与 baseline（`RecomputeDirty`） |
+| R25 | 标签过多时布局退化 | 每个标签都参与测量，几十个时变慢 | 逐期：先做横向滚动，溢出下拉放二期 | 一期：标签宽度缓存 + 条带可横向滚动 |
 
 ### 10c.7 不做
 
@@ -1310,38 +1433,40 @@ public:
 
 **每批次独立可交付**，不必等全部完成。
 
-## 15b. 迭代 3b：系统集成与动效（v0.8+）
+## 15b. 迭代 3b：系统集成与动效（v0.7/v0.8）
 
-三项横切能力，详细设计见 §10b 与 §10c。**顺序：文件对话框 → 编辑器界面 → 动画**，理由见下。
+三项横切能力，详细设计见 §10b 与 §10c。**3b.A 与 3b.B 已完成（v0.7.0.0）；3b.C 待做。**
 
-### 3b.A 文件选择器（先做）
+### 3b.A 文件选择器 —— ✅ 完成
 
-| 任务 | 说明 | 验收 |
-|---|---|---|
-| 3b.A.1 | `IFileDialogService` 接口 + 注册点 | 无宿主时返回未接受，不崩溃 |
-| 3b.A.2 | Win32 实现（打开 / 保存 / 选文件夹） | 三种模式均可用，路径正确 |
-| 3b.A.3 | COM 生命周期与资源释放 | 连续 100 次无泄漏 |
-| 3b.A.4 | 宿主接入 + 假实现供测试 | `waml_interact` 可断言命令被调用 |
-| 3b.A.5 | `samples/files/` | 四个区块全部可交互 |
+| 任务 | 说明 | 验收 | 状态 |
+|---|---|---|---|
+| 3b.A.1 | `IFileDialogService` 接口 + 注册点 | 无宿主时返回未接受，不崩溃 | **✅** |
+| 3b.A.2 | Win32 实现（打开 / 保存 / 选文件夹） | 三种模式均可用，路径正确 | **✅** |
+| 3b.A.3 | COM 生命周期与资源释放 | 连续 100 次无泄漏 | **✅** |
+| 3b.A.4 | 宿主接入 + 假实现供测试 | `waml_interact` 可断言命令被调用 | **✅** |
+| ~~3b.A.5~~ | ~~`samples/files/`~~ | 并入 `editor` 的 File 菜单 | **合并** |
 
-**为什么最先**：纯增量，不碰渲染路径，且后续的 `editor` 示例直接用它。
+### 3b.B 编辑器界面 —— ✅ 完成
 
-### 3b.B 编辑器界面（中间）
+按 §10c.4 的四批推进，四批**全部落地**：
 
-按 §10c.4 的四批推进，每批独立可交付：
+| 任务 | 说明 | 验收 | 状态 |
+|---|---|---|---|
+| 3b.B.1 | `Visibility` + `BoolToVisibility` | 按条件隐藏元素；脏标记可用 | **✅** |
+| 3b.B.2 | 单选模型（`Selector` 基类）+ `ListBox` 接入 | `SelectedIndex` 双向可用 | **✅** |
+| 3b.B.3 | `TabView` / `TabViewItem` | 多标签切换、关闭、新增可用 | **✅**（关闭请求见 §7.16 修复） |
+| 3b.B.4 | 浮层子系统（根节点挂载 + 点外关闭 + 翻转） | 菜单能弹出且不被裁剪（R20） | **✅** |
+| 3b.B.5 | `MenuBar` / `MenuFlyout` / `CommandBar` | 菜单可下拉、工具栏可缩窄溢出 | **✅** |
+| 3b.B.6 | 模态 + `ContentDialog` | 遮罩、Esc 只映射取消、吞掉点外 | **✅** |
+| 3b.B.7 | 未保存提示流程（三选一） | 选取消则标签保留 | **✅** |
+| 3b.B.8 | `samples/editor/` | 七个区块全部可交互 | **✅** |
 
-| 任务 | 说明 | 验收 |
-|---|---|---|
-| 3b.B.1 | `Visibility` + `BoolToVisibility` | 按条件隐藏元素；脏标记可用 |
-| 3b.B.2 | 单选模型（`Selector` 基类）+ `ListBox` 接入 | `SelectedIndex` 双向可用 |
-| 3b.B.3 | `TabView` / `TabViewItem` | 多标签切换、关闭、新增可用 |
-| 3b.B.4 | 浮层子系统（顶层列表 + 点外关闭 + 翻转） | 菜单能弹出且不被裁剪（R20） |
-| 3b.B.5 | `MenuBar` / `MenuFlyout` / `CommandBar` | 菜单可下拉、工具栏可缩窄溢出 |
-| 3b.B.6 | 模态 + `ContentDialog` | 遮罩、焦点陷阱、Esc 关闭 |
-| 3b.B.7 | 未保存提示流程（三选一） | 选取消则标签保留 |
-| 3b.B.8 | `samples/editor/` | 六个区块全部可交互 |
+**与原计划的偏差**（都记录在案，不是遗漏）：
 
-**为什么在动画之前**：它的前三批不依赖绘制流程改动（`Visibility` 是属性、`Selector` 是模型、`TabView` 用横向滚动），可以安全先做；只有浮层和模态需要新的绘制层，而那是「加一个顶层列表」，不是改现有绘制路径。
+1. **浮层不是「顶层列表」而是单层**：原计划允许栈（子菜单嵌套浮层）。实现改为「菜单层自己递归绘制子菜单」，省掉整个栈与 z-order 管理。代价是不支持「浮层里再开浮层」（如对话框里的下拉框），当前没有调用方需要。
+2. **模态不做焦点陷阱，改为吞键**：`DialogLayer::OnKeyDown` 对所有键返回 true，包含 Tab。效果等价（Tab 到不了背后控件），但没有焦点链状态。
+3. **命令路由缩为快捷键表**：原计划的「向上冒泡找处理器」需要控件注册表；`Ctrl+N/O/S/W` 由宿主统一维护一张表，够用且更简单。真正的命令路由（如「撤销」随焦点控件变化）留到实现 `UndoStack` 时再做。
 
 ### 3b.C 动画（最后）
 
@@ -1442,12 +1567,12 @@ public:
 | 多模块（DLL）类型注册 | 未验证 | 明确不支持 |
 
 ## 21. 验收标准（v1.0）
-1. **示例矩阵齐备**（10a）：`basic`、`list`、`binding`、`theming`、`usercontrol`、`files`、`editor`、`animation` 八个可独立运行的示例，`build.ps1` 无参数即全部构建。
+1. **示例矩阵齐备**（10a）：`basic`、`list`、`editor`、`binding`、`theming`、`usercontrol`、`animation` 七个可独立运行的示例，`build.ps1` 无参数即全部构建。（`files` 已并入 `editor`。）
 2. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
-3. **系统集成可用**：`files` 示例里打开/保存/选文件夹三种对话框都能返回真实路径，且无窗口环境下不崩溃（10b.1）。
-4. **编辑器界面可用**（§10c）：`editor` 示例能开多个标签、切换、关闭；改过内容后关标签会弹出「保存/不保存/取消」，选取消则标签保留。
+3. ~~**系统集成可用**：`files` 示例里三种对话框~~ → **已达成**：`editor` 的 File ▸ Open / Save as 走真实 `IFileDialogService`；无窗口环境下注册 nullptr 并安全返回（10b.1）。
+4. **编辑器界面可用**（§10c）：**✅ 已达成** —— `editor` 能开多个标签、切换、关闭；改过内容后关标签会弹出「保存/不保存/取消」，**选取消则标签保留**（`interact` 第 6–8 项断言）。
 5. **动效可用且不破坏确定性**：`animation` 示例的过渡肉眼连贯，同时双主题快照哈希仍确定（10b.2 + R16）。
-6. **控件覆盖 P0 清单**：当前 15 个 + P0 余 16 个 = 31 个控件都有示例，每页 ≥3 个可交互示例。
+6. **控件覆盖 P0 清单**：当前 26 个 + P0 余 16 个 = 42 个控件都有示例，每页 ≥3 个可交互示例。
 7. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
 8. **主题可切换**：Light/Dark 即时生效，无需重启。
 9. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。
@@ -1455,18 +1580,22 @@ public:
 
 ## 22. 下一步（按投入产出排序）
 
-1. **`binding` / `theming` 示例**（迭代 2 同期）：不依赖任何新框架能力，可立即开工。
-2. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层已支持本地值优先，只缺标记层入口。
-3. **`Visibility` + `BoolToVisibility`**（迭代 3b.B.1、§10c.3）：**性价比最高的一项**——一天量级的工作，立刻改善所有示例的条件显示，并解锁标签脏标记。
-4. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：示例页 WAML 属性重复较多，样式系统能显著缩短。
-5. **文件选择器**（迭代 3b.A、§10b.1）：纯增量，不碰渲染路径，却能给所有示例加上真实文件 I/O。
-6. **单选模型 + `TabView`**（§10c.4 批次 B）：多标签是「像真实程序」的第一步，且不依赖浮层。
-7. **浮层 + 菜单/工具栏**（§10c.4 批次 C）：最大单项成本，但一次解锁 P1 的 16 个控件。
-8. **模态 + 未保存提示**（§10c.4 批次 D）：`editor` 示例的收尾，本身不引入新机制。
-9. **动画一期**（迭代 3b.C、§10b.2）：要改绘制与失效流程，风险最高；**动工前先写好 R16 的门禁测试**。
-10. **`TextBox` 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
-11. **绑定失败可观测到所有宿主**：Debug 下断言 `BindingErrorCount()` 为 0，让「拼错属性名」在开发期立即暴露。
-12. **`wamlc` 仍不做**：解析 8 KB 仅 175 µs，启动期成本可忽略。
+> 本轮完成的已划掉；顺序按「现在最该做什么」重排。
+
+1. ~~`Visibility` + `BoolToVisibility`~~ ✅
+2. ~~文件选择器~~ ✅
+3. ~~单选模型 + `TabView`~~ ✅
+4. ~~浮层 + 菜单/工具栏~~ ✅
+5. ~~模态 + 未保存提示~~ ✅
+6. ~~`editor` 示例~~ ✅
+7. **`binding` / `theming` 示例**：不依赖任何新框架能力，可立即开工。`theming` 尤其便宜——双主题快照已经在跑，缺的只是一个能点的切换按钮。
+8. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层已支持本地值优先，只缺标记层入口。这是**唯一还卡着示例的能力缺口**。
+9. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：`editor` 的 WAML 里每个 `AppBarButton` 都在重复 `Icon`/`Label`/`Command` 三个属性，样式系统能显著缩短——现在有真实页面做参照，比凭空设计更有依据。
+10. **关窗口守卫**（§10c.5 未做项）：`WM_CLOSE` 拦截 + 逐个询问脏文档 + 「全部保存」。机制全都有了，只差一层循环；但它是真实使用中最容易丢数据的地方，优先级不低。
+11. **动画一期**（迭代 3b.C、§10b.2）：要改绘制与失效流程，风险最高；**动工前先写好 R16 的门禁测试**。
+12. **`TextBox` 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。`editor` 现在把这个问题推到台面上——一个不能输入中文的文本编辑器是不完整的。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
+13. **绑定失败可观测到所有宿主**：Debug 下断言 `BindingErrorCount()` 为 0，让「拼错属性名」在开发期立即暴露。
+14. **`wamlc` 仍不做**：解析 8 KB 仅 175 µs，启动期成本可忽略。
 
 每完成一项都应能独立构建、跑测试、截图验证。
 
@@ -1474,7 +1603,7 @@ public:
 
 # 附录
 
-## A. 测试清单（99 用例）
+## A. 测试清单（111 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1486,7 +1615,7 @@ public:
 | instantiate | 3 | 树结构、默认值、绑定附加、DataContext 继承 |
 | binding | 18 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、LostFocus、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
 | list | 3 | 模板实例化、数据上下文隔离（回归）、订阅泄漏 |
-| layout | 4 | 垂直/水平排列、Border padding、失效冒泡、显式尺寸 |
+| layout | 6 | 垂直/水平排列、**Border padding（含边框占位）**、**边框单边厚度**、**Page 多子节点堆叠与弹性填充**、失效冒泡、显式尺寸 |
 | grid | 5 | 星号分配、固定+星号混合、跨列、间距、auto 列自适应 |
 | wrappanel / viewbox / expander | 3 | 换行、等比缩放、两态高度 |
 | canvas | 3 | 绝对定位、子项尺寸、在 StackPanel 内的高度传递 |
@@ -1501,7 +1630,16 @@ public:
 | filedialog | 2 | 无宿主时安全返回、假实现往返路径 |
 | selector | 3 | 点击选中、双向往返、键盘移动并钳制 |
 | tabview | 5 | 切换标签换内容、点×不选中、+调命令、增删后选中有效、标题来自模型 |
+| **shell** | **10** | 菜单打开/执行/关闭、点外关闭且吞掉点击、禁用命令不执行且菜单不关、子菜单两级 Esc、工具栏溢出与边界、溢出菜单携带隐藏命令、对话框模态性（吞点外）、Esc 映射取消、Enter 映射默认、快捷键解析与格式化一致 |
 | *（无前缀）* | 2 | 页面级集成：basic 页滚动、滚动后按钮仍可点 |
+
+**另有 `waml_interact.exe` 的页面级验收**（不是单元测试，是真实输入驱动）：
+
+| 页面 | 检查项 | 覆盖 |
+|---|---|---|
+| Basic.waml | 6 组 | 绑定、命令、TextBox 回写、CheckBox、Visibility 链路 |
+| List.waml | 4 组 | 每行独立数据、增删、标签切换与 `+` |
+| Editor.waml | **12 组** | 标签切换、`+`、打字变脏、**删字变干净**、干净标签直接关、**脏标签询问**、**取消保留标签**、**放弃移除标签**、菜单命令、工具栏溢出、空文档回落、关闭后重开布局 |
 
 ## B. 复现方式
 
@@ -1509,12 +1647,16 @@ public:
 pwsh -File build.ps1 all
 
 build\release\waml_tests.exe
-build\release\waml_interact.exe
-build\release\waml_snapshot.exe
+build\release\waml_interact.exe samples\basic\Basic.waml
+build\release\waml_interact.exe samples\list\List.waml
+build\release\waml_interact.exe samples\editor\Editor.waml
+build\release\waml_snapshot.exe samples\editor\Editor.waml editor-light.png editor-dark.png 660
 build\release\waml_probe.exe
 
-build\release\waml_basic.exe          :: 交互窗口（基础控件示例）
-build\release\waml_basic.exe --selftest :: 写 selftest.log 并返回退出码
+build\release\waml_basic.exe           :: 交互窗口（基础控件示例）
+build\release\waml_list.exe            :: 集合与布局
+build\release\waml_editor.exe          :: 菜单 + 工具栏 + 多标签 + 未保存提示
+build\release\waml_editor.exe --selftest :: 写 selftest.log 并返回退出码
 ```
 
 ## C. 构建环境说明
@@ -1525,15 +1667,19 @@ CMake/Ninja 在某些受限沙箱下**无法使用**：两者都通过管道捕�
 
 | 区域 | 文件 | 行数 |
 |---|---|---|
-| `framework/src/waml` | 4 | ~1443 |
-| `framework/src/mvvm` | 2 | ~652 |
-| `framework/src/core` | 8 | ~2000 |
-| `framework/src/render` | 4 | ~575 |
-| `framework/src/platform` | 2 | ~400 |
-| `tests` | 3 | ~1400 |
-| `tools` | 5 | ~1300 |
+| `framework/src/waml` | 4 | ~1570 |
+| `framework/src/mvvm` | 4 | ~918 |
+| `framework/src/core` | 10 | ~6419 |
+| `framework/src/render` | 4 | ~662 |
+| `framework/src/platform` | 4 | ~700 |
+| `tests` | 3 | ~2994 |
+| `tools` | 5 | ~1596 |
 | `bench` | 1 | ~257 |
-| `samples/basic` + `samples/list` | 各 4 + 资源 | ~800 |
-| `samples/shared` | 2 | ~480 |
+| `samples/basic` | 3 | ~182 |
+| `samples/list` | 3 | ~248 |
+| `samples/editor` | 4 | ~830 |
+| `samples/shared` | 2 | ~728 |
 
-对照 H1 的「≤ 1500 行覆盖 WAML 子集」：`Parser.cpp` 实测 1327 行（含诊断文案、位置映射、标记扩展解析、验证器、实例化器），优于预期。
+**`framework/src/core` 从 ~2000 行涨到 ~6419 行**，增量几乎全部来自本轮：`Overlay.{h,cpp}`（浮层 + 菜单 + 对话框，约 900 行，其中约一半是注释）、`Controls.cpp` 里的 MenuBar/CommandBar/ContentDialog（约 900 行）、以及 TextBox 多行渲染。这是**应用外壳的真实成本** —— 菜单、工具栏、模态这些「看起来只是控件」的东西，实际要处理浮层定位、翻转、点外关闭、生命周期、键盘路由，而且每一处都必须有注释说明为什么那样做，否则下一个改动的人会把 `RetireLayer` 当成多余的防御代码删掉。
+
+对照 H1 的「≤ 1500 行覆盖 WAML 子集」：`Parser.cpp` 实测 1327 行（含诊断文案、位置映射、标记扩展解析、验证器、实例化器），优于预期，且本轮零改动 —— 外壳能力全部加在 core 层，解析器没有为新控件增加一行。

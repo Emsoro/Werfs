@@ -31,6 +31,7 @@ set(FRAMEWORK_SRC
     framework/src/core/Widget.cpp
     framework/src/core/Types.cpp
     framework/src/core/Controls.cpp
+    framework/src/core/Overlay.cpp
     framework/src/mvvm/Binding.cpp
     framework/src/waml/Diagnostics.cpp
     framework/src/waml/Parser.cpp

@@ -68,7 +68,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'basic', 'list')]
+                 'basic', 'list', 'editor')]
     [string]$Target = 'samples',
 
     [switch]$Clean,
@@ -231,6 +231,7 @@ $CoreSources = @(
     'src\core\Widget.cpp'
     'src\core\Types.cpp'
     'src\core\Controls.cpp'
+    'src\core\Overlay.cpp'
     'src\mvvm\Binding.cpp'
     'src\mvvm\Converters.cpp'
     'src\waml\Diagnostics.cpp'
@@ -397,20 +398,29 @@ function Build-Bench {
 # still wins when building that sample.
 $ListSampleDir = Join-Path $SamplesRoot 'list'
 $BasicSampleDir = Join-Path $SamplesRoot 'basic'
+$EditorSampleDir = Join-Path $SamplesRoot 'editor'
 # Tools that touch several samples need every sample's headers.
 $AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
-                       $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'))
+                       $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'),
+                       $EditorSampleDir, (Join-Path $EditorSampleDir 'resources'))
+
+# A sample's ViewModel implementation has to be compiled into the tools that drive
+# it. The editor is the first sample with real logic in a .cpp; the others keep
+# everything in headers, which is why this list used to be empty.
+$SampleVmSources = @(Join-Path $EditorSampleDir 'EditorVm.cpp')
 
 function Build-Snapshot {
     $exe = Build-Executable -ExeName 'waml_snapshot' -ObjName 'snapshot' -Config 'release' `
-        -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\Snapshot.cpp')) `
+        -Sources ($CoreSources + $RenderSources + $SampleVmSources +
+                  (Join-Path $ProjectDir 'tools\Snapshot.cpp')) `
         -ExtraIncludes $AllSampleIncludes
     Write-Host "  snapshot -> $exe" -ForegroundColor DarkGray
 }
 
 function Build-Interact {
     $exe = Build-Executable -ExeName 'waml_interact' -ObjName 'interact' -Config 'release' `
-        -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\Interact.cpp')) `
+        -Sources ($CoreSources + $SampleVmSources +
+                  (Join-Path $ProjectDir 'tools\Interact.cpp')) `
         -ExtraIncludes $AllSampleIncludes
     Write-Host "  interact -> $exe" -ForegroundColor DarkGray
 }
@@ -440,9 +450,14 @@ function Build-Sample {
         [string]$Config = 'release'
     )
     $resObj = Build-SampleResource -Dir $Dir -Name $ResName
+    # Every .cpp beside App.cpp is part of the sample. A sample whose ViewModel is
+    # only a header needs nothing extra; one with real logic (the editor's close
+    # flow) keeps it in its own translation unit instead of inlining everything
+    # into a 600-line header.
+    $sampleSources = @(Get-ChildItem -LiteralPath $Dir -Filter '*.cpp' |
+        ForEach-Object { $_.FullName })
     $exe = Build-Executable -ExeName $ExeName -ObjName $ObjName -Config $Config `
-        -Sources ($CoreSources + $RenderSources + $SampleHostSource +
-                  (Join-Path $Dir 'App.cpp')) `
+        -Sources ($CoreSources + $RenderSources + $SampleHostSource + $sampleSources) `
         -ResourceObj $resObj `
         -ManifestPath (Join-Path $Dir 'resources\app.manifest') `
         -ExtraIncludes @($Dir, (Join-Path $Dir 'resources')) `
@@ -457,6 +472,12 @@ function Build-Sample {
 $SampleRegistry = @(
     @{ Name = 'basic'; Exe = 'waml_basic'; Res = 'basic' }
     @{ Name = 'list';  Exe = 'waml_list';  Res = 'list' }
+    # The integration sample: menu bar, command bar, tabs, unsaved prompt and the
+    # file dialogs, all on one page. It absorbed the planned `files` sample, whose
+    # four blocks (open / save as / folder pick / read preview) were a subset of
+    # what the editor needs -- two samples for one capability meant two places to
+    # keep the dialog wiring correct.
+    @{ Name = 'editor'; Exe = 'waml_editor'; Res = 'editor' }
 )
 
 function Build-RegisteredSample {

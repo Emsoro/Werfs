@@ -933,8 +933,56 @@ TEST("layout: border padding") {
     if (!doc) return;
     WidgetPtr root = doc->Instantiate(&g_fakeText);
     root->ForceLayout(Size{200, 100});
-    CHECK_NEAR(root->Children()[0]->Bounds().x, 12.0f, 0.01);
-    CHECK_NEAR(root->Children()[0]->Bounds().y, 12.0f, 0.01);
+    // 12 of padding PLUS 1 of border: the border takes space like padding does.
+    // It used to be ignored, so a bordered card clipped its own content by the
+    // border width -- which is what made this expectation move from 12 to 13.
+    CHECK_NEAR(root->Children()[0]->Bounds().x, 13.0f, 0.01);
+    CHECK_NEAR(root->Children()[0]->Bounds().y, 13.0f, 0.01);
+}
+
+TEST("layout: border thickness accepts per-edge values") {
+    InstallText();
+    DiagnosticBag bag;
+    // "0,1,0,0" is a top divider. It was a Number property, so any value with a
+    // comma was a load error -- the editor's status bar needed exactly this.
+    auto doc = Compile(
+        "<Border BorderThickness=\"0,1,0,0\" Padding=\"4\"><TextBlock Text=\"s\" Height=\"10\"/></Border>",
+        bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{200, 100});
+    // Only the top edge takes space: x keeps just the padding, y adds the 1px line.
+    CHECK_NEAR(root->Children()[0]->Bounds().x, 4.0f, 0.01);
+    CHECK_NEAR(root->Children()[0]->Bounds().y, 5.0f, 0.01);
+}
+
+TEST("layout: page stacks several children and the flexible one fills") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page Padding=\"0\">"
+        "<TextBlock Text=\"bar\" Height=\"34\"/>"
+        "<TextBlock Text=\"body\"/>"
+        "<TextBlock Text=\"status\" Height=\"20\"/>"
+        "</Page>",
+        bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{300, 400});
+    CHECK(root->Children().size() == 3);
+    // A page with several children is the ordinary application shape; SingleChild
+    // forced every sample to wrap its regions in a Grid.
+    CHECK_NEAR(root->Children()[0]->Bounds().h, 34.0f, 0.01);
+    CHECK_NEAR(root->Children()[0]->Bounds().y, 0.0f, 0.01);
+    // The child without an explicit height absorbs the leftover: explicit heights
+    // are bars, and a bar must not grow.
+    CHECK(root->Children()[1]->Bounds().h > 300.0f);
+    CHECK_NEAR(root->Children()[2]->Bounds().h, 20.0f, 0.01);
+    // And they do not overlap.
+    CHECK(root->Children()[2]->Bounds().y >=
+          root->Children()[1]->Bounds().y + root->Children()[1]->Bounds().h - 0.01f);
 }
 
 TEST("layout: invalidation bubbles to root") {
@@ -2117,8 +2165,347 @@ TEST("file dialog: fake service round-trips a path") {
 }
 
 // ---------------------------------------------------------------------------
-// Selection + TabView (§10c.4 batch B)
+// Application shell (§10c.4 batches C + D): menus, command bar, modal dialog.
 // ---------------------------------------------------------------------------
+namespace {
+
+// A widget plus the categories the shell tests need.
+struct ShellFixture {
+    WidgetPtr root;
+    MenuBar* menu = nullptr;
+    CommandBar* bar = nullptr;
+    ContentDialog* dialog = nullptr;
+
+    explicit ShellFixture(const std::string& src) {
+        DiagnosticBag bag;
+        auto doc = CompileWaml(src, ParseOptions{"shell.waml"}, bag);
+        if (!doc) {
+            std::printf("    compile failed:\n%s", bag.ToText().c_str());
+            return;
+        }
+        std::shared_ptr<RefObject> vm = MakeShellVm();
+        vm_ = vm;
+        root = doc->Instantiate(&g_fakeText);
+        root->SetDataContext(vm);
+        root->ForceLayout(Size{600, 400});
+        menu = dynamic_cast<MenuBar*>(root->FindByName("Bar"));
+        bar = dynamic_cast<CommandBar*>(root->FindByName("Tools"));
+        dialog = dynamic_cast<ContentDialog*>(root->FindByName("Prompt"));
+    }
+
+    // The ViewModel behind the fixture. Kept as a member so the tests can reach
+    // the command counters after the widgets have run.
+    std::shared_ptr<RefObject> vm_;
+
+    struct ShellVm final : public ObservableObject {
+        ShellVm() {
+            NewCmd = std::make_shared<RelayCommand>([this] { ++newCount; });
+            SaveCmd = std::make_shared<RelayCommand>([this] { return canSave; },
+                                                     [this] { ++saveCount; });
+            NewCommand.Set(std::static_pointer_cast<RefObject>(NewCmd));
+            SaveCommand.Set(std::static_pointer_cast<RefObject>(SaveCmd));
+            PromptOpen.Set(false);
+            PromptResult.Set(-100);
+            Make("NewCommand", NewCommand);
+            Make("SaveCommand", SaveCommand);
+            Make("PromptOpen", PromptOpen);
+            Make("PromptResult", PromptResult);
+            Make("PromptTitle", PromptTitle);
+        }
+        std::shared_ptr<RelayCommand> NewCmd;
+        std::shared_ptr<RelayCommand> SaveCmd;
+        ObservableProperty<RefPtr> NewCommand{"NewCommand"};
+        ObservableProperty<RefPtr> SaveCommand{"SaveCommand"};
+        ObservableProperty<bool> PromptOpen{"PromptOpen", false};
+        ObservableProperty<int> PromptResult{"PromptResult", -100};
+        ObservableProperty<std::wstring> PromptTitle{"PromptTitle", L"Unsaved"};
+        int newCount = 0;
+        int saveCount = 0;
+        bool canSave = true;
+    };
+    std::shared_ptr<ShellVm> vmAs() const { return std::static_pointer_cast<ShellVm>(vm_); }
+
+    static std::shared_ptr<RefObject> MakeShellVm() {
+        return std::static_pointer_cast<RefObject>(std::make_shared<ShellVm>());
+    }
+};
+
+const char* kShellMarkup = R"WAML(
+<Page>
+  <MenuBar x:Name="Bar">
+    <MenuBarItem Title="File">
+      <MenuFlyout>
+        <MenuFlyoutItem Text="New" Hint="Ctrl+N" Command="{Binding NewCommand}"/>
+        <MenuFlyoutItem Text="Save" Command="{Binding SaveCommand}"/>
+      </MenuFlyout>
+    </MenuBarItem>
+    <MenuBarItem Title="Edit">
+      <MenuFlyout>
+        <MenuFlyoutItem Text="Copy"/>
+      </MenuFlyout>
+    </MenuBarItem>
+  </MenuBar>
+  <CommandBar x:Name="Tools">
+    <AppBarButton Icon="N" Label="New" Command="{Binding NewCommand}"/>
+    <AppBarButton Icon="S" Label="Save" Command="{Binding SaveCommand}"/>
+  </CommandBar>
+  <ContentDialog x:Name="Prompt" Title="{Binding PromptTitle}" Message="Did you mean it?"
+                 IsOpen="{Binding PromptOpen, Mode=TwoWay}"
+                 Result="{Binding PromptResult, Mode=TwoWay}"
+                 PrimaryButtonText="Yes" SecondaryButtonText="No" CloseButtonText="Cancel"/>
+</Page>
+)WAML";
+
+} // namespace
+
+TEST("shell: a menu opens, runs its command and closes") {
+    ShellFixture f(kShellMarkup);
+    CHECK(f.menu != nullptr);
+    if (!f.menu) return;
+    CHECK(f.menu->Items().size() == 2);
+    CHECK(f.menu->OpenIndex() == -1);
+
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer == nullptr); // nothing open yet
+
+    f.menu->OpenMenu(0);
+    CHECK(f.menu->OpenIndex() == 0);
+    layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    CHECK(layer != nullptr && layer->Active());
+    if (!layer) return;
+
+    // The menu hangs BELOW the title, not over it: clicking the title again has to
+    // be able to close it.
+    const Rect title = f.menu->TitleBounds(0);
+    const Rect box = layer->Bounds();
+    CHECK(box.y >= title.y + title.h - 1.0f);
+    CHECK(box.h > 0);
+    CHECK(box.w > 0);
+
+    // Clicking the "New" row invokes the command exactly once and closes the menu.
+    // Row 0 is the first item, and the layer's own item geometry is what decides
+    // where that is -- the fixture only knows the layer's top-left.
+    CHECK(f.vmAs()->newCount == 0);
+    layer->OnPointerDown(Point{box.x + box.w * 0.5f, box.y + 6.0f + 15.0f});
+    CHECK(f.vmAs()->newCount == 1);
+    CHECK(!layer->Active());
+    CHECK(f.menu->OpenIndex() == -1);
+}
+
+TEST("shell: clicking outside a menu dismisses it") {
+    ShellFixture f(kShellMarkup);
+    if (!f.menu) return;
+    f.menu->OpenMenu(0);
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+
+    // A press well outside the panel closes it and is CONSUMED, so it must not also
+    // activate whatever is underneath. That double action is the defect this test
+    // exists for.
+    const Rect box = layer->Bounds();
+    const Point outside{std::max(0.0f, box.x - 40.0f), std::max(0.0f, box.y - 40.0f)};
+    const bool consumed = layer->OnPointerDown(outside);
+    CHECK(consumed);
+    CHECK(!layer->Active());
+    CHECK(f.vmAs()->newCount == 0);
+}
+
+TEST("shell: a disabled command renders and refuses to run") {
+    ShellFixture f(kShellMarkup);
+    if (!f.menu) return;
+    f.vmAs()->canSave = false; // Save becomes unavailable
+    f.vmAs()->SaveCmd->RaiseCanExecuteChanged();
+
+    f.menu->OpenMenu(0);
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+
+    // "Save" is the second row (New is first, at 30 px each).
+    const Rect box = layer->Bounds();
+    layer->OnPointerDown(Point{box.x + box.w * 0.5f, box.y + 6.0f + 30.0f + 15.0f});
+    CHECK(f.vmAs()->saveCount == 0);   // did not run
+    CHECK(layer->Active());           // and the menu stayed open
+}
+
+TEST("shell: a submenu opens without leaving the layer") {
+    ShellFixture f(R"WAML(
+<Page>
+  <MenuBar x:Name="Bar">
+    <MenuBarItem Title="File">
+      <MenuFlyout>
+        <MenuFlyoutItem Text="New" Command="{Binding NewCommand}"/>
+        <MenuFlyoutSubItem Text="More">
+          <MenuFlyout>
+            <MenuFlyoutItem Text="Inner" Command="{Binding SaveCommand}"/>
+          </MenuFlyout>
+        </MenuFlyoutSubItem>
+      </MenuFlyout>
+    </MenuBarItem>
+  </MenuBar>
+</Page>
+)WAML");
+    if (!f.menu) return;
+    f.menu->OpenMenu(0);
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+
+    const Rect box = layer->Bounds();
+    // A click on the submenu row opens it in place; the layer stays up.
+    layer->OnPointerDown(Point{box.x + 20.0f, box.y + 6.0f + 30.0f + 15.0f});
+    CHECK(layer->Active());
+    // No command ran: opening a submenu is not an action.
+    CHECK(f.vmAs()->saveCount == 0);
+
+    // Escape closes the submenu first, then the menu on the second press. Collapsing
+    // straight to closed would lose the user's place on a mistyped key.
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(layer->Active());
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(!layer->Active());
+}
+
+TEST("shell: the command bar overflows instead of clipping") {
+    ShellFixture f(kShellMarkup);
+    CHECK(f.bar != nullptr);
+    if (!f.bar) return;
+
+    // Wide window: everything fits, nothing hidden.
+    f.root->ForceLayout(Size{600, 400});
+    CHECK(f.bar->OverflowCount() == 0);
+    CHECK(!f.bar->IsOverflowing());
+
+    // Narrow window: trailing buttons collect behind the "..." affordance. Without
+    // this the right-hand buttons were simply drawn past the edge.
+    f.root->ForceLayout(Size{86, 400});
+    CHECK(f.bar->OverflowCount() > 0);
+    CHECK(f.bar->IsOverflowing());
+
+    // The overflow button lives inside the bar, not beyond it.
+    const Rect overflow = f.bar->OverflowBounds();
+    const Rect barBox = f.bar->Bounds();
+    CHECK(overflow.x >= barBox.x);
+    CHECK(overflow.x + overflow.w <= barBox.x + barBox.w + 0.5f);
+}
+
+TEST("shell: the command bar's overflow menu carries the hidden commands") {
+    ShellFixture f(kShellMarkup);
+    if (!f.bar) return;
+    f.root->ForceLayout(Size{86, 400});
+    CHECK(f.bar->OverflowCount() > 0);
+
+    f.bar->OpenOverflow();
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    CHECK(layer->Active());
+
+    // Choosing the first overflow row runs that hidden button's command.
+    const Rect box = layer->Bounds();
+    layer->OnPointerDown(Point{box.x + box.w * 0.5f, box.y + 6.0f + 15.0f});
+    CHECK(f.vmAs()->newCount == 1 || f.vmAs()->saveCount == 1);
+    CHECK(!layer->Active());
+}
+
+TEST("shell: a dialog is modal and reports which button was chosen") {
+    ShellFixture f(kShellMarkup);
+    CHECK(f.dialog != nullptr);
+    if (!f.dialog) return;
+
+    // Bound IsOpen: the ViewModel asks, not the view.
+    f.vmAs()->PromptOpen.Set(true);
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    CHECK(f.dialog->IsOpen());
+    CHECK(!layer->LightDismiss());
+
+    // A press outside is swallowed and the dialog stays: for an unsaved-changes
+    // prompt there is no safe guess about what a click outside meant.
+    CHECK(layer->OnPointerDown(Point{2.0f, 2.0f}));
+    CHECK(layer->Active());
+
+    // Escape must map to Cancel, never to the default button. A prompt whose Escape
+    // silently discarded work would be a trap.
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(!layer->Active());
+    CHECK(!f.dialog->IsOpen());
+    CHECK(f.vmAs()->PromptResult.Get() == 0); // the close/cancel button's result
+}
+
+TEST("shell: the dialog's primary button reports its own result") {
+    ShellFixture f(kShellMarkup);
+    if (!f.dialog) return;
+    f.vmAs()->PromptOpen.Set(true);
+    OverlayLayer* layer = f.root->Overlay();
+    if (!layer) return;
+
+    // Buttons are laid out bottom-right inside the card, which the layer centres.
+    // Guessing coordinates is how a test passes for the wrong reason; this walks
+    // the card looking for a press that produces a result.
+    const Rect box = layer->Bounds();
+    bool produced = false;
+    for (float y = box.y + box.h - 40.0f; y < box.y + box.h - 4.0f && !produced; y += 4.0f) {
+        for (float x = box.x + box.w * 0.45f; x < box.x + box.w - 4.0f; x += 8.0f) {
+            if (layer->OnPointerDown(Point{x, y})) {
+                if (!layer->Active()) {
+                    produced = true;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(produced);
+    CHECK(f.vmAs()->PromptResult.Get() != -100);
+    CHECK(f.vmAs()->PromptResult.Get() > 0); // primary or secondary, not cancel
+}
+
+TEST("shell: Enter chooses the default button, not the cancel one") {
+    ShellFixture f(kShellMarkup);
+    if (!f.dialog) return;
+    f.vmAs()->PromptOpen.Set(true);
+    OverlayLayer* layer = f.root->Overlay();
+    if (!layer) return;
+
+    CHECK(layer->OnKeyDown(KeyReturn, 0));
+    CHECK(!layer->Active());
+    CHECK(f.vmAs()->PromptResult.Get() == 1); // the primary
+}
+
+TEST("shell: accelerator specs parse and format consistently") {
+    int vk = 0;
+    int mods = 0;
+    CHECK(ParseAccelerator("Ctrl+S", vk, mods));
+    CHECK_EQ(vk, static_cast<int>('S'));
+    CHECK(mods == ModCtrl);
+    // The hint the menu shows and the chord that fires are the same text, so they
+    // cannot drift apart.
+    CHECK(FormatAccelerator(vk, mods) == L"Ctrl+S");
+
+    CHECK(ParseAccelerator("ctrl+shift+s", vk, mods));
+    CHECK_EQ(vk, static_cast<int>('S'));
+    CHECK(mods == (ModCtrl | ModShift));
+    CHECK(FormatAccelerator(vk, mods) == L"Ctrl+Shift+S");
+
+    CHECK(ParseAccelerator("F5", vk, mods));
+    CHECK_EQ(vk, 0x74);
+    CHECK(mods == 0);
+    CHECK(FormatAccelerator(vk, mods) == L"F5");
+
+    CHECK(ParseAccelerator("Alt+Enter", vk, mods));
+    CHECK_EQ(vk, 0x0D);
+    CHECK(mods == ModAlt);
+    CHECK(FormatAccelerator(vk, mods) == L"Alt+Enter");
+
+    // Nonsense is rejected rather than silently becoming "no shortcut".
+    CHECK(!ParseAccelerator("Hyper+S", vk, mods));
+    CHECK(!ParseAccelerator("Ctrl+Nope", vk, mods));
+    CHECK(!ParseAccelerator("", vk, mods));
+}
+
 namespace {
 
 // Builds a TabView with N tabs backed by an ObservableList of TabEntryModel.

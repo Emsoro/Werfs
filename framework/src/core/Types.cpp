@@ -85,9 +85,13 @@ void TypeRegistry::RegisterBuiltins() {
     auto add = [this](std::shared_ptr<TypeInfo> t) { Register(std::move(t)); };
 
     {
-        auto t = std::make_shared<TypeInfo>("wui/Page", ContentModel::SingleChild,
+        // ManyChildren, not SingleChild: a real application page is a row of
+        // co-existing regions (menu bar, toolbar, content, status line). The
+        // single-child form forced every sample to wrap everything in one Grid,
+        // which is exactly the kind of ceremony that makes markup worse than code.
+        // One child still works -- it is just a column of one.
+        auto t = std::make_shared<TypeInfo>("wui/Page", ContentModel::ManyChildren,
                                             []() -> WidgetPtr { return std::make_shared<Page>(); });
-        t->SetContentProperty("Child");
         AddLayoutProps(*t);
         t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::AppBackground}),
                 AffectsRender, BindingMode::OneWay, true, true);
@@ -122,7 +126,12 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("BorderBrush", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
                 AffectsRender, BindingMode::OneWay, true, true);
-        t->Prop("BorderThickness", VType::Number, Value::Number(0), AffectsMeasure);
+        // Thickness, not Number: a card wants a hairline all round, but a
+        // divider wants one edge only ("0,1,0,0"). One uniform number cannot
+        // express that, which is why the status bar in samples/editor failed to
+        // compile until this became a Thickness.
+        t->Prop("BorderThickness", VType::Thickness, Value::MakeThickness(Thickness{}),
+                AffectsMeasure);
         t->Prop("CornerRadius", VType::Number, Value::Number(0), AffectsRender);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
         add(t);
@@ -201,9 +210,14 @@ void TypeRegistry::RegisterBuiltins() {
         // The + button invokes this; the ViewModel decides what a new tab is.
         t->Prop("AddCommand", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
         // Set to the index the user asked to close; -1 when there is no pending
-        // request. OneWay because the control publishes, the ViewModel decides.
+        // request. This MUST be TwoWay. Declared OneWay it looked like a
+        // publish-only property, but a OneWay binding ignores slot changes made
+        // by the target -- so the × published into nothing and no tab could ever
+        // be closed. It is the control's write-back channel to the ViewModel,
+        // exactly like SelectedIndex, and only the ViewModel can decide whether
+        // closing is safe.
         t->Prop("CloseRequested", VType::Number, Value::Number(-1),
-                AffectsRender, BindingMode::OneWay);
+                AffectsRender, BindingMode::TwoWay);
         t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
@@ -314,6 +328,108 @@ void TypeRegistry::RegisterBuiltins() {
     {
         auto t = std::make_shared<TypeInfo>("wui/DataTemplate", ContentModel::SingleTemplate,
                                             []() -> WidgetPtr { return nullptr; });
+        add(t);
+    }
+    // --- application shell ------------------------------------------------
+    {
+        auto t = std::make_shared<TypeInfo>("wui/MenuBar", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<MenuBar>(); });
+        AddLayoutProps(*t);
+        t->Prop("Background", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 0, Token::None}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
+        t->Prop("Height", VType::Number, Value::Number(34), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/MenuBarItem", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<MenuBarItemImpl>(); });
+        AddLayoutProps(*t);
+        t->Prop("Title", VType::Text, Value::Text(L"Menu"), AffectsMeasure);
+        add(t);
+    }
+    {
+        // The flyout level carries the items; it is not a widget that draws, which
+        // is why it has no appearance properties at all.
+        auto t = std::make_shared<TypeInfo>("wui/MenuFlyout", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<MenuFlyout>(); });
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/MenuFlyoutItem", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<MenuFlyoutItem>(); });
+        t->Prop("Text", VType::Text, Value::Text(L""), 0);
+        // Display-only accelerator text. Key dispatch is host-level, because a
+        // control cannot know what else in the app wants the same chord.
+        t->Prop("Hint", VType::Text, Value::Text(L""), 0);
+        t->Prop("Icon", VType::Text, Value::Text(L""), 0);
+        t->Prop("Command", VType::Ref, Value::Null(), 0, BindingMode::OneWay);
+        t->Prop("IsChecked", VType::Bool, Value::Bool(false), 0, BindingMode::OneWay);
+        t->EnumProp("Kind", {"Command", "Toggle"}, 0, 0);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/MenuFlyoutSeparator", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<MenuFlyoutSeparator>(); });
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/MenuFlyoutSubItem", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<MenuFlyoutSubItem>(); });
+        t->Prop("Text", VType::Text, Value::Text(L""), 0);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/CommandBar", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<CommandBar>(); });
+        AddLayoutProps(*t);
+        t->Prop("Height", VType::Number, Value::Number(44), AffectsMeasure);
+        t->Prop("Background", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::CardBackground}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{8, 6, 8, 6}),
+                AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/AppBarButton", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<AppBarButton>(); });
+        AddLayoutProps(*t);
+        // A short glyph string rather than an icon descriptor: the control draws
+        // it through the same text path as everything else, so no icon format and
+        // no image decoding is needed for the toolbar to exist.
+        t->Prop("Icon", VType::Text, Value::Text(L""), 0);
+        t->Prop("Label", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender);
+        t->Prop("Command", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("ToolTip", VType::Text, Value::Text(L""), 0);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/AppBarSeparator", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<AppBarButton>(); });
+        t->Prop("IsSeparator", VType::Bool, Value::Bool(true), 0);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ContentDialog", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<ContentDialog>(); });
+        AddLayoutProps(*t);
+        t->Prop("Title", VType::Text, Value::Text(L""), 0);
+        t->Prop("Message", VType::Text, Value::Text(L""), 0);
+        t->Prop("PrimaryButtonText", VType::Text, Value::Text(L"OK"), 0);
+        t->Prop("SecondaryButtonText", VType::Text, Value::Text(L""), 0);
+        t->Prop("CloseButtonText", VType::Text, Value::Text(L"Cancel"), 0);
+        // IsOpen is TwoWay: the ViewModel asks, the dialog reports (the user closed
+        // it by choosing a button). Result carries which button, as a number the
+        // sample maps back to its own enum.
+        t->Prop("IsOpen", VType::Bool, Value::Bool(false), 0, BindingMode::TwoWay);
+        t->Prop("Result", VType::Number, Value::Number(ContentDialog::ResultNone), 0,
+                BindingMode::OneWay);
         add(t);
     }
 }

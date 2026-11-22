@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cwctype>
 
 #include <windows.h>
@@ -403,6 +404,111 @@ int FontWeightToDWrite(int w) {
     case WeightBold: return 700;
     default: return 400;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Accelerators
+//
+// Markup has to be able to say "Ctrl+S" and have both the menu painter and the
+// key dispatch agree on it. Parsing in one place is what keeps the hint the user
+// reads and the key that actually fires from drifting apart -- they are the same
+// string, so there is no second source of truth.
+// ---------------------------------------------------------------------------
+namespace {
+
+bool IsDigitChar(char c) { return c >= '0' && c <= '9'; }
+
+} // namespace
+
+bool ParseAccelerator(std::string_view text, int& vk, int& modifiers) {
+    vk = 0;
+    modifiers = 0;
+    const std::string spec = ToLowerAscii(std::string(TrimAscii(text)));
+    if (spec.empty()) return false;
+
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start <= spec.size()) {
+        size_t plus = spec.find('+', start);
+        if (plus == std::string::npos) plus = spec.size();
+        const std::string_view part =
+            TrimAscii(std::string_view(spec).substr(start, plus - start));
+        if (!part.empty()) parts.emplace_back(part);
+        if (plus == spec.size()) break;
+        start = plus + 1;
+    }
+    if (parts.empty()) return false;
+
+    // Trailing part is the key; everything before it is a modifier. "Ctrl++"
+    // (the plus key itself) therefore needs no special case: the empty segment
+    // between the two pluses is skipped above.
+    const std::string& key = parts.back();
+    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        const std::string& mod = parts[i];
+        if (mod == "ctrl" || mod == "control") modifiers |= ModCtrl;
+        else if (mod == "shift") modifiers |= ModShift;
+        else if (mod == "alt") modifiers |= ModAlt;
+        else return false;
+    }
+
+    if (key.size() == 1) {
+        const char c = key[0];
+        if (c >= 'a' && c <= 'z') { vk = 'A' + (c - 'a'); return true; }
+        if (IsDigitChar(c)) { vk = '0' + (c - '0'); return true; }
+        if (c == '+' || c == '-') {
+            // Same virtual key as '=' ; Win32 has no dedicated plus key.
+            vk = c == '+' ? 0xBB : 0xBD;
+            return true;
+        }
+        return false;
+    }
+    if ((key[0] == 'f' || key[0] == 'F') && key.size() <= 3) {
+        const int n = std::atoi(key.c_str() + 1);
+        if (n >= 1 && n <= 24) { vk = 0x70 + (n - 1); return true; } // VK_F1..VK_F24
+        return false;
+    }
+    static const struct {
+        const char* name;
+        int vk;
+    } kNamed[] = {
+        {"delete", 0x2E}, {"del", 0x2E},  {"insert", 0x2D}, {"ins", 0x2D},
+        {"backspace", 0x08}, {"enter", 0x0D}, {"return", 0x0D}, {"escape", 0x1B},
+        {"esc", 0x1B},   {"tab", 0x09},   {"space", 0x20},  {"home", 0x24},
+        {"end", 0x23},   {"pageup", 0x21}, {"pagedown", 0x22},
+    };
+    for (const auto& entry : kNamed) {
+        if (key == entry.name) { vk = entry.vk; return true; }
+    }
+    return false;
+}
+
+std::wstring FormatAccelerator(int vk, int modifiers) {
+    if (vk == 0) return L"";
+    std::wstring out;
+    if (modifiers & ModCtrl) out += L"Ctrl+";
+    if (modifiers & ModShift) out += L"Shift+";
+    if (modifiers & ModAlt) out += L"Alt+";
+
+    if (vk >= 'A' && vk <= 'Z') { out += static_cast<wchar_t>(vk); return out; }
+    if (vk >= '0' && vk <= '9') { out += static_cast<wchar_t>(vk); return out; }
+    if (vk >= 0x70 && vk <= 0x87) { out += L"F" + std::to_wstring(vk - 0x70 + 1); return out; }
+    switch (vk) {
+    case 0x2E: out += L"Delete"; break;
+    case 0x2D: out += L"Insert"; break;
+    case 0x08: out += L"Backspace"; break;
+    case 0x0D: out += L"Enter"; break;
+    case 0x1B: out += L"Esc"; break;
+    case 0x09: out += L"Tab"; break;
+    case 0x20: out += L"Space"; break;
+    case 0x24: out += L"Home"; break;
+    case 0x23: out += L"End"; break;
+    case 0x21: out += L"PageUp"; break;
+    case 0x22: out += L"PageDown"; break;
+    case 0xBB: out += L"+"; break;
+    case 0xBD: out += L"-"; break;
+    default: out += L"0x" + std::to_wstring(vk); break;
+    }
+    return out;
 }
 
 } // namespace wui

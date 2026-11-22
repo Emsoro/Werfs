@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: MIT
 // Built-in control set: Page, StackPanel, Border, TextBlock, Button, CheckBox,
-// TextBox, ListBox, ScrollViewer (+ DataTemplate).
+// TextBox, ListBox, ScrollViewer, TabView (+ DataTemplate) and the application
+// shell pieces: MenuBar, CommandBar and ContentDialog.
 #pragma once
 
 #include "Widget.h"
 
 #include <functional>
+#include <memory>
+#include <vector>
 
 namespace wui {
+
+struct PopupMenuItem;
 
 class TextBlock : public Widget {
 public:
@@ -29,6 +34,8 @@ public:
 class Page : public Widget {
 public:
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Size Measure(const Size& available) override;
+    // Stacks children vertically; the last one absorbs the leftover height.
     void Arrange(const Rect& finalRect) override;
 };
 
@@ -69,6 +76,7 @@ private:
 class TextBox : public Widget {
 public:
     Size Measure(const Size& available) override;
+    void Arrange(const Rect& finalRect) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
     Widget* HitTest(const Point& p) override;
     bool OnKeyDown(int vk) override;
@@ -80,6 +88,10 @@ public:
 
 private:
     void CommitText();
+    // Splits the current text into display lines. A single-line box keeps one
+    // entry; a box taller than one line wraps on explicit newlines and then on
+    // width, so a document paragraph is readable instead of running off the edge.
+    std::vector<std::wstring> BuildDisplayLines(float wrapWidth, float fontSize, int weight) const;
     int slotText_ = -1;
     size_t caret_ = 0;
     bool caretVisible_ = true;
@@ -431,6 +443,242 @@ private:
     std::vector<float> tabWidths_;
     float stripScroll_ = 0.0f;
     float contentTop_ = 0.0f;
+};
+
+// ---------------------------------------------------------------------------
+// MenuBar / MenuBarItem
+//
+// A horizontal set of titles, each of which drops a menu. The bar does not own
+// the item data: a MenuBarItem builds its model from its own child elements once,
+// at load time, and the bar only knows where the titles are and which is open.
+//
+// Why the menu itself is an overlay (not a child): see OverlayLayer. The bar can
+// sit anywhere -- including inside a scroller -- and its dropdown must still paint
+// over everything.
+// ---------------------------------------------------------------------------
+class MenuBarItem;
+
+class MenuBar : public Widget {
+public:
+    MenuBar();
+    ~MenuBar() override;
+
+    Size Measure(const Size& available) override;
+    void Arrange(const Rect& finalRect) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerMove(const Point& local) override;
+    bool Focusable() const override { return true; }
+
+    // Title geometry, shared by painting and hit testing.
+    Rect TitleBounds(size_t index) const;
+
+    // Opens the menu of `index` at the title's bottom-left. Exposed so a test can
+    // open a menu without guessing coordinates.
+    void OpenMenu(size_t index);
+    void CloseMenu();
+    int OpenIndex() const { return openIndex_; }
+
+    // The items of a title, in the form the menu layer draws. Built by
+    // MenuBarItem::BuildItems() once and refreshed for enabled state on open.
+    std::vector<class MenuBarItem*> Items() const;
+
+private:
+    // Retires the layer instead of destroying it.
+    //
+    // A layer closes itself from INSIDE its own OnPointerDown (the item was chosen),
+    // and the close callback is what tells the owner. Destroying `ownedLayer_` there
+    // would free the object whose method is still on the stack -- a use-after-free
+    // that only shows up as a crash on the next access. So closing only moves the
+    // layer here, and it is actually released at the next safe point (the next open,
+    // or destruction). One frame of extra retained memory is the whole cost.
+    void RetireLayer();
+
+    void UpdateWidths();
+    std::vector<float> titleWidths_;
+    int openIndex_ = -1;
+    OverlayLayer* layer_ = nullptr;
+    std::unique_ptr<OverlayLayer> ownedLayer_;
+    std::unique_ptr<OverlayLayer> retiredLayer_;
+};
+
+// One title in a MenuBar. Owns its children as item descriptors; the actual
+// PopupMenuItem tree is built on demand so CanExecute is read at open time.
+class MenuBarItem : public Widget {
+public:
+    void OnPaint(PaintCtx&, const ThemePalette&) override {}
+    Size Measure(const Size& available) override;
+
+    // RETURNED BY VALUE, deliberately. Returning `const std::wstring&` from a
+    // subclass whose title lives in a property slot means binding a reference to a
+    // temporary converted string -- a dangling reference the moment the expression
+    // ends. It survived long enough to be measured once and crashed on the next
+    // pass, which is exactly the kind of bug that looks like "layout is broken".
+    virtual std::wstring MenuTitle() const = 0;
+    // Builds the menu content. Called once per open, so command enabled state is
+    // current and a command created after load still appears.
+    virtual std::vector<struct PopupMenuItem> BuildItems() = 0;
+};
+
+// A concrete menu container used in markup:
+//
+//   <MenuBarItem Title="File">
+//     <MenuFlyout>
+//       <MenuFlyoutItem Text="New" Hint="Ctrl+N" Command="{Binding NewCommand}"/>
+//       <MenuFlyoutSeparator/>
+//       <MenuFlyoutSubItem Text="Export"> ... </MenuFlyoutSubItem>
+//     </MenuFlyout>
+//   </MenuBarItem>
+//
+// The <MenuFlyout> level exists because it is the WinUI shape authors already
+// know, and because it gives a place for a future MenuFlyout placement property.
+class MenuFlyoutItem;
+class MenuFlyoutSeparator;
+class MenuFlyoutSubItem;
+
+class MenuFlyout : public Widget {
+public:
+    void OnPaint(PaintCtx&, const ThemePalette&) override {}
+    Size Measure(const Size& available) override;
+    std::vector<PopupMenuItem> BuildItems();
+};
+
+class MenuBarItemImpl final : public MenuBarItem {
+public:
+    // By value: see MenuBarItem::MenuTitle. Title() returns a slot-decoded
+    // temporary, so returning a reference to it would dangle.
+    std::wstring MenuTitle() const override { return Title(); }
+    std::wstring Title() const { return Get<std::wstring>(SlotOf("Title")); }
+    std::vector<PopupMenuItem> BuildItems() override;
+};
+
+// A single clickable command row.
+class MenuFlyoutItem : public Widget {
+public:
+    void OnPaint(PaintCtx&, const ThemePalette&) override {}
+    Size Measure(const Size& available) override;
+    PopupMenuItem Build();
+};
+
+class MenuFlyoutSeparator : public Widget {
+public:
+    void OnPaint(PaintCtx&, const ThemePalette&) override {}
+    Size Measure(const Size& available) override;
+};
+
+class MenuFlyoutSubItem : public Widget {
+public:
+    void OnPaint(PaintCtx&, const ThemePalette&) override {}
+    Size Measure(const Size& available) override;
+    PopupMenuItem Build();
+};
+
+// ---------------------------------------------------------------------------
+// CommandBar / AppBarButton
+//
+// A horizontal row of icon buttons. Overflow is the reason this is not just a
+// StackPanel: when the window narrows, the trailing buttons collect behind a
+// single "..." that opens them as a menu. That behaviour is the part with rules
+// (which buttons collapse, what happens when even "..." does not fit), so it is
+// a control rather than a layout the sample arranges by hand.
+// ---------------------------------------------------------------------------
+class CommandBar : public Widget {
+public:
+    CommandBar();
+    ~CommandBar() override;
+
+    Size Measure(const Size& available) override;
+    void Arrange(const Rect& finalRect) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    void OnPointerMove(const Point& local) override;
+
+    bool IsOverflowing() const { return overflow_ > 0; }
+    // How many trailing buttons are hidden behind the overflow button.
+    int OverflowCount() const { return overflow_; }
+    Rect ButtonBounds(size_t index) const;
+    Rect OverflowBounds() const;
+
+    // Test/automation hook: opens the overflow menu.
+    void OpenOverflow();
+
+private:
+    // Buttons are the CommandBar's child AppBarButtons plus separators. Widths are
+    // resolved in one pass, exactly like the tab strip, so paint and hit testing
+    // cannot disagree.
+    void UpdateLayoutOfButtons();
+    std::vector<WidgetPtr> Buttons() const;
+    float ButtonWidth(const Widget& button) const;
+
+    std::vector<float> widths_;
+    float naturalWidth_ = 0.0f;
+    int overflow_ = 0;
+    std::unique_ptr<OverlayLayer> ownedLayer_;
+    // See MenuBar::RetireLayer: a layer that closed itself is kept alive one more
+    // beat so its own stack frame can unwind safely.
+    std::unique_ptr<OverlayLayer> retiredLayer_;
+};
+
+// One toolbar button: glyph + optional label. Reports itself through Command, so
+// a toolbar and a menu item can drive the same ViewModel action.
+class AppBarButton : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool Focusable() const override { return true; }
+    bool OnKeyDown(int vk) override;
+
+    void Invoke();
+    // What the button looks like in an overflow menu.
+    PopupMenuItem BuildItem();
+    float ToolbarWidth() const;
+    bool IsSeparator() const;
+};
+
+// ---------------------------------------------------------------------------
+// ContentDialog
+//
+// Declarative modal. The element supplies the text and the button captions, and
+// publishes the chosen result through a bindable `Result` slot, so a ViewModel
+// binds to it exactly as it binds to SelectedIndex on a TabView.
+//
+// Shown by the host when `IsOpen` becomes true; the host owns the overlay so a
+// dialog declared inside a scroller still covers the window.
+// ---------------------------------------------------------------------------
+class ContentDialog : public Widget {
+public:
+    ContentDialog();
+    ~ContentDialog() override;
+
+    void OnPaint(PaintCtx&, const ThemePalette&) override {}
+    Size Measure(const Size& available) override;
+    void OnSlotChanged(int slot, const Value& value) override;
+
+    bool IsOpen() const { return open_; }
+    void Show();
+    void Close(int result);
+    // The chosen button's Result, published for binding.
+    int ResultValue() const { return result_; }
+
+    static constexpr int ResultNone = -100;
+
+private:
+    bool open_ = false;
+    int result_ = ResultNone;
+    int slotIsOpen_ = -1;
+    int slotResult_ = -1;
+    int slotPrimary_ = -1;
+    int slotSecondary_ = -1;
+    std::unique_ptr<OverlayLayer> ownedLayer_;
+    // See MenuBar::RetireLayer: a layer that closed itself is kept alive one more
+    // beat so its own stack frame can unwind safely.
+    std::unique_ptr<OverlayLayer> retiredLayer_;
 };
 
 } // namespace wui

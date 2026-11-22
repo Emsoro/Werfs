@@ -24,6 +24,7 @@
 #include "D2DRender.h"
 #include "Diagnostics.h"
 #include "Mvvm.h"
+#include "Overlay.h"
 #include "Resources.h"
 #include "Types.h"
 #include "Waml.h"
@@ -51,6 +52,14 @@ struct AppState {
     Widget* focused = nullptr;
     ThemeKind theme = ThemeKind::Light;
     bool mouseTracking = false;
+    // An overlay (a menu, a dialog) owns the pointer between these two events.
+    // Tracked here rather than inferred, because a press on a menu item must not
+    // deliver its release to whatever is now underneath it.
+    bool overlayCapture = false;
+    // Modifier state for key dispatch. The framework keeps no keyboard state: it
+    // is the host's, and passing it in is what lets Ctrl+S reach a shortcut table
+    // without every control having to track the keyboard globally.
+    int modifiers = 0;
     // DIP scale factor (dpi / 96). Layout and hit testing run in DIPs; window
     // messages carry physical pixels, so every coordinate crosses this scale.
     float scale = 1.0f;
@@ -180,6 +189,76 @@ Widget* Hit(Widget* root, int x, int y) {
     return root ? root->HitTest(LocalPoint(root, x, y)) : nullptr;
 }
 
+// The overlay currently showing, sized to the window so it can place itself.
+OverlayLayer* CurrentOverlay() {
+    if (!g.root) return nullptr;
+    OverlayLayer* layer = g.root->Overlay();
+    if (!layer) return nullptr;
+    if (!layer->Active()) {
+        // The layer closed itself (an item was chosen, Escape, click outside).
+        // Leaving the dangling pointer installed would paint a dead layer.
+        g.root->SetOverlay(nullptr);
+        return nullptr;
+    }
+    return layer;
+}
+
+// The overlay must be told the window size before it can decide whether it fits;
+// a menu anchored near the right edge flips left only if it knows the width.
+void PrepareOverlay(OverlayLayer* layer) {
+    if (!layer || !g.root) return;
+    const Rect rootBounds = g.root->Bounds();
+    const Size available{rootBounds.w, rootBounds.h};
+    PrepareMenuLayerSizing(layer, available);
+    PrepareDialogLayerSizing(layer, available);
+}
+
+int CurrentModifiers() {
+    int mods = 0;
+    if (GetKeyState(VK_CONTROL) & 0x8000) mods |= ModCtrl;
+    if (GetKeyState(VK_SHIFT) & 0x8000) mods |= ModShift;
+    if (GetKeyState(VK_MENU) & 0x8000) mods |= ModAlt;
+    return mods;
+}
+
+// Application-wide shortcuts, resolved once at startup. Parsing at startup rather
+// than per keypress means a malformed spec is reported once and then ignored,
+// instead of being silently re-parsed on every keystroke.
+struct AcceleratorEntry {
+    int vk = 0;
+    int modifiers = 0;
+    RefPtr command;
+    std::wstring spec;
+};
+std::vector<AcceleratorEntry> g_accelerators;
+
+void BuildAccelerators(const HostOptions& options) {
+    g_accelerators.clear();
+    for (const auto& pair : options.accelerators) {
+        AcceleratorEntry entry;
+        if (!ParseAccelerator(WideToUtf8(pair.first), entry.vk, entry.modifiers)) {
+            OutputDebugStringW((L"[wui] accelerator '" + pair.first + L"' is not valid\n").c_str());
+            continue;
+        }
+        entry.command = pair.second;
+        entry.spec = pair.first;
+        g_accelerators.push_back(std::move(entry));
+    }
+}
+
+// Returns true when a shortcut ran, so the message is consumed.
+bool HandleAccelerator(HWND hwnd, int vk, int modifiers) {
+    for (const auto& entry : g_accelerators) {
+        if (entry.vk != vk || entry.modifiers != modifiers) continue;
+        auto* command = dynamic_cast<ICommand*>(entry.command.get());
+        if (!command || !command->CanExecute()) return true; // consumed, no-op
+        command->Execute();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return true;
+    }
+    return false;
+}
+
 void UpdateHover(HWND hwnd, Widget* target, int x, int y) {
     if (g.hovered == target) {
         if (target && target->Hovered()) target->OnPointerMove(LocalPoint(target, x, y));
@@ -257,6 +336,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             TrackMouseEvent(&tme);
             g.mouseTracking = true;
         }
+        // While a layer has the pointer, hover belongs to it: the document must
+        // not light up its buttons underneath an open menu.
+        if (OverlayLayer* layer = CurrentOverlay()) {
+            PrepareOverlay(layer);
+            layer->OnPointerMove(LocalPoint(nullptr, x, y));
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         UpdateHover(hwnd, Hit(g.root.get(), x, y), x, y);
         return 0;
     }
@@ -283,6 +370,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDOWN: {
         const int x = GET_X_LPARAM(lp);
         const int y = GET_Y_LPARAM(lp);
+        // The overlay gets the press FIRST. A menu sits on top, so a click on its
+        // items must never reach the control that happens to be underneath -- and
+        // a click outside it dismisses the menu instead of activating a button.
+        if (OverlayLayer* layer = CurrentOverlay()) {
+            PrepareOverlay(layer);
+            const bool consumed = layer->OnPointerDown(LocalPoint(nullptr, x, y));
+            g.overlayCapture = layer->Active();
+            if (g.overlayCapture) SetCapture(hwnd);
+            else ReleaseCapture();
+            if (consumed) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
+
         SetFocus(nullptr);
         Widget* target = Hit(g.root.get(), x, y);
         // Focus the nearest focusable ancestor.
@@ -304,9 +406,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_LBUTTONUP: {
-        ReleaseCapture();
         const int x = GET_X_LPARAM(lp);
         const int y = GET_Y_LPARAM(lp);
+        // The release goes to whoever got the press. Not to whatever is under the
+        // cursor NOW: choosing a menu item removes the layer before the release
+        // arrives, and re-hit-testing would then click the page underneath.
+        if (g.overlayCapture) {
+            g.overlayCapture = false;
+            ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        ReleaseCapture();
         if (g.pressed) {
             g.pressed->OnPointerUp(g.pressed->ToLocal(LocalPoint(g.pressed, x, y)));
             g.pressed = nullptr;
@@ -315,12 +426,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    case WM_KEYDOWN:
+    case WM_KEYDOWN: {
+        g.modifiers = CurrentModifiers();
+        if (OverlayLayer* layer = CurrentOverlay()) {
+            if (layer->OnKeyDown(static_cast<int>(wp), g.modifiers)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
+        // The focused control gets the key first, so Ctrl+A inside a TextBox is
+        // text selection rather than a menu shortcut. Only an unhandled key falls
+        // through to the accelerator table.
         if (g.focused && g.focused->OnKeyDown(static_cast<int>(wp))) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        if (HandleAccelerator(hwnd, static_cast<int>(wp), g.modifiers)) return 0;
         return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+
+    case WM_KEYUP:
+        g.modifiers = CurrentModifiers();
+        return 0;
 
     case WM_CHAR:
         if (g.focused && g.focused->OnChar(static_cast<wchar_t>(wp))) {
@@ -368,6 +495,7 @@ int RunInternal(HINSTANCE instance, const HostOptions& options, std::shared_ptr<
 
     g_options = options;
     g.vm = std::move(vm);
+    BuildAccelerators(g_options);
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

@@ -40,6 +40,20 @@ enum VirtualKey : int {
     KeyDelete = 0x2E,
 };
 
+// Modifier bits for key dispatch. Deliberately not the Win32 MOD_* values: the
+// core layer must not require windows.h, and the host converts on the way in.
+constexpr int ModCtrl = 1 << 0;
+constexpr int ModShift = 1 << 1;
+constexpr int ModAlt = 1 << 2;
+
+// Parses a WAML accelerator ("Ctrl+S", "Ctrl+Shift+S", "Alt+F4", "F5") into a
+// virtual-key code and the modifier mask above. Returns false when the text is
+// not an accelerator, so a typo is a load-time diagnostic rather than a
+// shortcut that silently never fires.
+bool ParseAccelerator(std::string_view text, int& vk, int& modifiers);
+// Human-readable form used by the menu painter: "Ctrl+S".
+std::wstring FormatAccelerator(int vk, int modifiers);
+
 // ---------------------------------------------------------------------------
 // Binding description types live in core so that property descriptors can
 // declare their default mode without depending on the MVVM layer.
@@ -204,6 +218,41 @@ public:
                           int weight, TextAlign align) = 0;
     virtual void PushClip(const Rect& r) = 0;
     virtual void PopClip() = 0;
+};
+
+// ---------------------------------------------------------------------------
+// Overlay layer: everything that draws ABOVE the document instead of inside it.
+//
+// Why this cannot live in the child tree: a menu opens over whatever happens to
+// be there, and a ScrollViewer clips its subtree. Parenting an overlay to the
+// control that opened it makes it inherit that clip and that scroll offset --
+// the classic "the dropdown is cut off at the panel edge" defect.
+//
+// So an overlay is hosted on the ROOT, painted after the whole tree, and keeps
+// its geometry in window space. A widget that wants to show one calls
+// Widget::SetOverlay().
+//
+// One at a time. Stacking (a submenu inside, a flyout over a dialog) needs a
+// stack and real focus rules; the menu control draws its own submenus inside its
+// single layer instead, which is enough until something actually needs nesting.
+// ---------------------------------------------------------------------------
+class OverlayLayer {
+public:
+    virtual ~OverlayLayer() = default;
+    virtual Rect Bounds() const = 0;
+    virtual void Paint(PaintCtx& ctx, const ThemePalette& palette) = 0;
+    // Pointer contract, in the same window space Bounds() reports. A press
+    // outside a light-dismiss layer consumes it by closing, and returns true so
+    // the host stops dispatching to the document underneath.
+    virtual bool OnPointerDown(const Point& p) = 0;
+    virtual void OnPointerUp(const Point& p) = 0;
+    virtual void OnPointerMove(const Point& p) {}
+    // Returns true when the key was consumed.
+    virtual bool OnKeyDown(int vk, int modifiers) = 0;
+    // True while the layer still wants pointer capture.
+    virtual bool Active() const = 0;
+    // False for a modal: presses outside are swallowed rather than dismissing it.
+    virtual bool LightDismiss() const { return true; }
 };
 
 // ---------------------------------------------------------------------------

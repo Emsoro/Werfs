@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.6.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.7.0.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -40,18 +40,22 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
 | **主题** | Light/Dark 双主题，13 个语义 token |
+| **应用外壳** | 菜单栏（含二级子菜单）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
+| **文件对话框** | 打开 / 另存为 / 选文件夹，`IFileDialogService` 可注入假实现供无窗口测试 |
+| **快捷键** | `Ctrl+N` `Ctrl+O` `Ctrl+S` `Ctrl+W`；菜单上显示的提示与真正生效的按键是同一个字符串 |
 | **单文件分发** | 图标、清单、版本信息、WAML 全部打包进 exe |
 
 ### 内置控件
 
-按类别分组（共 15 个控件 + `DataTemplate`）：
+按类别分组（共 26 个控件 + `DataTemplate`）：
 
 | 类别 | 控件 |
 |---|---|
 | 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
-| 文本 | `TextBlock`（支持 `TextWrapping="Wrap"`）· `TextBox` |
+| 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（多行折行、填满列宽） |
 | 输入 | `Button` · `CheckBox` |
-| 集合 | `ListBox` + `DataTemplate` |
+| 集合 | `ListBox` + `DataTemplate` · `TabView`（切换/关闭/新建） |
+| 外壳 | `MenuBar` · `MenuBarItem` · `MenuFlyout` · `MenuFlyoutItem` · `MenuFlyoutSubItem` · `MenuFlyoutSeparator` · `CommandBar` · `AppBarButton` · `AppBarSeparator` · `ContentDialog` |
 
 面板放置属性写在**子元素**上（本框架无附加属性语法）：
 
@@ -84,12 +88,13 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | 目标 | 产物 | 说明 |
 |---|---|---|
 | *（无参数）* | 全部示例 | **默认**：等价于 `samples` |
-| `samples` | `waml_basic.exe` `waml_list.exe` | 构建所有示例（release） |
+| `samples` | `waml_basic.exe` `waml_list.exe` `waml_editor.exe` | 构建所有示例（release） |
 | `basic` | `waml_basic.exe` | 只构基础控件示例 |
 | `list` | `waml_list.exe` | 只构集合与布局示例 |
+| `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 99 个用例 |
+| `tests` | `waml_tests.exe` | 111 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -148,22 +153,21 @@ CMake 仍然可用（`CMakeLists.txt` 已同步），适合常规开发机；本
 
 ```text
 framework/src/
-    core/       Widget 树、布局、失效传播、控件、值类型、主题
+    core/       Widget 树、布局、失效传播、控件、值类型、主题、浮层（Overlay）
     mvvm/       ObservableProperty / ObservableList / RelayCommand / Binding
     waml/       Lexer、Parser、Validator、诊断、实例化
-    platform/   Resources：资源与文件加载、VERSIONINFO、路径解析
+    platform/   Resources（资源/版本/路径）、FileDialog（打开/保存/选文件夹）
     render/     SoftwareRender（测试用）、D2DRender（真实后端）
 
 samples/                ← 示例，单向依赖框架
-    shared/                共享宿主：窗口、D2D、DPI、输入分发（不含任何页面逻辑）
+    shared/                共享宿主：窗口、D2D、DPI、输入分发、浮层分派
     basic/                 **已实现** 基础控件：TextBlock/Button/TextBox/CheckBox/Border
-    list/                  **已实现** 集合与布局：ListBox + Grid/WrapPanel/Canvas/VariableSizedWrapGrid/Viewbox/Expander
-    binding/               （规划 3）四种绑定模式对照
-    theming/               （规划 4）Light/Dark 主题
-    usercontrol/           （规划 5）父子组件、两个独立数据源
-    files/                 （规划 6）打开/保存/选文件夹   ← 需先补 IFileDialogService
-    editor/                （规划 7）菜单/工具栏/多标签/未保存提示 ← 需先补浮层与模态
-    animation/             （规划 8）隐式过渡与缓动        ← 需先补帧时钟
+    list/                  **已实现** 集合与布局：ListBox + Grid/WrapPanel/Canvas/VariableSizedWrapGrid/Viewbox/Expander/TabView
+    editor/                **已实现** 集成：菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框
+    binding/               （规划）四种绑定模式对照
+    theming/               （规划）Light/Dark 主题
+    usercontrol/           （规划）父子组件、两个独立数据源   ← 需先补 DataContext 可绑定
+    animation/             （规划）隐式过渡与缓动            ← 需先补帧时钟
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
@@ -181,19 +185,18 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 顺序 | 示例 | 内容 | 状态 |
 |---|---|---|---|
 | 1 | `basic` | **基础控件**：TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | **已实现** |
-| 2 | `list` | **集合 + 布局**：ListBox/DataTemplate、Grid、WrapPanel、VariableSizedWrapGrid、Canvas、Viewbox、Expander | **已实现** |
-| 3 | `binding` | 四种绑定模式并排对照 | 规划中 |
-| 4 | `theming` | Light/Dark 切换与 token | 规划中 |
-| 5 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
-| 6 | `files` | **打开文件 / 另存为 / 选文件夹**，验证系统对话框接入 | 规划中，需先补 `IFileDialogService` |
-| 7 | `editor` | **菜单 + 工具栏 + 多标签 + 未保存提示**，验证浮层与模态 | 规划中，需先补浮层与模态 |
-| 8 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
+| 2 | `list` | **集合 + 布局**：ListBox/DataTemplate、Grid、WrapPanel、VariableSizedWrapGrid、Canvas、Viewbox、Expander、TabView | **已实现** |
+| 3 | `editor` | **集成**：菜单栏 + 工具栏 + 多标签 + 未保存提示 + 文件对话框 | **已实现** |
+| 4 | `binding` | 四种绑定模式并排对照 | 规划中 |
+| 5 | `theming` | Light/Dark 切换与 token | 规划中 |
+| 6 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
+| 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
 
-两个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（把六个面板装进一个真实页面，也确实因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷）。
+三个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口）。
 
-`usercontrol` 排在最后，因为它依赖的能力（`DataContext` 可绑定）目前还不存在；放在末位可以让前面几个示例先落地，而不是一开始就卡在设计决策上。
+> `files` 示例**已并入 `editor`**：它原本的四个区块（打开 / 另存为 / 选文件夹 / 读取预览）里，前三个和第四个都是编辑器的正常功能；单独做一个示例只会变成「按钮 → 弹框 → 显示路径」的纯演示，没有真实用途来暴露接线错误。
 
-所有示例共用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发），示例本身只提供 WAML、ViewModel 和标题。加一个新示例 = 新建目录 + 三件套 + 在 `build.ps1` 的注册表加一行。详细规划见 `CODE_PLAN.md` §10a。
+所有示例共用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发 + 浮层分派），示例本身只提供 WAML、ViewModel 和标题。加一个新示例 = 新建目录 + 三件套 + 在 `build.ps1` 的注册表加一行。详细规划见 `CODE_PLAN.md` §10a。
 
 ### 控件覆盖范围
 
@@ -202,10 +205,11 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 档位 | 数量 | 内容 | 何时做 |
 |---|---|---|---|
 | **P0 必做** | 23（**7 已完成**） | ✅ `Grid` `Canvas` `WrapPanel` `VariableSizedWrapGrid` `Viewbox` `Expander` ／ 待做 `RelativePanel` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 进行中 |
+| **已提前完成** | 12 | `TabView`（原 P2）· `MenuBar` `MenuBarItem` `MenuFlyout` `MenuFlyoutItem` `MenuFlyoutSubItem` `MenuFlyoutSeparator` `CommandBar` `AppBarButton` `AppBarSeparator` `ContentDialog`（原 P1，浮层完成后一并落地）· 以及 `OverlayLayer` 这个非控件能力 | 已实现 |
 | P1 常用增强 | 16 | `ComboBox` `Popup` `Flyout` `ToolTip` `ContentDialog` `MenuFlyout` `CommandBar` `AutoSuggestBox` 等 | 浮层子系统完成后 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **15 个控件可用**（原有 9 个 + 本轮 6 个布局面板）。P0 完成后共 32 个。六项框架改造里已完成三项：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock` 文字换行；待做 `RelativePanel` 附加属性、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
+目前 **26 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件，其中 `TabView` 属集合类）。P0 完成后共 42 个。框架改造里已完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**；待做 `RelativePanel` 附加属性、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
 
 ---
 
@@ -213,15 +217,79 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 目标 | 用途 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` | 真实 Win32 窗口 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 99 个单元/集成用例 |
-| `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换） |
+| `waml_tests.exe` | 111 个单元/集成用例 |
+| `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
 | `waml_bench.exe` | 性能基线 |
 
 所有工具遵循同一个交付开关：**debug 读 `samples/*/*.waml`，release 读 exe 内嵌资源**；显式传路径时以路径为准。
+
+### 编辑器示例怎么玩
+
+`waml_editor.exe` 是唯一「像真实程序」的示例，可以直接上手：
+
+| 操作 | 会发生什么 |
+|---|---|
+| 点标签 | 切换文档，编辑区换成那篇文本 |
+| 点标签上的 `×` | 干净文档**直接关**；改过的文档弹「保存 / 不保存 / 取消」 |
+| 在提示里选「取消」 | **标签还在，内容一字未丢** |
+| 点 `+` 或 File ▸ New | 新建 `<Untitled N>` 并立刻激活 |
+| 在编辑区打字 | 标签出现 `•`（脏标记），状态栏变 `modified`；删掉那个字又变回 `saved` |
+| File ▸ Open | 弹真实文件对话框，选中的文本文件成为新标签 |
+| File ▸ Save as | 弹真实保存对话框，写入磁盘并把当前内容设为「干净基准」 |
+| 缩窄窗口 | 工具栏尾部按钮收进 `⋯`，点 `⋯` 展开成菜单 |
+| `Ctrl+N/O/S/W` | 新建 / 打开 / 保存 / 关闭当前标签 |
+
+菜单里的 **Save 在没有文档时是灰的** —— 打开 File 菜单按下「无文档」状态看一眼，就能确认菜单项启用状态是**打开菜单时**读的，不是加载界面时写死的。
+
+### 写法示例：菜单 / 工具栏 / 模态
+
+```xml
+<Page Background="AppBackground">
+  <MenuBar Height="34" Background="CardBackground">
+    <MenuBarItem Title="File">
+      <MenuFlyout>
+        <MenuFlyoutItem Text="New"  Hint="Ctrl+N" Command="{Binding NewCommand}"/>
+        <MenuFlyoutSeparator/>
+        <!-- 启用状态在打开菜单时按 CanExecute 求值，无文档即为灰 -->
+        <MenuFlyoutItem Text="Save" Hint="Ctrl+S" Command="{Binding SaveCommand}"/>
+        <MenuFlyoutSubItem Text="Close">
+          <MenuFlyout>
+            <MenuFlyoutItem Text="Close tab" Command="{Binding CloseTabCommand}"/>
+            <MenuFlyoutItem Text="Reopen last closed" Command="{Binding ReopenCommand}"/>
+          </MenuFlyout>
+        </MenuFlyoutSubItem>
+      </MenuFlyout>
+    </MenuBarItem>
+  </MenuBar>
+
+  <CommandBar Height="44">
+    <AppBarButton Icon="✚" Label="New"  Command="{Binding NewCommand}"/>
+    <AppBarButton Icon="▼" Label="Save" Command="{Binding SaveCommand}"/>
+  </CommandBar>
+
+  <TabView ItemsSource="{Binding Documents}"
+           SelectedIndex="{Binding ActiveIndex, Mode=TwoWay}"
+           CloseRequested="{Binding CloseRequested, Mode=TwoWay}"
+           AddCommand="{Binding NewCommand}"/>
+
+  <!-- 声明一次，按需显示：确实不进布局流，是挂在根节点上的浮层 -->
+  <ContentDialog Title="{Binding PromptTitle}" Message="{Binding PromptMessage}"
+                 IsOpen="{Binding PromptOpen, Mode=TwoWay}"
+                 Result="{Binding PromptResult, Mode=TwoWay}"
+                 PrimaryButtonText="Save" SecondaryButtonText="Don't save"
+                 CloseButtonText="Cancel"/>
+</Page>
+```
+
+三条约束值得记住：
+
+- **`CloseRequested` 必须是 `TwoWay`**。`OneWay` 绑定会忽略目标侧写入，控件发布的关闭请求会凭空消失（`CODE_PLAN.md` §7.16）。
+- **浮层不进布局**。`MenuBar`/`CommandBar` 占位，但它们弹出的菜单、工具栏的 `⋯`、`ContentDialog` 都画在根节点上，所以放在 `ScrollViewer` 里也不会被裁掉。
+- **对话框的 `Enter` 落在主按钮、`Esc` 只落到「取消」**。丢弃数据的按钮永远不会成为默认按钮。
 
 ---
 
@@ -269,11 +337,12 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 
 ## 已知边界
 
-- **无样式系统**：没有 `Style`/`Setter`/`VisualState`，外观逐属性写。
-- **无 Grid**：只有线性的 `StackPanel`，复杂版面需嵌套模拟。
-- **无动画**：主题切换是瞬时的。
-- **`ListBox` 无选中**：只渲染列表，无 `SelectedIndex`。
+- **无样式系统**：没有 `Style`/`Setter`/`VisualState`，外观逐属性写。`editor` 里的每个 `AppBarButton` 都重复三个属性，这正是样式系统该压缩的地方。
+- **无动画**：主题切换、展开、菜单弹出都是瞬时的。
 - **`DataContext` 不可绑定**：`{Binding ..., Source=...}` 在 v0.5 被明确拒绝，无法在 WAML 里给子树换数据源——这意味着**组件复用目前只能靠复制 WAML**。这是实现 `usercontrol` 示例的前置阻塞项。
+- **`TextBox` 无 IME / 选区 / 剪贴板**：只有插入、退格、删除、方向键、Home/End、回车。**中文输入不可用** —— 对一个文本编辑器示例来说这是最明显的短板，见 `CODE_PLAN.md` R10。
+- **浮层只有一层**：菜单能在自己内部递归画子菜单，但「浮层里再开浮层」（例如对话框里的下拉框）不支持。
+- **关窗口不拦截**：关闭整个窗口时不检查未保存文档。单标签的提示流程已完整，批量流程见 `CODE_PLAN.md` §10c.5。
 - **不虚拟化**：见性能基线。
 
 这些都在路线图里，见 `CODE_PLAN.md`。
