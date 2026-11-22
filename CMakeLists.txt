@@ -9,7 +9,7 @@
 #   bench/       framework benchmarks.
 #   tools/       framework harnesses (snapshot / interact / probe / dpishot).
 #
-# NOTE: build.bat is the primary build path in this environment; CMake is kept
+# NOTE: build.ps1 is the primary build path in this environment; CMake is kept
 # in sync for a normal developer machine. See README.md for why.
 cmake_minimum_required(VERSION 3.25)
 project(WamlSpike LANGUAGES CXX)

@@ -50,25 +50,73 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 
 ## 构建
 
-需要 **Visual Studio 2022**（含 C++ 工作负载）。
+需要 **PowerShell 5.1+** 和 **Visual Studio 2022**（含 C++ 工作负载）。脚本会自动定位 VS（优先 `vswhere`，回退到常规安装路径），无需手动打开 Developer PowerShell。
 
-```bat
-build.bat release        :: 优化构建，WAML 打包进 exe
-build.bat debug          :: 调试构建，WAML 运行时读磁盘文件
-build.bat all            :: 构建全部目标
-build.bat tests          :: 只构建测试
+```powershell
+pwsh -File build.ps1              # 优化构建，WAML 打包进 exe（默认 release）
+pwsh -File build.ps1 debug        # 调试构建，WAML 运行时读磁盘文件
+pwsh -File build.ps1 all          # 构建全部目标
+pwsh -File build.ps1 tests        # 只构建测试
+pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 ```
 
-产物默认在 `build\release\`。要输出到别处：
+### 目标（Target）
 
-```bat
-set WUI_OUT=D:\dist
-build.bat release
+| 目标 | 产物 | 说明 |
+|---|---|---|
+| `release` | `waml_demo.exe` | 优化构建，默认 |
+| `debug` | `waml_demo.exe` | 符号 + WAML 读磁盘，改界面免重编 |
+| `all` | 全部 | 以下全部都建（release） |
+| `tests` | `waml_tests.exe` | 65 个用例 |
+| `bench` | `waml_bench.exe` | 性能基线 |
+| `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
+| `interact` | `waml_interact.exe` | 无窗口输入驱动 |
+| `probe` | `waml_probe.exe` | 资源门禁，**构建后自动运行** |
+| `probedbg` | 同上 | 调试构建的门禁 |
+| `res` | `.res` | 只编译资源 |
+| `icon` | `app.ico` | 重新生成图标 |
+| `dpishot` | `waml_dpishot.exe` | DPI 截图工具 |
+
+### 输出目录
+
+产物默认在 `build\<config>\`。要输出到别处：
+
+```powershell
+pwsh -File build.ps1 all -OutDir D:\dist
 ```
 
-> **关于输出目录**：由自动化/沙箱会话创建的可执行文件可能带上一条未解析 SID 的权限项（`S-1-4-*`），会让 SmartScreen 每次启动都弹「Windows 已保护你的电脑」，即使二进制完全正常且与手动构建的逐字节相同。把产物输出到工程外的普通目录可规避。诊断：`icacls 目标.exe | findstr /i "S-1-4"`。
+也可以用环境变量（兼容旧用法，`-OutDir` 优先）：
 
-CMake 也可用（`CMakeLists.txt` 已同步），但本仓库以 `build.bat` 为主路径 —— 理由见下方「构建说明」。
+```powershell
+$env:WUI_OUT = 'D:\dist'
+pwsh -File build.ps1 all
+```
+
+> **为什么建议输出到工程外**：由自动化/沙箱会话创建的可执行文件可能带上一条未解析 SID 的权限项（`S-1-4-*`），会让 SmartScreen 每次启动都弹「Windows 已保护你的电脑」，即使二进制完全正常、且与手动构建的逐字节相同。诊断：`icacls 目标.exe | findstr /i "S-1-4"`。
+
+### 版本号
+
+单一来源，CI 可用同名环境变量覆盖：
+
+```powershell
+$env:WUI_VERSION_MINOR = '6'
+pwsh -File build.ps1 all
+```
+
+也可直接改 `samples/gallery/resources/Resource.h` 的默认值。
+
+### 为什么是 PowerShell 直接驱动编译器
+
+脚本直接调用 `cl.exe` / `link.exe` / `rc.exe`，不经过 CMake —— CMake 与 Ninja 都通过管道捕获子进程 stdout 来解析诊断，在受限环境下该管道无法创建，导致 configure **挂起而非报错**。直接调用工具链让子进程继承 stdio，受限与完全权限下都能工作。
+
+从 cmd 迁到 PowerShell 还顺带消除了两个曾耗费大量排查时间的缺陷：
+
+- `%~dp0` 末尾的反斜杠让 `/I"%~dp0"` 吞掉下一个参数，报 `D8003: missing source filename`；
+- `/Fo"dir\"` 同样让尾部反斜杠转义引号，`.obj` 落到当前目录而非目标目录。
+
+现在参数以数组传递，不再经过任何命令行解析。
+
+CMake 仍然可用（`CMakeLists.txt` 已同步），适合常规开发机；本仓库以 `build.ps1` 为主路径。
 
 ---
 
@@ -95,7 +143,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 关键约束：`framework/` 里**没有**任何 `Gallery.waml`、`GalleryVm` 或 `IDR_WAML_*` 的引用。资源 id 属于示例，定义在 `samples/gallery/resources/Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
 
-新增示例：复制 `samples/gallery/` 改名、改 `Resource.h` 里的 id、在 `build.bat` 加一段目标即可，框架侧零改动。
+新增示例：复制 `samples/gallery/` 改名、改 `Resource.h` 里的 id、在 `build.ps1` 加一个目标函数即可，框架侧零改动。
 
 ---
 
@@ -152,9 +200,9 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 
 ## 构建说明
 
-本项目用 `build.bat` 直接驱动 `cl.exe`/`link.exe`/`rc.exe`，而不是 CMake：CMake 与 Ninja 都通过管道捕获子进程 stdout 来解析诊断，在某些受限环境下该管道无法创建，导致 configure 挂起。这是**环境限制**，不是设计结论 —— 正式环境请用 CMake（`CMakeLists.txt` 已保留并同步）。
+本项目用 `build.ps1` 直接驱动 `cl.exe`/`link.exe`/`rc.exe`，而不是 CMake：CMake 与 Ninja 都通过管道捕获子进程 stdout 来解析诊断，在某些受限环境下该管道无法创建，导致 configure 挂起。这是**环境限制**，不是设计结论 —— 常规开发机请用 CMake（`CMakeLists.txt` 已保留并同步）。详见上文「为什么是 PowerShell 直接驱动编译器」。
 
-版本号单一来源：`build.bat` 的 `WUI_VERSION_*` → `resources/Resource.h` → `app.rc` → 回读到窗口标题。
+版本号单一来源：`build.ps1` 的 `WUI_VERSION_*` → `resources/Resource.h` → `app.rc` → 回读到窗口标题。
 
 ---
 

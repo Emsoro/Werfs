@@ -35,12 +35,12 @@ samples/gallery/       示例：单向依赖框架
     resources/           app.rc、Resource.h、app.ico、app.manifest
 
 tests/  bench/  tools/ 框架级工具，不依赖示例
-build.bat  CMakeLists.txt
+build.ps1  CMakeLists.txt
 ```
 
 **铁律**：`framework/` 里**没有**任何 `Gallery.waml`、`GalleryVm` 或 `IDR_WAML_*` 的引用。资源 id 属于示例，定义在 `samples/gallery/resources/Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
 
-新增示例 = 复制 `samples/gallery/` 改名、改资源 id、在 `build.bat` 加一段目标即可，框架零改动。
+新增示例 = 复制 `samples/gallery/` 改名、改资源 id、在 `build.ps1` 加一个目标函数即可，框架零改动。
 
 ## 2. 能力清单
 
@@ -67,7 +67,7 @@ build.bat  CMakeLists.txt
 | `waml_probe.exe` | 资源与交付模式门禁 |
 | `waml_bench.exe` | 性能基线 |
 
-构建：`build.bat [release|debug|all|tests|bench|snapshot|interact|probe|icon|res|dpishot]`
+构建：`pwsh -File build.ps1 <target>`，target 见 README
 
 ---
 
@@ -530,6 +530,7 @@ GalleryVm
 | D7 | 用编译期开关切 debug/release 标记来源 | 运行时探测会让发布版静默读错文件 |
 | D8 | 资源类型用数字常量而非宏名 | 宏名会被 rc.exe 当字符串类型，静默失效 |
 | D9 | COM 按进程初始化，不按对象成对 | 否则第二个实例崩溃 |
+| D10 | 构建脚本用 PowerShell 而非 cmd 批处理 | 参数以数组传递，消除 `%~dp0`/`/Fo"dir\"` 尾部反斜杠吞参数与转义引号两类缺陷；`call :label` 的读取缓冲边界问题（曾导致 `all` 目标偶发「cannot find the batch label」）也随之消失 |
 
 ## 17. 风险登记
 
@@ -541,7 +542,6 @@ GalleryVm
 | R4 | 不虚拟化，列表 >500 项卡顿 | 大规模示例受限 | 文档明确上限；v1.1 虚拟化 |
 | R5 | 页面切换绑定泄漏 | 内存增长 | 切换时强制 detach + 测试 |
 | R6 | 代码片段与真实 WAML 漂移 | 文档失信 | 迭代 4.1 自动提取 |
-| R7 | cmd.exe 批处理 `call :label` 缓冲边界 | 构建偶发失败 | build.bat 已加 `rem` 占位并注明 |
 | R8 | 每控件 7.7 行注册样板 | 30 控件时约 230 行重复 | v0.6 引入聚合式 `PropList` |
 | R9 | 跨机器字体不一致 | 快照金样误报 | CI 固定或内嵌字体子集 |
 | R10 | IME 未实现 | 自绘 TextBox 无法输入中文 | 见 §18；需做垂直切片决策 |
@@ -604,7 +604,7 @@ GalleryVm
 ## B. 复现方式
 
 ```bat
-build.bat all
+pwsh -File build.ps1 all
 
 build\release\waml_tests.exe
 build\release\waml_interact.exe
@@ -617,7 +617,7 @@ build\release\waml_demo.exe --selftest   :: 写 selftest.log 并返回退出码
 
 ## C. 构建环境说明
 
-CMake/Ninja 在某些受限沙箱下**无法使用**：两者都通过管道捕获子进程 stdout 来解析诊断，而受限沙箱禁止创建该管道，导致 configure 挂起而非报错。`build.bat` 直接驱动 `cl.exe`/`link.exe`（子进程继承 stdio），在受限与完全权限下都可工作。正式环境仍应使用 CMake —— 这是**环境限制**，不是设计结论。
+CMake/Ninja 在某些受限沙箱下**无法使用**：两者都通过管道捕获子进程 stdout 来解析诊断，而受限沙箱禁止创建该管道，导致 configure 挂起而非报错。`build.ps1` 直接驱动 `cl.exe`/`link.exe`（子进程继承 stdio），在受限与完全权限下都可工作。常规开发机仍应使用 CMake —— 这是**环境限制**，不是设计结论。
 
 ## D. 代码规模
 

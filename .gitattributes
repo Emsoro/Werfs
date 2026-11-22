@@ -15,7 +15,14 @@
 *.lib   binary
 *.pdb   binary
 
-# Windows batch/cmd scripts: LF is what this repo builds with (build.bat has
-# been verified to work with LF). Pinned explicitly so no filter "fixes" it.
+# Windows batch/cmd scripts: LF is what this repo builds with (the old
+# build.bat was verified to work with LF). Pinned explicitly so no filter
+# "fixes" it.
 *.bat   text eol=lf
 *.cmd   text eol=lf
+
+# PowerShell: LF is fine. Windows PowerShell 5.1 and pwsh 7+ both parse LF
+# scripts correctly; a UTF-8 BOM is also unnecessary since the script is
+# ASCII-only. Pinned so a Windows editor cannot silently reintroduce CRLF.
+*.ps1   text eol=lf
+*.psm1  text eol=lf
