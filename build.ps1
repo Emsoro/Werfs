@@ -63,7 +63,8 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet('release', 'debug', 'all', 'tests', 'bench', 'snapshot',
-                 'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot')]
+                 'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
+                 'list', 'samples')]
     [string]$Target = 'release',
 
     [switch]$Clean,
@@ -78,7 +79,10 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Framework  = Join-Path $ProjectDir 'framework'
-$Sample     = Join-Path $ProjectDir 'samples\gallery'
+$SamplesRoot = Join-Path $ProjectDir 'samples'
+$Sample     = Join-Path $SamplesRoot 'gallery'
+$SharedSample = Join-Path $SamplesRoot 'shared'
+$SampleHostSource = Join-Path $SharedSample 'SampleHost.cpp'
 
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $ProjectDir 'build'
@@ -197,8 +201,7 @@ $Includes = @(
     (Join-Path $Framework 'src\waml')
     (Join-Path $Framework 'src\render')
     (Join-Path $Framework 'src\platform')
-    $Sample
-    (Join-Path $Sample 'resources')
+    (Join-Path $SamplesRoot 'shared')
     (Join-Path $ProjectDir 'tests')
 ) | ForEach-Object { "/I$_" }
 
@@ -279,14 +282,27 @@ function Build-Executable {
         [Parameter(Mandatory)][string]$ObjName,   # tests
         [Parameter(Mandatory)][string]$Config,    # release | debug
         [Parameter(Mandatory)][string[]]$Sources,
-        [string[]]$ExtraLink = @()
+        [string[]]$ExtraLink = @(),
+        # Which .res to embed. Defaults to the gallery's, because the framework
+        # tools (tests/bench/probe...) share it; a sample passes its own.
+        [string]$ResourceObj = $ResObj,
+        # Which manifest to embed. A sample has its own copy of the same file.
+        [string]$ManifestPath = $Manifest,
+        # Extra include directories. A sample needs its own directory and its
+        # own resources/ so its Resource.h (with its own payload ids) wins.
+        [string[]]$ExtraIncludes = @()
     )
 
     $flags = Get-ConfigFlags $Config
     $objDir = Join-Path $OutDir "$Config\$ObjName"
     New-Item -ItemType Directory -Force -Path $objDir | Out-Null
 
-    $compileArgs = $CommonCompile + $flags + @("/Fo$objDir\") + $Sources
+    $includeFlags = $ExtraIncludes | ForEach-Object { "/I$_" }
+    # Extra (sample-local) includes go FIRST: a sample's own Resource.h must win
+    # over the gallery's, since both define IDR_WAML_* with different ids.
+    $compileArgs = @('/nologo', '/c', '/std:c++20', '/EHsc', '/utf-8', '/W4',
+                     '/permissive-', '/MP', '/Zc:__cplusplus', '/Zc:preprocessor') +
+                   $CommonDefs + $includeFlags + $flags + @("/Fo$objDir\") + $Sources
     Invoke-Tool 'cl' $compileArgs
 
     $objects = Get-ChildItem -LiteralPath $objDir -Filter '*.obj' |
@@ -298,8 +314,8 @@ function Build-Executable {
     $exePath = Join-Path $OutDir "$Config\$ExeName.exe"
     $linkArgs = @(
         '/nologo', '/DEBUG', "/OUT:$exePath", '/INCREMENTAL:NO',
-        '/MANIFEST:EMBED', "/MANIFESTINPUT:$Manifest"
-    ) + $objects + @($ResObj) + $Libs + $ExtraLink
+        '/MANIFEST:EMBED', "/MANIFESTINPUT:$ManifestPath"
+    ) + $objects + @($ResourceObj) + $Libs + $ExtraLink
     Invoke-Tool 'link' $linkArgs
 
     return $exePath
@@ -367,39 +383,102 @@ function Build-Bench {
     Write-Host "  bench -> $exe" -ForegroundColor DarkGray
 }
 
+# The harnesses bind a sample's ViewModel and read its markup ids, so they need
+# that sample's include paths. Kept out of the global list so a sample's own
+# Resource.h can take precedence when building that sample.
+$GalleryIncludes = @($Sample, (Join-Path $Sample 'resources'))
+$ListSampleDir = Join-Path $SamplesRoot 'list'
+$SnapshotIncludes = $GalleryIncludes + @($ListSampleDir, (Join-Path $ListSampleDir 'resources'))
+
 function Build-Snapshot {
     $exe = Build-Executable -ExeName 'waml_snapshot' -ObjName 'snapshot' -Config 'release' `
-        -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\Snapshot.cpp'))
+        -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\Snapshot.cpp')) `
+        -ExtraIncludes $SnapshotIncludes
     Write-Host "  snapshot -> $exe" -ForegroundColor DarkGray
 }
 
 function Build-Interact {
     $exe = Build-Executable -ExeName 'waml_interact' -ObjName 'interact' -Config 'release' `
-        -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\Interact.cpp'))
+        -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\Interact.cpp')) `
+        -ExtraIncludes $GalleryIncludes
     Write-Host "  interact -> $exe" -ForegroundColor DarkGray
 }
 
 function Build-DpiShot {
     $exe = Build-Executable -ExeName 'waml_dpishot' -ObjName 'dpishot' -Config 'release' `
-        -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\DpiShot.cpp'))
+        -Sources ($CoreSources + $RenderSources + (Join-Path $ProjectDir 'tools\DpiShot.cpp')) `
+        -ExtraIncludes $GalleryIncludes
     Write-Host "  dpishot -> $exe" -ForegroundColor DarkGray
 }
 
 function Build-Probe {
     param([string]$Config = 'release')
     $exe = Build-Executable -ExeName 'waml_probe' -ObjName 'probe' -Config $Config `
-        -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\ResourceProbe.cpp'))
+        -Sources ($CoreSources + (Join-Path $ProjectDir 'tools\ResourceProbe.cpp')) `
+        -ExtraIncludes $GalleryIncludes
     Write-Host "  probe -> $exe" -ForegroundColor DarkGray
+    return $exe
+}
+
+function Build-Sample {
+    param(
+        [Parameter(Mandatory)][string]$ExeName,  # waml_list
+        [Parameter(Mandatory)][string]$ObjName,  # list
+        [Parameter(Mandatory)][string]$Dir,      # absolute sample directory
+        [Parameter(Mandatory)][string]$ResName,  # resource base name: list
+        [string]$Config = 'release'
+    )
+    $resObj = Build-SampleResource -Dir $Dir -Name $ResName
+    $exe = Build-Executable -ExeName $ExeName -ObjName $ObjName -Config $Config `
+        -Sources ($CoreSources + $RenderSources + $SampleHostSource +
+                  (Join-Path $Dir 'App.cpp')) `
+        -ResourceObj $resObj `
+        -ManifestPath (Join-Path $Dir 'resources\app.manifest') `
+        -ExtraIncludes @($Dir, (Join-Path $Dir 'resources')) `
+        -ExtraLink @('/SUBSYSTEM:WINDOWS')
+    Write-Host "  $ObjName -> $exe" -ForegroundColor DarkGray
     return $exe
 }
 
 function Build-Gallery {
     param([string]$Config = 'release')
-    $exe = Build-Executable -ExeName 'waml_demo' -ObjName 'demo' -Config $Config `
-        -Sources ($CoreSources + $RenderSources + (Join-Path $Sample 'App.cpp')) `
-        -ExtraLink @('/SUBSYSTEM:WINDOWS')
-    Write-Host "  gallery -> $exe" -ForegroundColor DarkGray
-    return $exe
+    return Build-Sample -ExeName 'waml_demo' -ObjName 'gallery' -Dir $Sample `
+        -ResName 'gallery' -Config $Config
+}
+
+function Build-ListSample {
+    param([string]$Config = 'release')
+    return Build-Sample -ExeName 'waml_list' -ObjName 'list' `
+        -Dir (Join-Path $SamplesRoot 'list') -ResName 'list' -Config $Config
+}
+
+# Builds the resource script of one sample into that sample's own .res file.
+# Kept separate from the gallery's Build-Resource because each sample has its
+# own app.rc with its own payload ids.
+function Build-SampleResource {
+    param(
+        [Parameter(Mandatory)][string]$Dir,
+        [Parameter(Mandatory)][string]$Name
+    )
+    $rc = Join-Path $Dir 'resources\app.rc'
+    $ico = Join-Path $Dir 'resources\app.ico'
+    if (-not (Test-Path -LiteralPath $ico)) {
+        throw "Missing icon: $ico"
+    }
+    $resObj = Join-Path $OutDir "objres\$Name.res"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resObj) | Out-Null
+    $rcArgs = @(
+        '/nologo'
+        "/fo$resObj"
+        "/dWUI_VERSION_MAJOR=$VersionMajor"
+        "/dWUI_VERSION_MINOR=$VersionMinor"
+        "/dWUI_VERSION_PATCH=$VersionPatch"
+        "/dWUI_VERSION_BUILD=$VersionBuild"
+        $rc
+    )
+    Invoke-Tool 'rc' $rcArgs
+    Write-Host "  $Name resources -> $resObj" -ForegroundColor DarkGray
+    return $resObj
 }
 
 # ---------------------------------------------------------------------------
@@ -425,7 +504,17 @@ try {
             Build-Snapshot
             Build-Interact
             Build-Gallery -Config 'release' | Out-Null
+            Build-ListSample -Config 'release' | Out-Null
             Build-Probe -Config 'release' | Out-Null
+        }
+        'list' {
+            Build-Resource
+            Build-ListSample -Config 'release' | Out-Null
+        }
+        'samples' {
+            Build-Resource
+            Build-Gallery -Config 'release' | Out-Null
+            Build-ListSample -Config 'release' | Out-Null
         }
         'tests'   { Build-Resource; Build-Tests }
         'bench'   { Build-Resource; Build-Bench }

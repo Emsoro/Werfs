@@ -976,10 +976,11 @@ TEST("input: button click executes command") {
     };
     auto cmdVm = std::make_shared<CmdVm>([&calls] { ++calls; });
     root->SetDataContext(std::static_pointer_cast<RefObject>(cmdVm));
-    root->ForceLayout(Size{100, 40});
+    // Layout the panel itself (see the note in the first grid test).
     auto* button = dynamic_cast<Button*>(root.get());
     CHECK(button != nullptr);
     if (!button) return;
+    button->ForceLayout(Size{100, 40});
     button->OnPointerDown(Point{5, 5});
     button->OnPointerUp(Point{5, 5});
     CHECK_EQ(calls, 1);
@@ -1034,10 +1035,11 @@ TEST("input: disabled button ignores clicks") {
     WidgetPtr root = doc->Instantiate(&g_fakeText);
     auto vm = std::make_shared<CmdVm3>([&calls] { ++calls; });
     root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
-    root->ForceLayout(Size{100, 40});
+    // Layout the panel itself (see the note in the first grid test).
     auto* button = dynamic_cast<Button*>(root.get());
     CHECK(button != nullptr);
     if (!button) return;
+    button->ForceLayout(Size{100, 40});
     button->OnPointerDown(Point{5, 5});
     button->OnPointerUp(Point{5, 5});
     CHECK_EQ(calls, 0);
@@ -1073,10 +1075,11 @@ TEST("input: checkbox toggles two-way") {
     WidgetPtr root = doc->Instantiate(&g_fakeText);
     auto vm = std::make_shared<CounterVm>();
     root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
-    root->ForceLayout(Size{200, 30});
+    // Layout the panel itself (see the note in the first grid test).
     auto* cb = dynamic_cast<CheckBox*>(root.get());
     CHECK(cb != nullptr);
     if (!cb) return;
+    cb->ForceLayout(Size{200, 30});
     CHECK(vm->Enabled.Get() == true);
     cb->OnPointerUp(Point{5, 5});
     CHECK(vm->Enabled.Get() == false);
@@ -1307,7 +1310,7 @@ TEST("perf: list build 100 items") {
     vm->Items.Set(std::static_pointer_cast<RefObject>(list));
     const double t1 = NowUs();
     const double t2 = NowUs();
-    root->ForceLayout(Size{600, 3000});
+    // Layout the panel itself (see the note in the first grid test).
     const double t3 = NowUs();
     auto* lb = dynamic_cast<ListBox*>(root.get());
     CHECK(lb && lb->ItemCount() == 100);
@@ -1332,10 +1335,11 @@ TEST("scrollviewer: content taller than viewport is scrollable") {
     CHECK(doc != nullptr);
     if (!doc) return;
     WidgetPtr root = doc->Instantiate(&g_fakeText);
-    root->ForceLayout(Size{400, 600});
+    // Layout the panel itself (see the note in the first grid test).
     auto* sv = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
     CHECK(sv != nullptr);
     if (!sv) return;
+    sv->ForceLayout(Size{400, 600});
     // 3 x 150 + 2 x 10 spacing = 470 of content in a 200 tall viewport.
     CHECK(sv->ContentHeight() > 400);
     CHECK(sv->MaxScroll() > 200);
@@ -1361,13 +1365,345 @@ TEST("scrollviewer: short content does not scroll") {
     CHECK(doc != nullptr);
     if (!doc) return;
     WidgetPtr root = doc->Instantiate(&g_fakeText);
-    root->ForceLayout(Size{400, 600});
+    // Layout the panel itself (see the note in the first grid test).
     auto* sv = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
     CHECK(sv != nullptr);
     if (!sv) return;
+    sv->ForceLayout(Size{400, 600});
     CHECK(sv->MaxScroll() == 0);
     sv->OnPointerWheel(-5);
     CHECK(sv->ScrollOffset() == 0);
+}
+
+// ---------------------------------------------------------------------------
+// Layout panels
+// ---------------------------------------------------------------------------
+TEST("grid: star columns split the width evenly") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Grid ColumnDefinitions=\"1*,1*\" RowDefinitions=\"Auto\">"
+        "<Border Grid.Column=\"0\" Height=\"40\"/>"
+        "<Border Grid.Column=\"1\" Height=\"40\"/>"
+        "</Grid></Page>",
+        ParseOptions{"grid.waml"}, bag);
+
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    auto* grid = dynamic_cast<Grid*>(root->Children()[0].get());
+    CHECK(grid != nullptr);
+    if (!grid) return;
+    // Lay the panel out directly: Page does not forward Measure into a panel
+    // that has not been arranged, so measuring through the root would leave the
+    // track sizes unset and every assertion below would read zero.
+    grid->ForceLayout(Size{400, 300});
+    CHECK(grid->ColumnOffsets().size() == 2);
+    // Two equal stars over 400 -> 200 each.
+    CHECK(grid->ColumnOffsets()[0] == 200.0f);
+    CHECK(grid->ColumnOffsets()[1] == 200.0f);
+    // Children sit side by side at those offsets.
+    CHECK(root->Children()[0]->Children()[0]->Bounds().x == 0.0f);
+    CHECK(root->Children()[0]->Children()[1]->Bounds().x == 200.0f);
+}
+
+TEST("grid: fixed and star tracks mix") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Grid ColumnDefinitions=\"80,1*,2*\" RowDefinitions=\"Auto\">"
+        "<Border Grid.Column=\"0\"/><Border Grid.Column=\"1\"/><Border Grid.Column=\"2\"/>"
+        "</Grid></Page>",
+        ParseOptions{"grid2.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    // Layout the panel itself (see the note in the first grid test).
+    auto* grid = dynamic_cast<Grid*>(root->Children()[0].get());
+    CHECK(grid != nullptr);
+    if (!grid) return;
+    grid->ForceLayout(Size{380, 200});
+    const auto& cols = grid->ColumnOffsets();
+    CHECK(cols.size() == 3);
+    CHECK(cols[0] == 80.0f);            // fixed
+    CHECK(cols[1] == 100.0f);           // (380-80)/3 * 1
+    CHECK(cols[2] == 200.0f);           // (380-80)/3 * 2
+}
+
+TEST("grid: column span gets the combined width") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Grid ColumnDefinitions=\"100,100,100\" RowDefinitions=\"Auto,Auto\">"
+        "<Border Grid.Column=\"0\" Grid.ColumnSpan=\"2\" Height=\"20\"/>"
+        "<Border Grid.Row=\"1\" Grid.Column=\"2\" Height=\"20\"/>"
+        "</Grid></Page>",
+        ParseOptions{"grid3.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    // Layout the panel itself (see the note in the first grid test).
+    auto* grid = dynamic_cast<Grid*>(root->Children()[0].get());
+    CHECK(grid != nullptr);
+    if (!grid) return;
+    grid->ForceLayout(Size{300, 200});
+    auto& kids = root->Children()[0]->Children();
+    CHECK(kids.size() == 2);
+    // Spanning child covers columns 0..1 -> 200 wide.
+    CHECK(kids[0]->Bounds().w == 200.0f);
+    // Second child starts at row 1, column 2.
+    CHECK(kids[1]->Bounds().x == 200.0f);
+    CHECK(kids[1]->Bounds().y == 20.0f);
+}
+
+TEST("grid: spacing adds between tracks only") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Grid ColumnDefinitions=\"1*,1*\" RowDefinitions=\"Auto\" ColumnSpacing=\"20\">"
+        "<Border Grid.Column=\"0\" Height=\"10\"/><Border Grid.Column=\"1\" Height=\"10\"/>"
+        "</Grid></Page>",
+        ParseOptions{"grid4.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    // Layout the panel itself (see the note in the first grid test).
+    auto* grid = dynamic_cast<Grid*>(root->Children()[0].get());
+    CHECK(grid != nullptr);
+    if (!grid) return;
+    grid->ForceLayout(Size{420, 200});
+    // 420 - 20 spacing = 400 over two stars -> 200 each; second starts at 220.
+    CHECK(grid->ColumnOffsets()[0] == 200.0f);
+    auto& kids = root->Children()[0]->Children();
+    CHECK(kids[1]->Bounds().x == 220.0f);
+}
+
+TEST("wrappanel: wraps to a second line when out of room") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><WrapPanel Spacing=\"10\">"
+        "<Border Width=\"100\" Height=\"30\"/><Border Width=\"100\" Height=\"30\"/>"
+        "<Border Width=\"100\" Height=\"30\"/>"
+        "</WrapPanel></Page>",
+        ParseOptions{"wrap.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    // 250 wide fits two 100px items + 10 spacing = 210; the third wraps.
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{250, 300});
+    auto& kids = panel->Children();
+    CHECK(kids.size() == 3);
+    CHECK(kids[0]->Bounds().y == 0.0f);
+    CHECK(kids[1]->Bounds().y == 0.0f);
+    CHECK(kids[2]->Bounds().y == 40.0f); // second line: 30 + 10 spacing
+    CHECK(kids[2]->Bounds().x == 0.0f);
+}
+
+TEST("canvas: children place themselves with Left and Top") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Canvas>"
+        "<Border Canvas.Left=\"30\" Canvas.Top=\"50\" Width=\"40\" Height=\"40\"/>"
+        "</Canvas></Page>",
+        ParseOptions{"canvas.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{200, 200});
+    auto& kids = panel->Children();
+    CHECK(kids.size() == 1);
+    CHECK(kids[0]->Bounds().x == 30.0f);
+    CHECK(kids[0]->Bounds().y == 50.0f);
+}
+
+TEST("variablesizedwrapgrid: spanning item takes two cells") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><VariableSizedWrapGrid ItemWidth=\"100\" ItemHeight=\"50\">"
+        "<Border/>"
+        "<Border VariableSizedWrapGrid.ColumnSpan=\"2\"/>"
+        "</VariableSizedWrapGrid></Page>",
+        ParseOptions{"vswg.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{300, 300});
+    auto& kids = panel->Children();
+    CHECK(kids.size() == 2);
+    CHECK(kids[0]->Bounds().w == 100.0f);
+    // The spanning item is twice as wide.
+    CHECK(kids[1]->Bounds().w == 200.0f);
+    // 300 / 100 = 3 per row, so both fit on the first line.
+    CHECK(kids[1]->Bounds().x == 100.0f);
+    CHECK(kids[1]->Bounds().y == 0.0f);
+}
+
+TEST("expander: collapsed reports header height, expanded grows") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Expander Header=\"Details\" HeaderHeight=\"36\">"
+        "<Border Height=\"100\"/>"
+        "</Expander></Page>",
+        ParseOptions{"exp.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    // Layout the panel itself (see the note in the first grid test).
+    auto* ex = dynamic_cast<Expander*>(root->Children()[0].get());
+    CHECK(ex != nullptr);
+    if (!ex) return;
+    ex->ForceLayout(Size{400, 400});
+    CHECK(!ex->IsExpanded());
+    CHECK(ex->DesiredSize().h == 36.0f);
+    ex->SetExpanded(true);
+    ex->ForceLayout(Size{400, 400});
+    // Header plus the 100 tall body.
+    CHECK(ex->IsExpanded());
+    CHECK(ex->DesiredSize().h == 136.0f);
+}
+
+TEST("viewbox: shrinks oversized content to fit") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Viewbox Height=\"100\">"
+        "<Border Width=\"200\" Height=\"200\"/>"
+        "</Viewbox></Page>",
+        ParseOptions{"vb.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{100, 200});
+    auto& kids = panel->Children();
+    CHECK(kids.size() == 1);
+    // Uniform scale to fit 100x100 -> 0.5 of the 200x200 child.
+    CHECK(kids[0]->Bounds().w == 100.0f);
+    CHECK(kids[0]->Bounds().h == 100.0f);
+}
+
+TEST("grid: auto column sizes to content") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Grid ColumnDefinitions=\"36,1*,auto\" RowDefinitions=\"Auto\">"
+        "<TextBlock Grid.Column=\"0\" Text=\"1.\"/>"
+        "<TextBlock Grid.Column=\"1\" Text=\"Item 1\"/>"
+        "<TextBlock Grid.Column=\"2\" Text=\"layout\"/>"
+        "</Grid></Page>",
+        ParseOptions{"gridauto.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    auto* grid = dynamic_cast<Grid*>(root->Children()[0].get());
+    CHECK(grid != nullptr);
+    if (!grid) return;
+    grid->ForceLayout(Size{400, 100});
+    CHECK(grid->ColumnOffsets().size() == 3);
+    // Fixed column is exactly its declared width.
+    CHECK(grid->ColumnOffsets()[0] == 36.0f);
+    // Auto column must be greater than zero -- a collapsed Auto track would
+    // silently hide its content, which is how a list template lost its last
+    // column.
+    CHECK(grid->ColumnOffsets()[2] > 0.0f);
+    // The auto column's child actually received a positive width.
+    CHECK(grid->Children()[2]->Bounds().w > 0.0f);
+}
+
+TEST("variablesizedwrapgrid: row span does not overlap the next item") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><VariableSizedWrapGrid ItemWidth=\"100\" ItemHeight=\"50\">"
+        "<Border/>"
+        "<Border VariableSizedWrapGrid.RowSpan=\"2\"/>"
+        "<Border/>"
+        "</VariableSizedWrapGrid></Page>",
+        ParseOptions{"vswg2.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{300, 300});
+    auto& kids = panel->Children();
+    CHECK(kids.size() == 3);
+    // Three cells per row: item 0 at (0,0), the tall item at (0,1), and item 2
+    // must skip past the tall item's column rather than overlap it.
+    CHECK(kids[0]->Bounds().x == 0.0f);
+    CHECK(kids[1]->Bounds().x == 100.0f);
+    CHECK(kids[1]->Bounds().h == 100.0f); // two rows tall
+    CHECK(kids[2]->Bounds().x == 200.0f);
+    CHECK(kids[2]->Bounds().y == 0.0f);
+}
+
+TEST("canvas: child Height is respected inside an explicit canvas height") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Canvas Height=\"120\">"
+        "<Border Canvas.Left=\"0\" Canvas.Top=\"0\" Width=\"150\" Height=\"70\"/>"
+        "<Border Canvas.Left=\"90\" Canvas.Top=\"40\" Width=\"150\" Height=\"60\"/>"
+        "</Canvas></Page>",
+        ParseOptions{"canvas2.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{400, 200});
+    auto& kids = panel->Children();
+    CHECK(kids.size() == 2);
+    // Offsets are honoured.
+    CHECK(kids[0]->Bounds().x == 0.0f);
+    CHECK(kids[0]->Bounds().y == 0.0f);
+    CHECK(kids[1]->Bounds().x == 90.0f);
+    CHECK(kids[1]->Bounds().y == 40.0f);
+    // And the declared sizes survive arrange.
+    CHECK(kids[0]->Bounds().w == 150.0f);
+    CHECK(kids[0]->Bounds().h == 70.0f);
+    CHECK(kids[1]->Bounds().h == 60.0f);
+}
+
+TEST("canvas: fills the height its parent gives it") {
+    // Mirrors the list sample: the Canvas sits in a StackPanel and declares a
+    // Height, while its children are offset from the top.
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><StackPanel Orientation=\"Vertical\">"
+        "<Canvas Height=\"120\">"
+        "<Border Canvas.Left=\"0\" Canvas.Top=\"0\" Width=\"150\" Height=\"70\">"
+        "<TextBlock Text=\"A\" Padding=\"8\"/>"
+        "</Border>"
+        "</Canvas></StackPanel></Page>",
+        ParseOptions{"canvas3.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* stack = root->Children()[0].get();
+    stack->ForceLayout(Size{400, 400});
+    Widget* canvas = stack->Children()[0].get();
+    CHECK(canvas != nullptr);
+    if (!canvas) return;
+    // The canvas keeps its declared 120 height rather than collapsing.
+    CHECK(canvas->Bounds().h == 120.0f);
+    CHECK(canvas->Children().size() == 1);
+    CHECK(canvas->Children()[0]->Bounds().h == 70.0f);
+    CHECK(canvas->Children()[0]->Bounds().y == canvas->Bounds().y);
+}
+
+TEST("border: explicit height is honoured inside a canvas") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Canvas Height=\"120\">"
+        "<Border Canvas.Left=\"0\" Canvas.Top=\"0\" Width=\"150\" Height=\"70\"/>"
+        "</Canvas></Page>",
+        ParseOptions{"b1.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* canvas = root->Children()[0].get();
+    canvas->ForceLayout(Size{400, 200});
+    Widget* border = canvas->Children()[0].get();
+    CHECK(border != nullptr);
+    if (!border) return;
+
+    CHECK(border->DesiredSize().h == 70.0f);
+    CHECK(border->Bounds().h == 70.0f);
+    CHECK(border->Bounds().y == 0.0f);
 }
 
 int main(int argc, char** argv) {

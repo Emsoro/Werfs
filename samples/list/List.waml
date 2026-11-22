@@ -1,0 +1,212 @@
+<?waml version="0.1"?>
+<!--
+  samples/list — collections, and the panels that hold them.
+
+  Beyond the basics this page deliberately exercises the controls that
+  samples/basic does not show: Grid, WrapPanel, Canvas, VariableSizedWrapGrid,
+  Viewbox and Expander. It is a layout showcase that happens to be built around
+  a list, which is the honest way to demonstrate a list -- a list on its own
+  says nothing about how you arrange things around it.
+
+  Bound to sample::ListViewVm in ListVm.h.
+-->
+<Page Background="AppBackground" Padding="0">
+  <ScrollViewer>
+    <StackPanel Orientation="Vertical" Margin="24" Spacing="18">
+
+      <!-- ================= Header ================= -->
+      <TextBlock Text="Collections &amp; Layout" FontSize="30" FontWeight="SemiBold"
+                 Foreground="TextPrimary"/>
+      <TextBlock Text="A list is never alone: it always sits inside some arrangement. This page shows DataTemplate, per-item data contexts, and the panels that carry them."
+                 FontSize="13" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+      <!-- ================= 1. Grid: a two-column card ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="1 · Grid — rows, columns and spanning" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="ColumnDefinitions=&quot;1*,2*,auto&quot; with Grid.Column / Grid.ColumnSpan on the children."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Grid ColumnDefinitions="1*,2*,auto" RowDefinitions="Auto,Auto" ColumnSpacing="12"
+                RowSpacing="6">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Label" FontSize="12"
+                       Foreground="TextSecondary"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Name}" FontSize="14"
+                       Foreground="TextPrimary"/>
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding Count, StringFormat='#{0}'}"
+                       FontSize="14" Foreground="TextSecondary"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Detail" FontSize="12"
+                       Foreground="TextSecondary"/>
+            <!-- Spanning child: covers columns 1 and 2. -->
+            <Border Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2"
+                    Background="ControlFill" CornerRadius="4" Padding="8">
+              <TextBlock Text="This Border spans two columns (Grid.ColumnSpan=&quot;2&quot;)."
+                         FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 2. The list itself ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="2 · ListBox + DataTemplate" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Each row shows its own data — this is the regression that once made every row render the same item."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <ListBox ItemsSource="{Binding Items}" ItemHeight="32">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <!-- A Grid inside the item template: index and title aligned. -->
+                <Grid ColumnDefinitions="36,1*,auto" ColumnSpacing="8">
+                  <TextBlock Grid.Column="0" Text="{Binding Index, StringFormat='{0}.'}"
+                             FontSize="13" Foreground="TextSecondary" TextWrapping="Wrap"/>
+                  <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="13"
+                             Foreground="TextPrimary"/>
+                  <TextBlock Grid.Column="2" Text="{Binding Kind}" FontSize="12"
+                             Foreground="TextSecondary"/>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Add" Command="{Binding AddCommand}"/>
+            <Button Content="Remove" Command="{Binding RemoveCommand}"/>
+            <TextBlock Text="{Binding ItemCount, StringFormat='{0} items'}" FontSize="12"
+                       Foreground="TextSecondary"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 3. WrapPanel ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="3 · WrapPanel — tag cloud" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Children flow left to right and wrap when they run out of room. Resize the window to see it reflow."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <WrapPanel Spacing="8">
+            <Border Background="Accent" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="responsive" FontSize="12" Foreground="TextOnAccent"/>
+            </Border>
+            <Border Background="Accent" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="wrapping" FontSize="12" Foreground="TextOnAccent"/>
+            </Border>
+            <Border Background="Accent" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="flow" FontSize="12" Foreground="TextOnAccent"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="layout" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="panels" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="no scrollbars" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="10" Padding="10,4,10,4">
+              <TextBlock Text="auto height" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 4. VariableSizedWrapGrid ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="4 · VariableSizedWrapGrid — mixed tile sizes" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="Same flow, but a tile may occupy more than one cell: ColumnSpan / RowSpan."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <VariableSizedWrapGrid ItemWidth="110" ItemHeight="64">
+            <Border Background="ControlFill" CornerRadius="6" Padding="8">
+              <TextBlock Text="1×1" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="Accent" CornerRadius="6" Padding="8"
+                    VariableSizedWrapGrid.ColumnSpan="2">
+              <TextBlock Text="2×1 wide" FontSize="12" Foreground="TextOnAccent"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="6" Padding="8">
+              <TextBlock Text="1×1" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="Selection" CornerRadius="6" Padding="8"
+                    VariableSizedWrapGrid.RowSpan="2">
+              <TextBlock Text="1×2 tall" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="6" Padding="8">
+              <TextBlock Text="1×1" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+            <Border Background="ControlFill" CornerRadius="6" Padding="8">
+              <TextBlock Text="1×1" FontSize="12" Foreground="TextPrimary"/>
+            </Border>
+          </VariableSizedWrapGrid>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 5. Canvas ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="5 · Canvas — absolute placement" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Canvas.Left / Canvas.Top position children freely, including overlapping them."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Canvas Height="120">
+            <Border Canvas.Left="0" Canvas.Top="0" Width="150" Height="70"
+                    Background="ControlFill" BorderBrush="CardBorder" BorderThickness="1" CornerRadius="6">
+              <TextBlock Text="Left=0 Top=0" FontSize="12" Foreground="TextPrimary"
+                         Padding="8"/>
+            </Border>
+            <Border Canvas.Left="90" Canvas.Top="40" Width="150" Height="60"
+                    Background="Accent" CornerRadius="6">
+              <TextBlock Text="Left=90 Top=40 (on top)" FontSize="12" Foreground="TextOnAccent"
+                         Padding="8"/>
+            </Border>
+          </Canvas>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 6. Expander + Viewbox ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="6 · Expander + Viewbox" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Click the header to expand. The Viewbox below scales fixed-size content to fit whatever room it gets."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Expander Header="How the item template works" HeaderHeight="34">
+            <TextBlock Text="The DataTemplate is compiled once and instantiated per item. Each instance gets its own DataContext — that isolation is what makes every row show different data."
+                       FontSize="12" Foreground="TextSecondary" Padding="0,4,0,8"/>
+            <TextBlock Text="A row's {Binding Title} resolves against that row's item, not against the page ViewModel."
+                       FontSize="12" Foreground="TextSecondary" Padding="0,0,0,4"/>
+          </Expander>
+
+          <Viewbox Height="72">
+            <Border Width="360" Height="72" Background="ControlFill" CornerRadius="6"
+                    Padding="12">
+              <TextBlock Text="A 360-pixel-wide strip, scaled to fit this column (never enlarged beyond its natural size)."
+                         FontSize="13" Foreground="TextPrimary"/>
+            </Border>
+          </Viewbox>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= Footer ================= -->
+      <TextBlock Text="ScrollViewer wraps the whole page — that is why this content can exceed the window."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap" Padding="0,4,0,16"/>
+
+    </StackPanel>
+  </ScrollViewer>
+</Page>

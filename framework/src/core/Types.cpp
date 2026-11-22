@@ -51,6 +51,20 @@ static void AddLayoutProps(TypeInfo& t) {
     t.Prop("MinHeight", VType::Number, Value::Number(0), AffectsMeasure);
     t.Prop("MaxWidth", VType::Number, Value::Number(0), AffectsMeasure);
     t.Prop("MaxHeight", VType::Number, Value::Number(0), AffectsMeasure);
+
+    // Panel-placement properties. These are written on the CHILD
+    // (Grid.Row="1"), so they must exist on every widget that can be a child,
+    // not on the panel itself -- the validator checks the child's property
+    // table, and a real attached-property mechanism does not exist here.
+    // They are harmless on widgets that are never placed in a panel.
+    t.Prop("Grid.Row", VType::Number, Value::Number(0), AffectsMeasure);
+    t.Prop("Grid.Column", VType::Number, Value::Number(0), AffectsMeasure);
+    t.Prop("Grid.RowSpan", VType::Number, Value::Number(1), AffectsMeasure);
+    t.Prop("Grid.ColumnSpan", VType::Number, Value::Number(1), AffectsMeasure);
+    t.Prop("Canvas.Left", VType::Number, Value::Number(0), AffectsMeasure);
+    t.Prop("Canvas.Top", VType::Number, Value::Number(0), AffectsMeasure);
+    t.Prop("VariableSizedWrapGrid.ColumnSpan", VType::Number, Value::Number(1), AffectsMeasure);
+    t.Prop("VariableSizedWrapGrid.RowSpan", VType::Number, Value::Number(1), AffectsMeasure);
 }
 
 void TypeRegistry::RegisterBuiltins() {
@@ -83,6 +97,9 @@ void TypeRegistry::RegisterBuiltins() {
         t->EnumProp("TextAlignment", {"Left", "Center", "Right"}, 0, AffectsMeasure);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
         t->EnumProp("AutomationRole", {"Text", "Heading", "Status"}, 0, 0);
+        // Wrap makes the block size to the width it is given instead of to its
+        // text, which is what long prose paragraphs need.
+        t->EnumProp("TextWrapping", {"NoWrap", "Wrap"}, 0, AffectsMeasure);
         add(t);
     }
     {
@@ -169,6 +186,78 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("ItemHeight", VType::Number, Value::Number(26), AffectsMeasure);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Grid", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<Grid>(); });
+        AddLayoutProps(*t);
+        // Track specs: "Auto,2*,1*,80". See Grid::Measure for the grammar.
+        t->Prop("ColumnDefinitions", VType::Text, Value::Text(L"1*"), AffectsMeasure);
+        t->Prop("RowDefinitions", VType::Text, Value::Text(L"Auto"), AffectsMeasure);
+        t->Prop("ColumnSpacing", VType::Number, Value::Number(0), AffectsMeasure);
+        t->Prop("RowSpacing", VType::Number, Value::Number(0), AffectsMeasure);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Canvas", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<Canvas>(); });
+        AddLayoutProps(*t);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/WrapPanel", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<WrapPanel>(); });
+        AddLayoutProps(*t);
+        t->EnumProp("Orientation", {"Horizontal", "Vertical"}, 0, AffectsMeasure);
+        t->Prop("Spacing", VType::Number, Value::Number(0), AffectsMeasure);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/VariableSizedWrapGrid", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<VariableSizedWrapGrid>(); });
+        AddLayoutProps(*t);
+        t->Prop("ItemWidth", VType::Number, Value::Number(120), AffectsMeasure);
+        t->Prop("ItemHeight", VType::Number, Value::Number(90), AffectsMeasure);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Viewbox", ContentModel::SingleChild,
+                                            []() -> WidgetPtr { return std::make_shared<Viewbox>(); });
+        t->SetContentProperty("Child");
+        AddLayoutProps(*t);
+        t->Prop("Stretch", VType::Bool, Value::Bool(false), AffectsMeasure);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Expander", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<Expander>(); });
+        AddLayoutProps(*t);
+        t->Prop("Header", VType::Text, Value::Text(L"Header"), AffectsMeasure);
+        t->Prop("HeaderHeight", VType::Number, Value::Number(36), AffectsMeasure | AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->EnumProp("FontWeight", {"Normal", "Medium", "SemiBold", "Bold"}, WeightNormal, AffectsMeasure);
+        t->Prop("Foreground", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::CardBackground}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}),
+                AffectsMeasure);
         add(t);
     }
     {

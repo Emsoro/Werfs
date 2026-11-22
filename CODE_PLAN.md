@@ -48,15 +48,22 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 65 用例 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 79 用例 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
-| 9 控件：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox | ✅ | 类型注册表 |
+| **15 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** | ✅ | 类型注册表 16 项（含 DataTemplate） |
+| **Grid 行列布局**：`ColumnDefinitions="1*,2*,auto"` + `Grid.Row/Column/RowSpan/ColumnSpan` + 间距 | ✅ | 5 个测试锁定星号分配、固定混合、跨列、间距、auto 自适应 |
+| **WrapPanel / VariableSizedWrapGrid**：换行流式 + 跨行列贴片（占用网格算法） | ✅ | 2 个测试锁定换行与跨行不重叠 |
+| **Canvas**：绝对定位（`Canvas.Left/Top`） | ✅ | 2 个测试锁定偏移与显式尺寸 |
+| **Viewbox**：等比缩放子内容 | ✅ | 1 个测试锁定缩小适配 |
+| **Expander**：折叠展开 + 点击头部切换 | ✅ | 1 个测试锁定两态高度 |
+| **TextBlock 自动换行**（`TextWrapping="Wrap"`） | ✅ | list 示例长段落渲染验证 |
 | ScrollViewer（滚轮 + 键盘 + 自绘滚动条） | ✅ | 2 个测试锁定滚动范围与钳制 |
 | D2D 真实渲染 + 确定性快照 | ✅ | 两次渲染 SHA 相同 |
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 2 个示例（gallery / list）共用同一 Win32+D2D 宿主 |
 
 ## 3. 产物
 
@@ -400,6 +407,38 @@ S-1-4-151873615-607647326   Allow   DeleteSubDirectoriesAndFiles, Write, Delete,
 - `%~dp0` 末尾反斜杠在 `/I"%SRC%"` 中会吞掉下个参数（`D8003`）。
 - `/Fo"dir\"` 同样吞反斜杠，.obj 落到当前目录。
 
+## 7.11 【严重】`auto` 列被判成 0 像素固定列
+
+**现象**：`samples/list` 的列表项模板里，第三列（`auto`）内容完全不显示，整行右侧一片空白。页面无报错，绑定错误数为 0。
+
+**原因**：`ColumnDefinitions="36,1*,auto"` 的解析器只认大写 `"Auto"`。小写 `"auto"` 走到 `else` 分支，被当成「固定 0 像素」，这一列宽度恒为 0，子元素被测量进 0 宽度区域，`desired.w` 自然也是 0。
+
+**为什么难发现**：布局成功、绘制成功、绑定成功、测试全绿——只是内容少了一列。这正是「静默失败」的典型形态。
+
+**修复**：解析改为大小写不敏感（统一转小写后匹配）。同时修正另一处相关问题：`auto` 轨道测量子元素时必须给**无约束宽度**，否则用当前 0 宽去量，轨道永远塌缩。
+
+**教训**：枚举名/关键字的大小写必须宽容。若坚持精确匹配，至少要在无法识别时**报诊断**而不是退化成 0。
+
+## 7.12 【中】跨行贴片与后续项重叠
+
+**现象**：`VariableSizedWrapGrid` 里一个 `RowSpan="2"` 的贴片会把后面一项盖在同一个格子上。
+
+**原因**：原实现用「推进游标」的方式排布——一项结束就把游标移到下一格。遇到跨行项时，游标只前进一列，下一行同列的位置已被这个跨行项占用，于是重叠。
+
+**修复**：改为**占用网格**算法——维护一张布尔占位图，每项扫描找到第一个能放下的矩形。`Measure` 与 `Arrange` 共用同一个 `PlanCells()`，保证两次布局不会对位置产生分歧。
+
+**验证**：新增测试断言「三段贴片：第 0 项在 (0,0)、跨行项在 (0,1) 高 2 行、第 2 项必须跳到 (0,2) 而不是重叠」。
+
+## 7.13 【中】`TextBlock` 不支持自动换行
+
+**现象**：`samples/list` 里所有说明文字都被截断成一行，超出部分消失。
+
+**原因**：`TextBlock::Measure` 完全忽略 `available`，按内容定尺寸且不换行。短文本没问题，长段落必然溢出。
+
+**修复**：新增 `TextWrapping` 属性（`NoWrap`/`Wrap`）。`Wrap` 时按词贪心折行，长单词按字符断开，显式 `\n` 保留；`Measure` 用行高 × 行数作为高度，`OnPaint` 逐行绘制。
+
+**设计取舍**：默认 `NoWrap`，与改动前行为一致，不影响任何现有页面。
+
 ---
 
 # 第四部分：目标架构
@@ -676,9 +715,9 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 | 顺序 | 示例 | 依赖的框架能力 | 状态 |
 |---|---|---|---|
-| 1 | `basic` | 无（现有能力足够） | **可立即开始** |
-| 2 | `binding` | 无 | 可立即开始 |
-| 3 | `list` | 无 | 可立即开始 |
+| 1 | `list` | 无 | **✅ 已完成**（本轮交付） |
+| 2 | `basic` | 无（现有能力足够） | 可立即开始 |
+| 3 | `binding` | 无 | 可立即开始 |
 | 4 | `theming` | 无（主题已支持） | 可立即开始 |
 | 5 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
 | 6 | `gallery` | 多文档资源 + 路由（迭代 1）、P0 控件（10a.7.1） | 依赖前五项 |

@@ -7,6 +7,7 @@
 #include "D2DRender.h"
 #include "Diagnostics.h"
 #include "GalleryVm.h"  // sample: the Gallery page's ViewModel
+#include "ListVm.h"     // sample: the list page's ViewModel
 #include "Mvvm.h"
 #include "Resource.h"  // WAML_RESOURCE_TYPE / IDR_WAML_GALLERY
 #include "Resources.h" // LoadWaml honours the debug/release switch
@@ -15,6 +16,7 @@
 #include "Widget.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -79,15 +81,37 @@ int main(int argc, char** argv) {
     // Keep the controls and the D2D renderer measuring text the same way.
     TextSystem::Set(&text);
 
-    auto vm = std::make_shared<SnapshotVm>();
-    vm->SeedItems(5);
+    // Pick the ViewModel that matches the markup being rendered. The harness is
+    // shared by all samples, so binding the wrong VM would produce a page full
+    // of empty values that still renders "successfully" -- a silent wrong
+    // picture. The file name is a reliable enough signal here.
+    const bool isListPage =
+        loaded.origin.find("List.waml") != std::string::npos || wamlPath.find("List.waml") != std::string::npos;
 
+    std::shared_ptr<RefObject> vmRef;
+    if (isListPage) {
+        auto listVm = std::make_shared<sample::ListViewVm>();
+        std::printf("vm: ListViewVm (%zu rows)\n", static_cast<size_t>(listVm->ItemCount.Get()));
+        vmRef = std::static_pointer_cast<RefObject>(listVm);
+    } else {
+        auto galleryVm = std::make_shared<SnapshotVm>();
+        galleryVm->SeedItems(5);
+        vmRef = std::static_pointer_cast<RefObject>(galleryVm);
+    }
+
+    // Height is a parameter because pages differ in length: the gallery fits in
+    // 900, the list page needs around 2000 to show every section. Rendering a
+    // too-short canvas silently clips the lower half and still reports success.
     const int width = 720;
-    const int height = 900;
+    const int height = argc > 4 ? std::atoi(argv[4]) : 900;
+    if (height <= 0) {
+        std::printf("FAIL: height must be positive\n");
+        return 1;
+    }
 
     auto build = [&]() {
         WidgetPtr root = doc->Instantiate(&text);
-        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->SetDataContext(vmRef);
         root->ForceLayout(Size{static_cast<float>(width), static_cast<float>(height)});
         return root;
     };

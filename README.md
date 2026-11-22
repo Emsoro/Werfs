@@ -44,7 +44,26 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 
 ### 内置控件
 
-`Page` · `Border` · `StackPanel` · `ScrollViewer` · `TextBlock` · `Button` · `CheckBox` · `TextBox` · `ListBox` · `DataTemplate`
+按类别分组（共 15 个控件 + `DataTemplate`）：
+
+| 类别 | 控件 |
+|---|---|
+| 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
+| 文本 | `TextBlock`（支持 `TextWrapping="Wrap"`）· `TextBox` |
+| 输入 | `Button` · `CheckBox` |
+| 集合 | `ListBox` + `DataTemplate` |
+
+面板放置属性写在**子元素**上（本框架无附加属性语法）：
+
+```xml
+<Grid ColumnDefinitions="36,1*,auto" ColumnSpacing="12">
+  <TextBlock Grid.Column="0" Text="1." />
+  <TextBlock Grid.Column="1" Text="Item" />
+  <TextBlock Grid.Column="2" Text="layout" />
+</Grid>
+```
+
+`ColumnDefinitions` 支持 `Auto` / `1*` / `80`，大小写不敏感；`Canvas.Left`/`Top` 做绝对定位；`VariableSizedWrapGrid.ColumnSpan`/`RowSpan` 做混合尺寸贴片。
 
 ---
 
@@ -64,14 +83,15 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 
 | 目标 | 产物 | 说明 |
 |---|---|---|
-| `release` | `waml_demo.exe` | 优化构建，默认 |
+| `release` | `waml_demo.exe` | 优化构建，默认（gallery） |
 | `debug` | `waml_demo.exe` | 符号 + WAML 读磁盘，改界面免重编 |
 | `all` | 全部 | 以下全部都建（release） |
-| `tests` | `waml_tests.exe` | 65 个用例 |
+| `tests` | `waml_tests.exe` | 79 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
 | `probe` | `waml_probe.exe` | 资源门禁，**构建后自动运行** |
+| `list` | `waml_list.exe` | 集合与布局示例 |
 | `probedbg` | 同上 | 调试构建的门禁 |
 | `res` | `.res` | 只编译资源 |
 | `icon` | `app.ico` | 重新生成图标 |
@@ -133,13 +153,13 @@ framework/src/
     render/     SoftwareRender（测试用）、D2DRender（真实后端）
 
 samples/                ← 示例，单向依赖框架
-    gallery/               当前唯一示例：WAML + ViewModel + Win32 宿主 + 资源
-    shared/                （规划）共享宿主与资源，避免各示例重复
+    shared/                共享宿主：窗口、D2D、DPI、输入分发（不含任何页面逻辑）
+    gallery/               控件总览页
+    list/                  **已实现** 集合与布局：ListBox + Grid/WrapPanel/Canvas/VariableSizedWrapGrid/Viewbox/Expander
     basic/                 （规划 1）基础控件
     binding/               （规划 2）四种绑定模式对照
-    list/                  （规划 3）集合与 DataTemplate
-    theming/               （规划 4）Light/Dark 主题
-    usercontrol/           （规划 5）父子组件、两个独立数据源
+    theming/               （规划 3）Light/Dark 主题
+    usercontrol/           （规划 4）父子组件、两个独立数据源
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
@@ -154,16 +174,18 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 顺序 | 示例 | 内容 | 状态 |
 |---|---|---|---|
-| 1 | `basic` | TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | 规划中 |
-| 2 | `binding` | 四种绑定模式并排对照 | 规划中 |
-| 3 | `list` | DataTemplate、每项独立上下文、动态增删 | 规划中 |
+| 1 | `list` | **集合 + 布局**：ListBox/DataTemplate、Grid、WrapPanel、VariableSizedWrapGrid、Canvas、Viewbox、Expander | **已实现** |
+| 2 | `basic` | TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | 规划中 |
+| 3 | `binding` | 四种绑定模式并排对照 | 规划中 |
 | 4 | `theming` | Light/Dark 切换与 token | 规划中 |
 | 5 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
-| 6 | `gallery` | 把全部控件页组织成可浏览的图库（产品形态） | 规划中 |
+| 6 | `gallery` | 把全部控件页组织成可浏览的图库（产品形态） | 演进中 |
 
-`usercontrol` 排在第五，是因为它依赖的能力（`DataContext` 可绑定）目前还不存在；把它放在中段可以让前四个示例先落地，而不是一开始就卡在设计决策上。
+`list` 先做，正因为它是**布局能力的验收现场**——把六个布局面板装进一个真实页面，比单独演示每个面板更能暴露问题（也确实暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷）。
 
-每个示例都是独立可执行文件（`waml_basic.exe`、`waml_usercontrol.exe`…），便于单独调试与截图。详细规划见 `CODE_PLAN.md` §10a。
+`usercontrol` 排在第五，因为它依赖的能力（`DataContext` 可绑定）目前还不存在；放在中段可以让前面几个示例先落地，而不是一开始就卡在设计决策上。
+
+所有示例共用 `samples/shared/SampleHost`（Win32 窗口 + D2D + DPI + 输入分发），示例本身只提供 WAML、ViewModel 和标题。加一个新示例 = 新建目录 + 三件套 + 在 `build.ps1` 注册一个目标。详细规划见 `CODE_PLAN.md` §10a。
 
 ### Gallery 的组件范围
 
@@ -171,11 +193,11 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 档位 | 数量 | 内容 | 何时做 |
 |---|---|---|---|
-| **P0 必做** | 23 | `Grid` `Canvas` `WrapPanel` `VariableSizedWrapGrid` `RelativePanel` `Viewbox` `Expander` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 当前目标 |
+| **P0 必做** | 23（**7 已完成**） | ✅ `Grid` `Canvas` `WrapPanel` `VariableSizedWrapGrid` `Viewbox` `Expander` ／ 待做 `RelativePanel` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 进行中 |
 | P1 常用增强 | 16 | `ComboBox` `Popup` `Flyout` `ToolTip` `ContentDialog` `MenuFlyout` `CommandBar` `AutoSuggestBox` 等 | 浮层子系统完成后 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-加上已有 9 个，P0 完成后共 **32 个可用控件**。P0 里真正的框架改造有六项：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`RelativePanel` 附加属性与按名查找、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
+目前 **15 个控件可用**（原有 9 个 + 本轮 6 个布局面板）。P0 完成后共 32 个。六项框架改造里已完成三项：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock` 文字换行；待做 `RelativePanel` 附加属性、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
 
 ---
 
