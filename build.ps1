@@ -176,7 +176,7 @@ function Get-VersionPart {
 }
 
 $VersionMajor = Get-VersionPart 'MAJOR' '0'
-$VersionMinor = Get-VersionPart 'MINOR' '5'
+$VersionMinor = Get-VersionPart 'MINOR' '6'
 $VersionPatch = Get-VersionPart 'PATCH' '0'
 $VersionBuild = Get-VersionPart 'BUILD' '0'
 $VersionString = "$VersionMajor.$VersionMinor.$VersionPatch.$VersionBuild"
@@ -211,7 +211,7 @@ $CommonDefs = @(
 
 $CommonCompile = @(
     '/nologo', '/c', '/std:c++20', '/EHsc', '/utf-8', '/W4',
-    '/permissive-', '/MP', '/Zc:__cplusplus', '/Zc:preprocessor'
+    '/permissive-', '/MP', '/FS', '/Zc:__cplusplus', '/Zc:preprocessor'
 ) + $CommonDefs
 
 # Debug: symbols, no optimisation, markup from disk.
@@ -301,7 +301,7 @@ function Build-Executable {
     # Extra (sample-local) includes go FIRST: a sample's own Resource.h must win
     # over the gallery's, since both define IDR_WAML_* with different ids.
     $compileArgs = @('/nologo', '/c', '/std:c++20', '/EHsc', '/utf-8', '/W4',
-                     '/permissive-', '/MP', '/Zc:__cplusplus', '/Zc:preprocessor') +
+                     '/permissive-', '/MP', '/FS', '/Zc:__cplusplus', '/Zc:preprocessor') +
                    $CommonDefs + $includeFlags + $flags + @("/Fo$objDir\") + $Sources
     Invoke-Tool 'cl' $compileArgs
 

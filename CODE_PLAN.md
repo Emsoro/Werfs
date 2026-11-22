@@ -1,6 +1,6 @@
 # Gridform 实施计划与技术验证报告
 
-> 版本：0.5.0.0
+> 版本：0.6.0.0
 > 日期：2026-11-22
 > 仓库：https://gitee.com/masonwu21/Gridform
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,9 +12,9 @@
 
 **Gridform = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.5.0.0 已完成**地基**并通过技术验证：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、9 个控件、两种渲染后端、65 个测试全绿。
+当前 0.6.0.0 已完成**地基 + 布局层**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**15 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板）、两种渲染后端、**79 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `gallery`）共用一套宿主。
 
-**下一阶段的主线是「示例矩阵」**（§10a）：把单个 `gallery` 拆成六个可独立运行的示例——`basic`（基础控件）、`usercontrol`（**父子组件、两个数据源**）、`binding`（四种模式对照）、`list`（集合与模板）、`theming`（主题）、`gallery`（集大成的目录）。它同时是框架能力的验收矩阵：`usercontrol` 要求的能力当今框架**还没有**，这正是要补的第一块（§14）。
+**下一阶段的主线是「示例矩阵」**（§10a）：把单个 `gallery` 拆成六个可独立运行的示例——`basic`（✅ 基础控件）、`list`（✅ 集合与布局）、`usercontrol`（**父子组件、两个数据源**）、`binding`（四种模式对照）、`theming`（主题）、`gallery`（集大成的目录）。它同时是框架能力的验收矩阵：`usercontrol` 要求的能力当今框架**还没有**，这正是下一块要补的（§14）。
 
 ---
 
@@ -350,7 +350,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.5.0.0         [ ok ]
+file version: 0.6.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
