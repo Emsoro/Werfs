@@ -15,6 +15,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1704,6 +1706,119 @@ TEST("border: explicit height is honoured inside a canvas") {
     CHECK(border->DesiredSize().h == 70.0f);
     CHECK(border->Bounds().h == 70.0f);
     CHECK(border->Bounds().y == 0.0f);
+}
+
+TEST("basic page: wheel scrolls the page") {
+    // Loads the real sample markup so this catches a broken sample, not just a
+    // broken ScrollViewer.
+    const std::string path = "D:\\Cplusplus\\Gridform\\samples\\basic\\Basic.waml";
+    std::ifstream in(path, std::ios::binary);
+    CHECK(in.good());
+    if (!in.good()) return;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::string src = ss.str();
+
+    DiagnosticBag bag;
+    ParseOptions opt;
+    opt.fileName = "Basic.waml";
+    auto doc = CompileWaml(src, opt, bag);
+    if (!doc) std::printf("    DIAG: %s\n", bag.ToText().c_str());
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{700, 600});
+    auto* sv = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
+    CHECK(sv != nullptr);
+    if (!sv) return;
+    CHECK(sv->MaxScroll() > 0);
+    sv->OnPointerWheel(-3);
+    CHECK(sv->ScrollOffset() > 0);
+}
+
+TEST("scrollviewer: wheel over blank space still scrolls") {
+    // Regression: the wheel used to arrive only when the cursor happened to be
+    // over a control. Hits in the gaps returned null, bubbled to the page, and
+    // were dropped.
+    //
+    // The scroller is sized to the page, while its content is a short panel that
+    // does NOT fill it -- so there is real empty space inside the viewport,
+    // which is the case that used to fail.
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><ScrollViewer>"
+        "<StackPanel Orientation=\"Vertical\" Height=\"600\">"
+        "<Border Height=\"100\" Width=\"50\"/>"
+        "</StackPanel></ScrollViewer></Page>",
+        ParseOptions{"svblank.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* sv = root->Children()[0].get();
+    CHECK(sv != nullptr);
+    if (!sv) return;
+    auto* scroller = dynamic_cast<ScrollViewer*>(sv);
+    CHECK(scroller != nullptr);
+    if (!scroller) return;
+
+    CHECK(scroller->MaxScroll() > 0);
+
+    // Well to the right of the 50-wide child: inside the viewport, over nothing.
+    const Point blank{350, 60};
+    Widget* hit = root->HitTest(blank);
+    CHECK(hit != nullptr);
+
+    // Dispatch the way the host does. It must reach the scroller.
+    if (hit) hit->OnPointerWheel(-3);
+    CHECK(scroller->ScrollOffset() > 0);
+
+    // And content scrolled out of view must NOT be clickable.
+    CHECK(root->HitTest(Point{350, -100}) == nullptr);
+}
+
+TEST("basic page: wheel reaches the scroller from anywhere in the viewport") {
+    // Simulates the host's WM_MOUSEWHEEL path: hit-test the point, dispatch to
+    // whatever comes back, and require the page to move. This is the exact
+    // sequence that failed in the running app.
+    const std::string path = "D:\\Cplusplus\\Gridform\\samples\\basic\\Basic.waml";
+    std::ifstream in(path, std::ios::binary);
+    CHECK(in.good());
+    if (!in.good()) return;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+
+    DiagnosticBag bag;
+    ParseOptions opt;
+    opt.fileName = "Basic.waml";
+    auto doc = CompileWaml(ss.str(), opt, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    // A short window, so the page definitely overflows.
+    root->ForceLayout(Size{700, 500});
+    auto* sv = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
+    CHECK(sv != nullptr);
+    if (!sv) return;
+    CHECK(sv->MaxScroll() > 0);
+
+    // Try a spread of points across the viewport, including the far right and the
+    // bottom, where there is no control to land on.
+    const Point probes[] = {{20, 20}, {350, 250}, {680, 480}, {660, 60}};
+    int moved = 0;
+    for (const Point& pt : probes) {
+        sv->ScrollTo(0);
+        Widget* target = root->HitTest(pt);
+        if (!target) continue;
+        target->OnPointerWheel(-1);
+        if (sv->ScrollOffset() > 0) ++moved;
+    }
+    std::printf("    wheel moved the page from %d of %zu probe points\n",
+                moved, sizeof(probes) / sizeof(probes[0]));
+    // Every probe must scroll, not just the ones that happen to land on a control.
+    CHECK(moved == static_cast<int>(sizeof(probes) / sizeof(probes[0])));
 }
 
 int main(int argc, char** argv) {

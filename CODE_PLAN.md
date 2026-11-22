@@ -12,7 +12,7 @@
 
 **Gridform = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.6.0.0 已完成**地基 + 布局层**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**15 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板）、两种渲染后端、**79 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `gallery`）共用一套宿主。
+当前 0.6.0.0 已完成**地基 + 布局层**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**15 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板）、两种渲染后端、**82 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `gallery`）共用一套宿主。
 
 **下一阶段的主线是「示例矩阵」**（§10a）：把单个 `gallery` 拆成六个可独立运行的示例——`basic`（✅ 基础控件）、`list`（✅ 集合与布局）、`usercontrol`（**父子组件、两个数据源**）、`binding`（四种模式对照）、`theming`（主题）、`gallery`（集大成的目录）。它同时是框架能力的验收矩阵：`usercontrol` 要求的能力当今框架**还没有**，这正是下一块要补的（§14）。
 
@@ -48,7 +48,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 79 用例 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 82 用例 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **15 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** | ✅ | 类型注册表 16 项（含 DataTemplate） |
@@ -58,7 +58,7 @@ build.ps1  CMakeLists.txt
 | **Viewbox**：等比缩放子内容 | ✅ | 1 个测试锁定缩小适配 |
 | **Expander**：折叠展开 + 点击头部切换 | ✅ | 1 个测试锁定两态高度 |
 | **TextBlock 自动换行**（`TextWrapping="Wrap"`） | ✅ | list 示例长段落渲染验证 |
-| ScrollViewer（滚轮 + 键盘 + 自绘滚动条） | ✅ | 2 个测试锁定滚动范围与钳制 |
+| ScrollViewer（滚轮 + 键盘 + 自绘滚动条） | ✅ | 5 个测试：滚动范围、钳制、空白处滚轮、视口外不可点、四角探测 |
 | D2D 真实渲染 + 确定性快照 | ✅ | 两次渲染 SHA 相同 |
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
@@ -439,6 +439,25 @@ S-1-4-151873615-607647326   Allow   DeleteSubDirectoriesAndFiles, Write, Delete,
 **修复**：新增 `TextWrapping` 属性（`NoWrap`/`Wrap`）。`Wrap` 时按词贪心折行，长单词按字符断开，显式 `\n` 保留；`Measure` 用行高 × 行数作为高度，`OnPaint` 逐行绘制。
 
 **设计取舍**：默认 `NoWrap`，与改动前行为一致，不影响任何现有页面。
+
+## 7.14 【严重】滚轮在页面空白处完全无效
+
+**现象**：`samples/basic` 页面内容明显超出窗口，但滚轮只在把光标移到某个控件上时才起作用；移到卡片之间的缝隙或右侧留白就完全不动。用户报的是「滚轮不起作用」。
+
+**原因**（两层，缺一不可）：
+
+1. `Widget::HitTest` 在 `children_` 非空时**只返回子节点的命中结果**，自身永不参与。指针落在空白处 → 返回 `nullptr` → 宿主回退到根节点 `Page` → `Page::OnPointerWheel` 向父级冒泡，但 `Page` 没有父级 → 返回 `false` → 事件被丢弃。滚轮从来没到过 `ScrollViewer`。
+
+2. `StackPanel::Measure` **没有调用 `ApplySizeConstraints()`**，显式 `Height`/`Width` 被完全忽略。这让排查更困难：`ScrollViewer` 的滚动范围取决于内容高度，而内容的声明高度不生效，`MaxScroll` 会算成 0，看起来又像「本来就没东西可滚」。
+
+**修复**：
+
+- `ScrollViewer` 增加 `HitTest` 覆写：先问子节点（保证按钮点击正常），没有命中且点在视口内就**认领**该点击。同时加视口边界检查——滚出可视区的内容不再可点，与绘制时的裁剪保持一致。
+- `StackPanel` 补上 `ApplySizeConstraints()`。顺带审计全部 14 个 `Measure` 实现，发现 `CheckBox` 同样遗漏，一并修复。
+
+**教训**：`HitTest` 的「有子节点就不认领自己」是个危险的默认值——容器只要没铺满就会被指针事件穿透。凡是需要接收事件（滚轮、拖拽、背景点击）的容器，都应显式覆写 `HitTest`。另外，「显式尺寸不生效」会让滚动类问题伪装成布局问题，两者需要分开验证。
+
+**测试**：新增 3 个用例锁定——空白处滚轮能滚动、视口外内容不可点、以及沿视口四角探测点全部能触发滚动（模拟宿主 `WM_MOUSEWHEEL` 的真实路径）。
 
 ---
 

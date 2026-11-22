@@ -280,6 +280,28 @@ void ScrollViewer::ScrollTo(float offset) {
     Invalidate(AffectsRender);
 }
 
+Widget* ScrollViewer::HitTest(const Point& p) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect viewport{bounds_.x + margin.l, bounds_.y + margin.t,
+                        std::max(0.0f, bounds_.w - margin.H()),
+                        std::max(0.0f, bounds_.h - margin.V())};
+
+    // Content scrolled out of view must not receive clicks: the paint path clips
+    // it, so a hit there would land on something the user cannot see.
+    if (!viewport.Contains(p)) return nullptr;
+
+    // Children first, so a button inside the page still gets its own click. They
+    // handle the scroll offset themselves (each carries a paint offset).
+    for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
+        if (Widget* hit = (*it)->HitTest(p)) return hit;
+    }
+    // Nothing under the cursor, but it is inside the viewport: claim it. Scrolling
+    // has to work over the gaps between children and over the empty area past the
+    // content -- the base class returned null there, the wheel went to the page,
+    // and scrolling looked dead unless the cursor happened to be over a control.
+    return this;
+}
+
 bool ScrollViewer::OnPointerWheel(float deltaLines) {
     if (maxScroll_ <= 0) {
         // Nothing to scroll here; let an outer scroller handle it.
@@ -363,6 +385,11 @@ Size StackPanel::Measure(const Size& available) {
         desired_ = Size{crossExtent + margin.H() + pad.H(), mainExtent + margin.V() + pad.V()};
     else
         desired_ = Size{mainExtent + margin.H() + pad.H(), crossExtent + margin.V() + pad.V()};
+    // Without this an explicit Width/Height on the panel was ignored outright:
+    // a StackPanel Height="600" still reported its children's extent, so nothing
+    // that sized itself against the panel (a ScrollViewer's scroll range, for
+    // one) ever saw the declared size.
+    ApplySizeConstraints();
     return desired_;
 }
 
@@ -481,6 +508,9 @@ Size CheckBox::Measure(const Size& available) {
     desired_ = Size{t.w + 24.0f + pad.H() + margin.H(),
                     std::max(t.h, 20.0f) + pad.V() + margin.V()};
     (void)available;
+    // Explicit Width/Height must be able to override the content size, the same
+    // way every other control behaves.
+    ApplySizeConstraints();
     return desired_;
 }
 

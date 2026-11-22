@@ -100,6 +100,11 @@ public:
     Size Measure(const Size& available) override;
     void Arrange(const Rect& finalRect) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    // Claims hits inside its own viewport even when no child lands there.
+    // Without this the base class returns null for gaps between children, so a
+    // wheel over blank space fell through to the page and never reached the
+    // scroller.
+    Widget* HitTest(const Point& p) override;
     bool OnPointerWheel(float deltaLines) override;
     bool OnKeyDown(int vk) override;
     bool Focusable() const override { return true; }
