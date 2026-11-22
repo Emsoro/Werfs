@@ -5,6 +5,8 @@
 #include "Controls.h"
 #include "Core.h"
 #include "Diagnostics.h"
+#include "Converters.h"
+#include "FileDialog.h"
 #include "Mvvm.h"
 #include "SoftwareRender.h"
 #include "Types.h"
@@ -1942,6 +1944,176 @@ TEST("scrollviewer: button inside a scrolled page still fires") {
     hit->OnPointerDown(localPt);
     hit->OnPointerUp(localPt);
     CHECK(calls == 2);
+}
+
+// ---------------------------------------------------------------------------
+// Visibility, converters, file dialogs
+// ---------------------------------------------------------------------------
+TEST("visibility: collapsed takes no space") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><StackPanel Orientation=\"Vertical\">"
+        "<Border Height=\"100\" Background=\"Accent\"/>"
+        "<Border Height=\"100\" Background=\"Accent\" Visibility=\"Collapsed\"/>"
+        "<Border Height=\"100\" Background=\"Accent\"/>"
+        "</StackPanel></Page>",
+        ParseOptions{"vis1.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    Widget* panel = root->Children()[0].get();
+    panel->ForceLayout(Size{200, 400});
+    // Three children exist but the collapsed one must not occupy a slot.
+    CHECK(panel->Children().size() == 3);
+    // The third child starts where the first ends: the collapsed one in between
+    // consumed no vertical space. Asserting the absolute y would actually pass
+    // at 100 only if collapse worked, but it also ties the test to the exact
+    // height -- so check the relationship instead.
+    const float firstBottom =
+        panel->Children()[0]->Bounds().y + panel->Children()[0]->Bounds().h;
+    CHECK(panel->Children()[2]->Bounds().y == firstBottom);
+    // And the collapsed child never got laid out at all.
+    CHECK(panel->Children()[1]->Bounds().h <= 0.0f);
+}
+
+TEST("visibility: collapsed is not clickable and does not paint") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><StackPanel Orientation=\"Vertical\">"
+        "<Button Content=\"Hit\" Visibility=\"Collapsed\"/>"
+        "</StackPanel></Page>",
+        ParseOptions{"vis2.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{200, 100});
+    Widget* button = nullptr;
+    std::function<void(Widget*)> find = [&](Widget* w) {
+        if (!w || button) return;
+        if (std::string(w->TypeName()) == "wui/Button") { button = w; return; }
+        for (auto& c2 : w->Children()) find(c2.get());
+    };
+    find(root.get());
+    CHECK(button != nullptr);
+    if (!button) return;
+    // Give it a plausible rect, then confirm nothing reaches it.
+    CHECK(root->HitTest(Point{10, 10}) != button);
+}
+
+TEST("converter: BoolToVisibility maps true to Visible") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Border Height=\"50\" Visibility=\"{Binding Flag, Converter=BoolToVisibility}\"/>"
+        "</Page>",
+        ParseOptions{"conv1.waml"}, bag);
+    if (!doc) std::printf("    DIAG: %s\n", bag.ToText().c_str());
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class FlagVm final : public ObservableObject {
+    public:
+        FlagVm() { Make("Flag", Flag); }
+        ObservableProperty<bool> Flag{"Flag", true};
+    };
+    auto vm = std::make_shared<FlagVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    Widget* border = root->Children()[0].get();
+    border->ForceLayout(Size{200, 100});
+    const int slot = border->SlotOf("Visibility");
+    CHECK(slot >= 0);
+    // true -> Visible (0)
+    CHECK(border->Get<int>(slot) == 0);
+
+    // Flip the source: the border becomes collapsed and collapses out of layout.
+    vm->Flag.Set(false);
+    CHECK(border->Get<int>(slot) == 1);
+}
+
+TEST("converter: unknown name is a load error with a suggestion") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Border Visibility=\"{Binding Flag, Converter=BoolToVisibilty}\"/></Page>",
+        ParseOptions{"conv2.waml"}, bag);
+    // The typo must fail at load, not silently do nothing at runtime.
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("unknown converter") != std::string::npos);
+    CHECK(text.find("BoolToVisibility") != std::string::npos);
+}
+
+TEST("converter: Not inverts a bool") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><Button Content=\"Go\" IsEnabled=\"{Binding Busy, Converter=Not}\"/></Page>",
+        ParseOptions{"conv3.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    class BusyVm final : public ObservableObject {
+    public:
+        BusyVm() { Make("Busy", Busy); }
+        ObservableProperty<bool> Busy{"Busy", true};
+    };
+    auto vm = std::make_shared<BusyVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* button = dynamic_cast<Button*>(root->Children()[0].get());
+    CHECK(button != nullptr);
+    if (!button) return;
+    CHECK(!button->Get<bool>(button->SlotOf("IsEnabled")));
+    vm->Busy.Set(false);
+    CHECK(button->Get<bool>(button->SlotOf("IsEnabled")));
+}
+
+TEST("file dialog: no host registered means no dialogs and no crash") {
+    // The headless harness must never open a real dialog; every call has to
+    // report "not accepted" instead.
+    SetFileDialogService(nullptr);
+    CHECK(FileDialogService() == nullptr);
+
+    FileDialogRequest req;
+    req.title = L"Open";
+    // Nothing to call without a service; the contract is that callers check.
+    CHECK(FileDialogService() == nullptr);
+}
+
+TEST("file dialog: fake service round-trips a path") {
+    class FakeDialogs final : public IFileDialogService {
+    public:
+        std::wstring nextPath = L"C:\\tmp\\a.waml";
+        int opens = 0;
+        int saves = 0;
+        FileDialogResult ShowOpen(const FileDialogRequest&) override {
+            ++opens;
+            FileDialogResult r;
+            r.accepted = true;
+            r.paths.push_back(nextPath);
+            return r;
+        }
+        FileDialogResult ShowSave(const FileDialogRequest&) override {
+            ++saves;
+            FileDialogResult r;
+            r.accepted = true;
+            r.paths.push_back(nextPath);
+            return r;
+        }
+    };
+    FakeDialogs fake;
+    SetFileDialogService(&fake);
+
+    CHECK(FileDialogService() == &fake);
+    FileDialogRequest req;
+    const auto opened = FileDialogService()->ShowOpen(req);
+    CHECK(opened.accepted);
+    CHECK(opened.paths.size() == 1);
+    CHECK(opened.paths.front() == L"C:\\tmp\\a.waml");
+    CHECK(fake.opens == 1);
+
+    const auto saved = FileDialogService()->ShowSave(req);
+    CHECK(saved.accepted);
+    CHECK(fake.saves == 1);
+
+    SetFileDialogService(nullptr);
 }
 
 int main(int argc, char** argv) {

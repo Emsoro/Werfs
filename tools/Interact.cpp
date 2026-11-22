@@ -144,6 +144,39 @@ int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm)
                "the caption followed the box state");
     }
 
+    std::printf("\n[5] Visibility follows the CheckBox through a converter\n");
+    // The confirmed row is driven by {Binding IsAgreed, Converter=BoolToVisibility}
+    // so this exercises the whole chain: VM -> converter -> Visibility -> layout.
+    Widget* confirmRow = nullptr;
+    std::function<void(Widget*)> findConfirm = [&](Widget* w) {
+        if (!w || confirmRow) return;
+        const int slot = w->SlotOf("Text");
+        if (slot >= 0) {
+            const auto v = w->Get<std::wstring>(slot);
+            if (v.rfind(L"Confirmed.", 0) == 0) { confirmRow = w->Parent(); return; }
+        }
+        for (auto& c2 : w->Children()) findConfirm(c2.get());
+    };
+    findConfirm(root);
+    Expect(confirmRow != nullptr, "found the confirmation row");
+    if (confirmRow) {
+        const int visSlot = confirmRow->SlotOf("Visibility");
+        Expect(visSlot >= 0, "confirmation row has Visibility");
+        // IsAgreed is false after the toggle above only if it started false; use
+        // the authoritative VM value rather than assuming.
+        const bool agreed = vm->IsAgreed.Get();
+        Expect(confirmRow->Get<int>(visSlot) == (agreed ? 0 : 1),
+               "Visibility matches IsAgreed (true=Visible)");
+
+        // Flip through the VM and confirm the widget follows -- this is the
+        // property that would silently break if the converter stopped running.
+        vm->IsAgreed.Set(!agreed);
+        Expect(confirmRow->Get<int>(visSlot) == (agreed ? 1 : 0),
+               "flipping IsAgreed flips Visibility");
+        vm->IsAgreed.Set(agreed); // restore for later checks
+    }
+
+    std::printf("\n[6] no ListBox on this page\n");
     std::printf("\n[5] no ListBox on this page\n");
     // The basic page deliberately has no list; asserting its absence keeps the
     // page from quietly growing into a second list sample.

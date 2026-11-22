@@ -232,17 +232,19 @@ $CoreSources = @(
     'src\core\Types.cpp'
     'src\core\Controls.cpp'
     'src\mvvm\Binding.cpp'
+    'src\mvvm\Converters.cpp'
     'src\waml\Diagnostics.cpp'
     'src\waml\Parser.cpp'
     'src\render\SoftwareRender.cpp'
     'src\platform\Resources.cpp'
+    'src\platform\FileDialogWin32.cpp'
 ) | ForEach-Object { Join-Path $Framework $_ }
 
 $RenderSources = @(Join-Path $Framework 'src\render\D2DRender.cpp')
 
 $Libs = @(
     'd2d1.lib', 'dwrite.lib', 'comctl32.lib', 'ole32.lib', 'user32.lib',
-    'gdi32.lib', 'shell32.lib', 'version.lib', 'advapi32.lib'
+    'gdi32.lib', 'shell32.lib', 'version.lib', 'advapi32.lib', 'uuid.lib', 'ole32.lib'
 )
 
 $Manifest = Join-Path $IconSourceDir 'app.manifest'

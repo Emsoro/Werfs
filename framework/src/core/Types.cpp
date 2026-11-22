@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "Types.h"
+#include "Converters.h"
 
 #include "Controls.h"
 #include "Widget.h"
@@ -52,6 +53,12 @@ static void AddLayoutProps(TypeInfo& t) {
     t.Prop("MaxWidth", VType::Number, Value::Number(0), AffectsMeasure);
     t.Prop("MaxHeight", VType::Number, Value::Number(0), AffectsMeasure);
 
+    // Visibility is a layout property, not a paint flag: a Collapsed widget takes
+    // no space at all, so it must be skipped by Measure/Arrange rather than just
+    // skipped when drawing. Declared here so every widget has it -- "show this
+    // only when there is something to show" applies to any control.
+    t.EnumProp("Visibility", {"Visible", "Collapsed"}, 0, AffectsMeasure);
+
     // Panel-placement properties. These are written on the CHILD
     // (Grid.Row="1"), so they must exist on every widget that can be a child,
     // not on the panel itself -- the validator checks the child's property
@@ -70,6 +77,10 @@ static void AddLayoutProps(TypeInfo& t) {
 void TypeRegistry::RegisterBuiltins() {
     if (builtins_) return;
     builtins_ = true;
+
+    // Converters are registered alongside the types because both are
+    // process-wide, name-keyed tables that markup refers to.
+    RegisterBuiltinConverters();
 
     auto add = [this](std::shared_ptr<TypeInfo> t) { Register(std::move(t)); };
 

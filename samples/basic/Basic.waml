@@ -82,6 +82,14 @@
           <CheckBox Content="I have read enough to start" IsChecked="{Binding IsAgreed}"/>
           <TextBlock Text="{Binding AgreementText}" FontSize="13"
                      Foreground="TextSecondary"/>
+          <!-- Visibility + converter: the confirmation row exists only after
+               the box is ticked. Convince yourself by watching the card
+               shrink -- Collapsed takes no space, it is not just hidden. -->
+          <Border Background="Accent" CornerRadius="4" Padding="10"
+                  Visibility="{Binding IsAgreed, Converter=BoolToVisibility}">
+            <TextBlock Text="Confirmed. This row collapsed away entirely until you ticked the box."
+                       FontSize="12" Foreground="TextOnAccent" TextWrapping="Wrap"/>
+          </Border>
         </StackPanel>
       </Border>
 

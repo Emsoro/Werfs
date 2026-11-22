@@ -29,6 +29,7 @@ struct BindingExpr {
     bool modeExplicit = false;
     UpdateSourceTrigger trigger = UpdateSourceTrigger::PropertyChanged;
     std::wstring stringFormat;
+    std::string converter; // Name of a registered converter; empty means none.
     bool hasFallback = false;
     Value fallback;
     size_t offset = 0; // Resolved to line/column only when a diagnostic fires.

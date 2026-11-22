@@ -249,6 +249,9 @@ void Widget::PaintTree(PaintCtx& ctx, const ThemePalette& palette) {
 
 void Widget::PaintTreeAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
     if (bounds_.w <= 0 || bounds_.h <= 0) return;
+    // Collapsed means invisible as well as spaceless: a hidden widget that still
+    // painted would show a ghost at its stale bounds.
+    if (!IsVisible()) return;
 
     // PaintCtx has no transform stack and every control draws from its own
     // bounds_, so moving the rect for the duration of the paint is the only way
@@ -288,6 +291,7 @@ Point Widget::ToLocal(const Point& p) const {
 }
 
 Widget* Widget::HitTest(const Point& p) {
+    if (!IsVisible()) return nullptr;   // A hidden widget cannot be clicked.
     // Scrolled content: `p` arrives in this widget's unscrolled space, so undo
     // the paint offset before descending. Descending without this would make
     // every control inside a scrolled page unclickable.

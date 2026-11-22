@@ -406,6 +406,9 @@ struct BindingDesc {
     std::wstring stringFormat;
     bool hasSource = false;
     RefPtr explicitSource;
+    // Name of a registered converter applied before the implicit type conversion.
+    // Empty means none. See Converters.h for the built-ins.
+    std::string converter;
 };
 
 class Binding final : public IPropertyObserver, public ISlotObserver {

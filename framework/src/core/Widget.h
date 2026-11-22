@@ -114,6 +114,27 @@ public:
     virtual bool OnPointerWheel(float deltaLines);
     virtual bool Focusable() const { return false; }
 
+    // A Collapsed widget occupies no space and receives no input. Panels check
+    // this and skip the child entirely, so collapsing something reflows the
+    // layout instead of leaving a hole.
+    bool IsVisible() const {
+        const int slot = SlotOf("Visibility");
+        return slot < 0 || Get<int>(slot) == 0; // 0 = Visible
+    }
+
+    // Children that participate in layout and painting. Every panel iterates
+    // this instead of children_ so Visibility is honoured in one place -- with
+    // twenty-odd loops across the controls, one forgotten check is a hole in a
+    // layout that looks like a mystery.
+    std::vector<WidgetPtr> LayoutChildren() const {
+        std::vector<WidgetPtr> out;
+        out.reserve(children_.size());
+        for (const auto& c : children_) {
+            if (c->IsVisible()) out.push_back(c);
+        }
+        return out;
+    }
+
     bool Hovered() const { return hovered_; }
     bool Pressed() const { return pressed_; }
     bool Focused() const { return focused_; }

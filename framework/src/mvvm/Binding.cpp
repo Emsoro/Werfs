@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "Mvvm.h"
 
+#include "Converters.h"
 #include "Types.h"
 #include "Widget.h"
 
@@ -192,6 +193,26 @@ void Binding::ApplyToTarget(const Value& value) {
     applying_ = true;
     Value tmp = value;
     const VType targetType = descriptor_ ? descriptor_->type : value.type;
+
+    // A converter runs before the implicit conversion, because its whole purpose
+    // is to bridge types that have no sensible default conversion -- bool to
+    // Visibility being the case that motivates the feature.
+    if (!desc_.converter.empty()) {
+        const ConvertFn* fn = ConverterRegistry::Instance().Find(desc_.converter);
+        if (!fn) {
+            RecordError("unknown converter '" + desc_.converter + "'");
+            applying_ = false;
+            return;
+        }
+        Value converted;
+        if (!(*fn)(tmp, converted)) {
+            RecordError("converter '" + desc_.converter + "' cannot convert " + VTypeName(tmp.type));
+            applying_ = false;
+            return;
+        }
+        tmp = converted;
+    }
+
     if (tmp.type != targetType) {
         Value converted;
         if (!ConvertValue(tmp, targetType, converted)) {

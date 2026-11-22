@@ -9,6 +9,7 @@
 #include "Waml.h"
 
 #include "Controls.h"
+#include "Converters.h"
 #include "Widget.h"
 
 #include <algorithm>
@@ -1047,12 +1048,26 @@ private:
                 }
                 out.fallback = v;
                 out.hasFallback = true;
+            } else if (arg.name == "Converter") {
+                // Validated here rather than at apply time so a typo is a load
+                // error with a suggestion, not a binding that silently does
+                // nothing at runtime.
+                if (!ConverterRegistry::Instance().Has(arg.value)) {
+                    error = "unknown converter '" + arg.value + "'";
+                    const auto known = ConverterRegistry::Instance().Names();
+                    if (!known.empty()) {
+                        auto suggestions = SuggestNames(arg.value, known);
+                        if (!suggestions.empty()) error += " (did you mean '" + suggestions.front() + "'?)";
+                    }
+                    return false;
+                }
+                out.converter = arg.value;
             } else if (arg.name == "Source") {
                 error = "Source= is not supported in v0.5 (use DataContext inheritance)";
                 return false;
             } else {
                 auto suggestions = SuggestNames(arg.name, {"Path", "Mode", "UpdateSourceTrigger",
-                                                           "StringFormat", "FallbackValue"});
+                                                           "StringFormat", "FallbackValue", "Converter"});
                 error = "unknown binding argument '" + arg.name + "'";
                 if (!suggestions.empty()) error += " (did you mean '" + suggestions.front() + "'?)";
                 return false;
@@ -1307,6 +1322,7 @@ WidgetPtr InstantiateNode(const NodeDesc& node, ITextService* text) {
         bd.mode = entry.binding.mode;
         bd.trigger = entry.binding.trigger;
         bd.stringFormat = entry.binding.stringFormat;
+        bd.converter = entry.binding.converter;
         auto binding = std::make_unique<Binding>(widget.get(), entry.slot, desc, std::move(bd));
         widget->AddBinding(std::move(binding));
     }

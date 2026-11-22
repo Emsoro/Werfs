@@ -145,7 +145,7 @@ Size Border::Measure(const Size& available) {
                      std::max(0.0f, available.h - margin.V() - pad.V())};
     float w = 0;
     float h = 0;
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size s = c->Measure(inner);
         w = std::max(w, s.w);
         h = std::max(h, s.h);
@@ -163,7 +163,7 @@ void Border::Arrange(const Rect& finalRect) {
     const Rect content{finalRect.x + margin.l + pad.l, finalRect.y + margin.t + pad.t,
                        std::max(0.0f, finalRect.w - margin.H() - pad.H()),
                        std::max(0.0f, finalRect.h - margin.V() - pad.V())};
-    for (auto& c : children_) c->Arrange(content);
+    for (auto& c : LayoutChildren()) c->Arrange(content);
 }
 
 void Border::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
@@ -199,7 +199,7 @@ Size ScrollViewer::Measure(const Size& available) {
     constexpr float kUnbounded = 1.0e6f;
     float w = 0;
     float h = 0;
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size s = c->Measure(Size{availW, kUnbounded});
         w = std::max(w, s.w);
         h = std::max(h, s.h);
@@ -231,7 +231,7 @@ void ScrollViewer::Arrange(const Rect& finalRect) {
     // Children are arranged in their own (unscrolled) space; the paint offset
     // and HitTest move them by -offset_ / +offset_ respectively.
     const Rect content{viewport.x, viewport.y, viewport.w, std::max(contentHeight_, viewport.h)};
-    for (auto& c : children_) c->Arrange(content);
+    for (auto& c : LayoutChildren()) c->Arrange(content);
 }
 
 void ScrollViewer::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
@@ -365,7 +365,7 @@ void Page::Arrange(const Rect& finalRect) {
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
     const Rect content{finalRect.x + pad.l, finalRect.y + pad.t, std::max(0.0f, finalRect.w - pad.H()),
                        std::max(0.0f, finalRect.h - pad.V())};
-    for (auto& c : children_) c->Arrange(content);
+    for (auto& c : LayoutChildren()) c->Arrange(content);
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +383,7 @@ Size StackPanel::Measure(const Size& available) {
     float crossExtent = 0;
     bool first = true;
     for (auto& c : children_) {
+        if (!c->IsVisible()) continue;   // Collapsed takes no space at all.
         const Size s = orientation == 0
                            ? c->Measure(Size{inner.w, std::max(0.0f, inner.h - mainExtent)})
                            : c->Measure(Size{std::max(0.0f, inner.w - mainExtent), inner.h});
@@ -416,7 +417,7 @@ void StackPanel::Arrange(const Rect& finalRect) {
                        std::max(0.0f, finalRect.h - margin.V() - pad.V())};
     float cursor = orientation == 0 ? content.y : content.x;
     bool first = true;
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         if (!first) cursor += spacing;
         first = false;
         if (orientation == 0) {
@@ -691,7 +692,7 @@ Size Canvas::Measure(const Size& available) {
     // child may sit anywhere, including outside the canvas bounds.
     float childW = 0;
     float childH = 0;
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size s = c->Measure(inner);
         // Include the child's own offset, so a canvas without an explicit
         // Height still reports enough room for what is actually visible.
@@ -717,7 +718,7 @@ void Canvas::Arrange(const Rect& finalRect) {
     bounds_ = finalRect;
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Point origin{finalRect.x + margin.l, finalRect.y + margin.t};
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const float left = c->SlotOf("Canvas.Left") >= 0 ? c->Get<float>(c->SlotOf("Canvas.Left")) : 0;
         const float top = c->SlotOf("Canvas.Top") >= 0 ? c->Get<float>(c->SlotOf("Canvas.Top")) : 0;
         c->Arrange(Rect{origin.x + left, origin.y + top, c->DesiredSize().w, c->DesiredSize().h});
@@ -824,7 +825,7 @@ Size Grid::Measure(const Size& available) {
     const float freeW = std::max(0.0f, availW - fixedW - totalColSpacing);
     const float freeH = std::max(0.0f, availH - fixedH - totalRowSpacing);
 
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const int row = c->SlotOf("Grid.Row") >= 0 ? c->Get<int>(c->SlotOf("Grid.Row")) : 0;
         const int col = c->SlotOf("Grid.Column") >= 0 ? c->Get<int>(c->SlotOf("Grid.Column")) : 0;
         const int rowSpan = std::max(1, c->SlotOf("Grid.RowSpan") >= 0
@@ -990,7 +991,7 @@ void Grid::Arrange(const Rect& finalRect) {
         cy += rowH[i] + barH;
     }
 
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const int row = c->SlotOf("Grid.Row") >= 0 ? c->Get<int>(c->SlotOf("Grid.Row")) : 0;
         const int col = c->SlotOf("Grid.Column") >= 0 ? c->Get<int>(c->SlotOf("Grid.Column")) : 0;
         const int rowSpan = std::max(1, c->SlotOf("Grid.RowSpan") >= 0
@@ -1034,7 +1035,7 @@ Size WrapPanel::Measure(const Size& available) {
     float maxLineExtent = 0;
     int lines = 0;
 
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size s = c->Measure(Size{horizontal ? availW : 1.0e6f, horizontal ? 1.0e6f : available.h});
         const float along = horizontal ? s.w : s.h;
         const float across = horizontal ? s.h : s.w;
@@ -1073,7 +1074,7 @@ void WrapPanel::Arrange(const Rect& finalRect) {
     float cursor = 0;   // along the flow axis
     float lineY = 0;    // across axis position of the current line
     float lineCross = 0;
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size s = c->DesiredSize();
         const float along = horizontal ? s.w : s.h;
         const float across = horizontal ? s.h : s.w;
@@ -1227,7 +1228,7 @@ Size Viewbox::Measure(const Size& available) {
                      std::max(0.0f, available.h - margin.V() - pad.V())};
     float w = 0;
     float h = 0;
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size s = c->Measure(inner);
         w = std::max(w, s.w);
         h = std::max(h, s.h);
@@ -1246,7 +1247,7 @@ void Viewbox::Arrange(const Rect& finalRect) {
     const Rect box{finalRect.x + margin.l + pad.l, finalRect.y + margin.t + pad.t,
                    std::max(0.0f, finalRect.w - margin.H() - pad.H()),
                    std::max(0.0f, finalRect.h - margin.V() - pad.V())};
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const Size natural = c->DesiredSize();
         if (natural.w <= 0 || natural.h <= 0) { c->Arrange(box); continue; }
         // Uniform fit: never stretch beyond natural size, only shrink to fit.
@@ -1300,7 +1301,7 @@ Size Expander::Measure(const Size& available) {
     float bodyW = 0;
     float bodyH = 0;
     if (expanded_) {
-        for (auto& c : children_) {
+        for (auto& c : LayoutChildren()) {
             const Size s = c->Measure(inner);
             bodyW = std::max(bodyW, s.w);
             bodyH += s.h;
@@ -1323,7 +1324,7 @@ void Expander::Arrange(const Rect& finalRect) {
     float y = finalRect.y + margin.t + headerH;
     const float x = finalRect.x + margin.l + indent;
     const float w = std::max(0.0f, finalRect.w - margin.H() - indent);
-    for (auto& c : children_) {
+    for (auto& c : LayoutChildren()) {
         const float h = c->DesiredSize().h;
         c->Arrange(Rect{x, y, w, h});
         y += h;
