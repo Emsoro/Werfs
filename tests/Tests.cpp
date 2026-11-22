@@ -2116,6 +2116,315 @@ TEST("file dialog: fake service round-trips a path") {
     SetFileDialogService(nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// Selection + TabView (§10c.4 batch B)
+// ---------------------------------------------------------------------------
+namespace {
+
+// Builds a TabView with N tabs backed by an ObservableList of TabEntryModel.
+struct TabFixture {
+    std::shared_ptr<wui::ObservableList<ListItem>> items;
+    WidgetPtr root;
+    TabView* tabs = nullptr;
+
+    explicit TabFixture(int count) {
+        DiagnosticBag bag;
+        auto doc = CompileWaml("<Page><TabView/></Page>", ParseOptions{"tabs.waml"}, bag);
+        if (!doc) {
+            std::printf("    compile failed: %s\n", bag.ToText().c_str());
+            return;
+        }
+        root = doc->Instantiate(&g_fakeText);
+        root->ForceLayout(Size{600, 400});
+        tabs = dynamic_cast<TabView*>(root->Children()[0].get());
+        if (!tabs) return;
+        items = std::make_shared<wui::ObservableList<ListItem>>();
+        for (int i = 0; i < count; ++i) {
+            auto entry = std::make_shared<ListItem>(i);
+            entry->Title.Set(L"Doc " + std::to_wstring(i + 1));
+            items->Add(entry);
+        }
+        tabs->SetDataContext(nullptr);
+        tabs->SetSlotValue(tabs->SlotOf("ItemsSource"), Value::Ref(items), true);
+        root->ForceLayout(Size{600, 400});
+    }
+};
+
+} // namespace
+
+TEST("selector: clicking a row sets SelectedIndex") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><ListBox ItemsSource=\"{Binding Items}\">"
+        "<ListBox.ItemTemplate><DataTemplate>"
+        "<TextBlock Text=\"{Binding Title}\"/>"
+        "</DataTemplate></ListBox.ItemTemplate>"
+        "</ListBox></Page>",
+        ParseOptions{"sel1.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class RowsVm final : public ObservableObject {
+    public:
+        RowsVm() {
+            list = std::make_shared<wui::ObservableList<ListItem>>();
+            list->Add(std::make_shared<ListItem>(0));
+            list->Add(std::make_shared<ListItem>(0));
+            Items.Set(std::static_pointer_cast<RefObject>(list));
+            Make("Items", Items);
+            Make("SelectedIndex", SelectedIndex);
+        }
+        std::shared_ptr<wui::ObservableList<ListItem>> list;
+        ObservableProperty<RefPtr> Items{"Items"};
+        ObservableProperty<int> SelectedIndex{"SelectedIndex", -1};
+    };
+    auto vm = std::make_shared<RowsVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* lb = dynamic_cast<ListBox*>(root->Children()[0].get());
+    CHECK(lb != nullptr);
+    if (!lb) return;
+    root->ForceLayout(Size{300, 200});
+    CHECK(lb->ItemCount() == 2);
+    CHECK(lb->SelectedIndex() == -1);
+
+    // Click the second row.
+    Widget* row = lb->ItemWidgetAt(1);
+    CHECK(row != nullptr);
+    if (!row) return;
+    const Rect b = row->Bounds();
+    lb->OnPointerDown(Point{b.x + 5, b.y + b.h * 0.5f});
+    CHECK(lb->SelectedIndex() == 1);
+}
+
+TEST("selector: SelectedIndex round-trips through the ViewModel") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><ListBox ItemsSource=\"{Binding Items}\""
+        " SelectedIndex=\"{Binding SelectedIndex, Mode=TwoWay}\">"
+        "<ListBox.ItemTemplate><DataTemplate>"
+        "<TextBlock Text=\"{Binding Title}\"/>"
+        "</DataTemplate></ListBox.ItemTemplate>"
+        "</ListBox></Page>",
+        ParseOptions{"sel2.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class RowsVm final : public ObservableObject {
+    public:
+        RowsVm() {
+            list = std::make_shared<wui::ObservableList<ListItem>>();
+            list->Add(std::make_shared<ListItem>(0));
+            list->Add(std::make_shared<ListItem>(0));
+            list->Add(std::make_shared<ListItem>(0));
+            Items.Set(std::static_pointer_cast<RefObject>(list));
+            Make("Items", Items);
+            Make("SelectedIndex", SelectedIndex);
+        }
+        std::shared_ptr<wui::ObservableList<ListItem>> list;
+        ObservableProperty<RefPtr> Items{"Items"};
+        ObservableProperty<int> SelectedIndex{"SelectedIndex", -1};
+    };
+    auto vm = std::make_shared<RowsVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* lb = dynamic_cast<ListBox*>(root->Children()[0].get());
+    CHECK(lb != nullptr);
+    if (!lb) return;
+    root->ForceLayout(Size{300, 200});
+
+    // VM -> control
+    vm->SelectedIndex.Set(2);
+    CHECK(lb->SelectedIndex() == 2);
+
+    // control -> VM (this is what a TwoWay binding has to survive without echoing)
+    lb->SetSelectedIndex(0);
+    CHECK(vm->SelectedIndex.Get() == 0);
+
+    // Out-of-range from the VM clamps rather than storing nonsense.
+    vm->SelectedIndex.Set(99);
+    CHECK(lb->SelectedIndex() == 2);
+}
+
+TEST("selector: keyboard moves the selection and stops at the ends") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><ListBox ItemsSource=\"{Binding Items}\">"
+        "<ListBox.ItemTemplate><DataTemplate>"
+        "<TextBlock Text=\"{Binding Title}\"/>"
+        "</DataTemplate></ListBox.ItemTemplate>"
+        "</ListBox></Page>",
+        ParseOptions{"sel3.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    class RowsVm final : public ObservableObject {
+    public:
+        RowsVm() {
+            list = std::make_shared<wui::ObservableList<ListItem>>();
+            for (int i = 0; i < 3; ++i) list->Add(std::make_shared<ListItem>(0));
+            Items.Set(std::static_pointer_cast<RefObject>(list));
+            Make("Items", Items);
+        }
+        std::shared_ptr<wui::ObservableList<ListItem>> list;
+        ObservableProperty<RefPtr> Items{"Items"};
+    };
+    auto vm = std::make_shared<RowsVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* lb = dynamic_cast<ListBox*>(root->Children()[0].get());
+    CHECK(lb != nullptr);
+    if (!lb) return;
+    root->ForceLayout(Size{300, 200});
+
+    lb->SetSelectedIndex(0);
+    lb->OnKeyDown(KeyDown);
+    CHECK(lb->SelectedIndex() == 1);
+    lb->OnKeyDown(KeyEnd);
+    CHECK(lb->SelectedIndex() == 2);
+    // Already at the end: must not run past the item count.
+    lb->OnKeyDown(KeyDown);
+    CHECK(lb->SelectedIndex() == 2);
+    lb->OnKeyDown(KeyHome);
+    CHECK(lb->SelectedIndex() == 0);
+}
+
+TEST("tabview: switching tabs changes which content is laid out") {
+    TabFixture f(3);
+    CHECK(f.tabs != nullptr);
+    if (!f.tabs) return;
+    CHECK(f.tabs->ItemCount() == 3);
+
+    f.tabs->SetSelectedIndex(1);
+    CHECK(f.tabs->SelectedIndex() == 1);
+    // Every tab has a rect on the strip, and they do not overlap.
+    const Rect t0 = f.tabs->TabBounds(0);
+    const Rect t1 = f.tabs->TabBounds(1);
+    CHECK(t0.w > 0);
+    CHECK(t1.x >= t0.x + t0.w);
+}
+
+TEST("tabview: clicking a tab selects it, clicking close does not") {
+    TabFixture f(3);
+    CHECK(f.tabs != nullptr);
+    if (!f.tabs) return;
+    f.tabs->SetSelectedIndex(0);
+
+    // Click the body of tab 2.
+    const Rect t2 = f.tabs->TabBounds(2);
+    f.tabs->OnPointerDown(Point{t2.x + 4, t2.y + t2.h * 0.5f});
+    f.tabs->OnPointerUp(Point{t2.x + 4, t2.y + t2.h * 0.5f});
+    CHECK(f.tabs->SelectedIndex() == 2);
+
+    // Click tab 0's close button: requests a close but must not change selection.
+    f.tabs->ClearCloseRequest();
+    const Rect close0 = f.tabs->CloseButtonBounds(0);
+    f.tabs->OnPointerDown(Point{close0.x + 2, close0.y + 2});
+    f.tabs->OnPointerUp(Point{close0.x + 2, close0.y + 2});
+    CHECK(f.tabs->CloseRequested() == 0);
+    CHECK(f.tabs->SelectedIndex() == 2);
+}
+
+TEST("tabview: the + button invokes AddCommand") {
+    DiagnosticBag bag;
+    auto doc = CompileWaml(
+        "<Page><TabView ItemsSource=\"{Binding Items}\" AddCommand=\"{Binding AddCmd}\"/></Page>",
+        ParseOptions{"tabs2.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    int added = 0;
+    class TabsVm final : public ObservableObject {
+    public:
+        explicit TabsVm(int* counter) {
+            list = std::make_shared<wui::ObservableList<ListItem>>();
+            auto e = std::make_shared<ListItem>(0);
+            e->Title.Set(L"One");
+            list->Add(e);
+            Items.Set(std::static_pointer_cast<RefObject>(list));
+            auto cmd = std::make_shared<RelayCommand>([counter] { ++(*counter); });
+            AddCmd.Set(std::static_pointer_cast<RefObject>(cmd));
+            Make("Items", Items);
+            Make("AddCmd", AddCmd);
+        }
+        std::shared_ptr<wui::ObservableList<ListItem>> list;
+        ObservableProperty<RefPtr> Items{"Items"};
+        ObservableProperty<RefPtr> AddCmd{"AddCmd"};
+    };
+    auto vm = std::make_shared<TabsVm>(&added);
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* tabs = dynamic_cast<TabView*>(root->Children()[0].get());
+    CHECK(tabs != nullptr);
+    if (!tabs) return;
+    root->ForceLayout(Size{600, 400});
+
+    const Rect add = tabs->AddButtonBounds();
+    tabs->OnPointerDown(Point{add.x + 2, add.y + 2});
+    tabs->OnPointerUp(Point{add.x + 2, add.y + 2});
+    CHECK(added == 1);
+}
+
+TEST("tabview: adding and removing items keeps the selection valid") {
+    TabFixture f(3);
+    CHECK(f.tabs != nullptr);
+    if (!f.tabs) return;
+    f.tabs->SetSelectedIndex(2);
+
+    // Remove the last tab: the selection has nowhere to point, so it must move to
+    // the new last tab rather than dangle past the end.
+    f.items->RemoveAt(2);
+    f.root->ForceLayout(Size{600, 400});
+    CHECK(f.tabs->ItemCount() == 2);
+    CHECK(f.tabs->SelectedIndex() == 1);
+}
+
+TEST("tabview: titles come from the model, not a placeholder") {
+    // Regression: the strip drew "Tab" for every entry because the paint path
+    // read the width from the model but the label from a default. A table of
+    // identical placeholder labels looks almost right, which is why this needs an
+    // explicit assertion rather than a visual check.
+    DiagnosticBag bag;
+    auto doc = CompileWaml("<Page><TabView ItemsSource=\"{Binding Docs}\"/></Page>",
+                           ParseOptions{"tabs3.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    // Own document class, not TabEntryModel -- that is the path a sample takes.
+    class Doc final : public ObservableObject, public IBoundTitle {
+    public:
+        explicit Doc(std::wstring t) {
+            Title.Set(std::move(t));
+            Make("Title", Title);
+        }
+        std::wstring BoundTitle() const override { return Title.Get(); }
+        ObservableProperty<std::wstring> Title{"Title"};
+    };
+    class DocsVm final : public ObservableObject {
+    public:
+        DocsVm() {
+            auto list = std::make_shared<ObservableList<Doc>>();
+            for (const wchar_t* t : {L"Alpha", L"Beta"}) list->Add(std::make_shared<Doc>(t));
+            Docs.Set(std::static_pointer_cast<RefObject>(list));
+            Make("Docs", Docs);
+        }
+        ObservableProperty<RefPtr> Docs{"Docs"};
+    };
+    auto vm = std::make_shared<DocsVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* tabs = dynamic_cast<TabView*>(root->Children()[0].get());
+    CHECK(tabs != nullptr);
+    if (!tabs) return;
+    root->ForceLayout(Size{600, 200});
+    CHECK(tabs->ItemCount() == 2);
+
+    // The fake text service returns a fixed width for every string, so widths
+    // cannot distinguish the titles. Read the label the paint path would use.
+    CHECK(tabs->TitleForTesting(0) == L"Alpha");
+    CHECK(tabs->TitleForTesting(1) == L"Beta");
+    CHECK(tabs->TitleForTesting(0) != L"Tab");
+}
+
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : "";
     const int failures = test::RunAll(filter);

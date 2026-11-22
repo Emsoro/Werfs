@@ -187,6 +187,25 @@ void TypeRegistry::RegisterBuiltins() {
         add(t);
     }
     {
+        auto t = std::make_shared<TypeInfo>("wui/TabView", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<TabView>(); });
+        AddLayoutProps(*t);
+        t->Prop("ItemsSource", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
+                BindingMode::OneWay);
+        // Both selection entries are TwoWay: clicking a tab must reach the
+        // ViewModel, and restoring a selection must reach the control.
+        t->Prop("SelectedIndex", VType::Number, Value::Number(-1),
+                AffectsMeasure | AffectsRender, BindingMode::TwoWay);
+        t->Prop("SelectedItem", VType::Ref, Value::Null(),
+                AffectsMeasure | AffectsRender, BindingMode::TwoWay);
+        // The + button invokes this; the ViewModel decides what a new tab is.
+        t->Prop("AddCommand", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        add(t);
+    }
+    {
         auto t = std::make_shared<TypeInfo>("wui/ListBox", ContentModel::None,
                                             []() -> WidgetPtr { return std::make_shared<ListBox>(); });
         AddLayoutProps(*t);
@@ -197,6 +216,13 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("ItemHeight", VType::Number, Value::Number(26), AffectsMeasure);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        // Selection: TwoWay on both, because the canonical use is "click a row,
+        // the ViewModel learns" and the reverse (restore selection) must work too.
+        // -1 means nothing selected.
+        t->Prop("SelectedIndex", VType::Number, Value::Number(-1),
+                AffectsRender, BindingMode::TwoWay);
+        t->Prop("SelectedItem", VType::Ref, Value::Null(),
+                AffectsRender, BindingMode::TwoWay);
         add(t);
     }
     {

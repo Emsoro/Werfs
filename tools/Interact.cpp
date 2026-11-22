@@ -250,7 +250,38 @@ int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
     }
     Expect(lb->ItemCount() == before, "Remove dropped a row");
 
-    std::printf("\n[3] this page carries no basic-only controls\n");
+    std::printf("\n[3] tab strip selects through the ViewModel\n");
+    // The page's TabView is the only one, and its selection is bound TwoWay to
+    // ActiveTab -- so clicking a tab must reach the VM, not just the control.
+    Widget* tabWidget = FindFirst(root, "wui/TabView");
+    Expect(tabWidget != nullptr, "found TabView");
+    if (auto* tabs = dynamic_cast<TabView*>(tabWidget)) {
+        Expect(tabs->ItemCount() == 3, "three tabs seeded from the VM");
+        const int before = vm->ActiveTab.Get();
+        Expect(tabs->SelectedIndex() == before, "control selection matches the VM");
+
+        // Click the third tab.
+        const Rect t2 = tabs->TabBounds(2);
+        Widget* hit = root->HitTest(Point{t2.x + 6, t2.y + t2.h * 0.5f});
+        Expect(hit == tabs, "hit test reaches the tab strip");
+        tabs->OnPointerDown(Point{t2.x + 6, t2.y + t2.h * 0.5f});
+        tabs->OnPointerUp(Point{t2.x + 6, t2.y + t2.h * 0.5f});
+        Expect(tabs->SelectedIndex() == 2, "clicking tab 3 selected it");
+        Expect(vm->ActiveTab.Get() == 2, "selection wrote back to the ViewModel");
+        Expect(vm->ActiveDocumentTitle.Get() == L"History",
+               "the VM summary followed the selection");
+
+        // The + button asks the ViewModel for a new tab.
+        const int countBefore = static_cast<int>(tabs->ItemCount());
+        const Rect add = tabs->AddButtonBounds();
+        tabs->OnPointerDown(Point{add.x + 4, add.y + 4});
+        tabs->OnPointerUp(Point{add.x + 4, add.y + 4});
+        root->ForceLayout(Size{700, 2400});
+        Expect(static_cast<int>(tabs->ItemCount()) == countBefore + 1, "+ added a tab");
+        Expect(tabs->SelectedIndex() == countBefore, "the new tab became active");
+    }
+
+    std::printf("\n[4] this page carries no basic-only controls\n");
     // Keeps the two samples from drifting into one another.
     Expect(FindFirst(root, "wui/TextBox") == nullptr, "list page has no TextBox");
 

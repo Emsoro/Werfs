@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "Controls.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <algorithm>
 
@@ -1375,10 +1377,86 @@ bool Expander::OnKeyDown(int vk) {
 // ---------------------------------------------------------------------------
 // ListBox
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Selector
+//
+// The index is the source of truth and SelectedItem is derived from it. Keeping
+// two independent fields would let them disagree -- a classic bug where the
+// programmatic path sets one and the click path sets the other.
+// ---------------------------------------------------------------------------
+int Selector::ClampIndex(int index) const {
+    const int count = static_cast<int>(ItemCount());
+    if (index < 0) return -1;
+    if (index >= count) return count > 0 ? count - 1 : -1;
+    return index;
+}
+
+RefPtr Selector::SelectedItem() const {
+    if (selectedIndex_ < 0) return nullptr;
+    return ItemAt(static_cast<size_t>(selectedIndex_));
+}
+
+void Selector::SetSelectedIndex(int index) {
+    const int clamped = ClampIndex(index);
+    if (clamped == selectedIndex_) return;
+    selectedIndex_ = clamped;
+    // Tell the ViewModel, unless we are already reacting to it. Without the
+    // guard, a TwoWay binding would echo: target change -> source change ->
+    // target change -> ...
+    if (!settingIndex_ && slotSelectedIndex_ >= 0) {
+        settingIndex_ = true;
+        SetSlotValue(slotSelectedIndex_, Value::Number(clamped), true);
+        settingIndex_ = false;
+    }
+    OnSelectionChanged();
+    Invalidate(AffectsRender);
+}
+
+void Selector::OnSlotChanged(int slot, const Value& value) {
+    if (slot == slotSelectedIndex_) {
+        const int wanted = value.type == VType::Number ? static_cast<int>(value.num) : -1;
+        if (settingIndex_) return; // came from us; do not bounce back
+        const int clamped = ClampIndex(wanted);
+        if (clamped != selectedIndex_) {
+            selectedIndex_ = clamped;
+            OnSelectionChanged();
+            Invalidate(AffectsRender);
+        }
+        return;
+    }
+    if (slot == slotSelectedItem_) {
+        // Resolve the item back to an index so both entry points agree.
+        auto item = Get<RefPtr>(slotSelectedItem_);
+        int resolved = -1;
+        if (item) {
+            const size_t count = ItemCount();
+            for (size_t i = 0; i < count; ++i) {
+                if (ItemAt(i) == item) {
+                    resolved = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+        if (resolved != selectedIndex_) {
+            selectedIndex_ = resolved;
+            // Push the index too, so a VM bound to SelectedIndex stays in sync.
+            if (slotSelectedIndex_ >= 0) {
+                settingIndex_ = true;
+                SetSlotValue(slotSelectedIndex_, Value::Number(resolved), true);
+                settingIndex_ = false;
+            }
+            OnSelectionChanged();
+            Invalidate(AffectsRender);
+        }
+    }
+}
+
 ListBox::ListBox() {
     BindType(TypeRegistry::Instance().Find("wui/ListBox"));
     slotItems_ = SlotOf("ItemsSource");
     slotTemplate_ = SlotOf("ItemTemplate");
+    slotSelectedIndex_ = SlotOf("SelectedIndex");
+    slotSelectedItem_ = SlotOf("SelectedItem");
 }
 
 ListBox::~ListBox() { UnsubscribeSource(); }
@@ -1400,10 +1478,61 @@ void ListBox::UnsubscribeSource() {
     listRef_.reset();
 }
 
-void ListBox::OnSlotChanged(int slot, const Value&) {
+void ListBox::OnSlotChanged(int slot, const Value& value) {
     if (slot == slotItems_) SubscribeSource();
     if (slot == slotTemplate_) RebuildItems(text_);
+    Selector::OnSlotChanged(slot, value);
 }
+
+size_t ListBox::ItemCount() const { return itemWidgets_.size(); }
+
+RefPtr ListBox::ItemAt(size_t index) const {
+    if (!list_ || index >= list_->Count()) return nullptr;
+    return list_->ItemAt(index);
+}
+
+void ListBox::OnSelectionChanged() {
+    // Keep the visual highlight and any scroll position consistent with the
+    // selection: a selection the user cannot see is indistinguishable from no
+    // selection at all.
+    Invalidate(AffectsRender);
+}
+
+bool ListBox::OnKeyDown(int vk) {
+    const int count = static_cast<int>(ItemCount());
+    if (count == 0) return Widget::OnKeyDown(vk);
+    switch (vk) {
+    case KeyDown:
+        SetSelectedIndex(std::min(selectedIndex_ + 1, count - 1));
+        return true;
+    case KeyUp:
+        SetSelectedIndex(std::max(selectedIndex_ - 1, 0));
+        return true;
+    case KeyHome:
+        SetSelectedIndex(0);
+        return true;
+    case KeyEnd:
+        SetSelectedIndex(count - 1);
+        return true;
+    default:
+        return Widget::OnKeyDown(vk);
+    }
+}
+
+void ListBox::OnPointerDown(const Point& local) {
+    // Selection happens on press, matching how lists behave everywhere else --
+    // press-and-drag-off still leaves the row selected.
+    const size_t count = ItemCount();
+    for (size_t i = 0; i < count; ++i) {
+        Widget* item = ItemWidgetAt(i);
+        if (item && item->Bounds().Contains(local)) {
+            SetSelectedIndex(static_cast<int>(i));
+            break;
+        }
+    }
+}
+
+void ListBox::OnPointerUp(const Point&) {}
 
 void ListBox::OnListChanged(const ListChange&) { RebuildItems(text_); }
 
@@ -1467,6 +1596,12 @@ void ListBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
     if (bg.a > 0) ctx.FillRect(bounds_, bg);
     ctx.PushClip(bounds_);
+    // Selection highlight goes UNDER the row content so text stays readable.
+    if (selectedIndex_ >= 0 && static_cast<size_t>(selectedIndex_) < itemWidgets_.size()) {
+        const Rect row = itemWidgets_[static_cast<size_t>(selectedIndex_)]->Bounds();
+        const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+        ctx.FillRoundRect(row, 4.0f, Color{accent.r, accent.g, accent.b, 0.18f});
+    }
     for (auto& w : itemWidgets_) w->PaintTree(ctx, palette);
     ctx.PopClip();
 }
@@ -1478,4 +1613,336 @@ Widget* ListBox::HitTest(const Point& p) {
     return bounds_.Contains(p) ? this : nullptr;
 }
 
+
+// ---------------------------------------------------------------------------
+// TabView
+//
+// Geometry is computed in one place (EnsureTabWidths) and then read by both paint
+// and hit testing. Computing it twice is how a close button ends up drawn in one
+// spot and clickable in another.
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kTabHeight = 32.0f;
+constexpr float kTabPadding = 12.0f;
+constexpr float kCloseSize = 14.0f;
+constexpr float kDirtyDot = 6.0f;
+constexpr float kStripGap = 2.0f;
+constexpr float kAddWidth = 32.0f;
+} // namespace
+
+TabView::TabView() {
+    BindType(TypeRegistry::Instance().Find("wui/TabView"));
+    slotItems_ = SlotOf("ItemsSource");
+    slotAddCommand_ = SlotOf("AddCommand");
+    slotSelectedIndex_ = SlotOf("SelectedIndex");
+    slotSelectedItem_ = SlotOf("SelectedItem");
+}
+
+TabView::~TabView() { UnsubscribeSource(); }
+
+void TabView::SubscribeSource() {
+    auto ref = Get<RefPtr>(slotItems_);
+    auto* list = dynamic_cast<ObservableListBase*>(ref.get());
+    if (list == list_) return;
+    UnsubscribeSource();
+    list_ = list;
+    listRef_ = ref;
+    if (list_) list_->Subscribe(this);
+    Invalidate(AffectsMeasure);
+}
+
+void TabView::UnsubscribeSource() {
+    if (list_) list_->Unsubscribe(this);
+    list_ = nullptr;
+    listRef_.reset();
+}
+
+void TabView::OnSlotChanged(int slot, const Value& value) {
+    if (slot == slotItems_) SubscribeSource();
+    Selector::OnSlotChanged(slot, value);
+}
+
+void TabView::OnListChanged(const ListChange&) {
+    // A tab was added or removed: the strip geometry changes, and the selection
+    // may now point past the end.
+    if (selectedIndex_ >= static_cast<int>(ItemCount())) {
+        selectedIndex_ = static_cast<int>(ItemCount()) - 1;
+    }
+    tabWidths_.clear();
+    Invalidate(AffectsMeasure);
+}
+
+size_t TabView::ItemCount() const { return list_ ? list_->Count() : 0; }
+
+RefPtr TabView::ItemAt(size_t index) const {
+    if (!list_ || index >= list_->Count()) return nullptr;
+    return list_->ItemAt(index);
+}
+
+void TabView::OnSelectionChanged() {
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+Rect TabView::StripBounds() const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    return Rect{bounds_.x + margin.l, bounds_.y + margin.t,
+                std::max(0.0f, bounds_.w - margin.H()), kTabHeight};
+}
+
+// Tab titles come from the model, not from stringifying the item: a tab strip
+// shows the document's name, and only the model knows what that is. TabEntryModel
+// is the supplied model; a sample with its own document class binds through the
+// normal binding layer instead (see samples/list), so this path covers the
+// ItemsSource-of-TabEntryModel case.
+std::wstring TabView::TitleFor(size_t index) {
+    auto item = ItemAt(index);
+    if (!item) return L"Tab";
+    if (auto entry = std::dynamic_pointer_cast<TabEntryModel>(item)) return entry->Title();
+    if (auto* bound = dynamic_cast<IBoundTitle*>(item.get())) return bound->BoundTitle();
+    return L"Tab";
+}
+
+float TabView::TabWidthFor(size_t index) {
+    const std::wstring title = TitleFor(index);
+    float w = kTabPadding * 2 + kCloseSize + kStripGap + kDirtyDot;
+    if (ITextService* text = TextSystem::Get()) {
+        const Size m = text->Measure(title, 13.0f, WeightNormal);
+        w += m.w;
+    }
+    return w;
+}
+
+void TabView::EnsureTabWidths() {
+    const size_t count = ItemCount();
+    if (tabWidths_.size() != count) {
+        tabWidths_.resize(count);
+        for (size_t i = 0; i < count; ++i) tabWidths_[i] = TabWidthFor(i);
+    }
+}
+
+Rect TabView::TabBounds(size_t index) {
+    EnsureTabWidths();
+    const Rect strip = StripBounds();
+    if (index >= tabWidths_.size()) return Rect{strip.x, strip.y, 0, 0};
+    float x = strip.x - stripScroll_;
+    for (size_t i = 0; i < index; ++i) x += tabWidths_[i] + kStripGap;
+    return Rect{x, strip.y, tabWidths_[index], kTabHeight};
+}
+
+Rect TabView::CloseButtonBounds(size_t index) {
+    const Rect tab = TabBounds(index);
+    return Rect{tab.x + tab.w - kTabPadding * 0.5f - kCloseSize,
+                tab.y + (kTabHeight - kCloseSize) * 0.5f, kCloseSize, kCloseSize};
+}
+
+Rect TabView::AddButtonBounds() {
+    const Rect strip = StripBounds();
+    float x = strip.x - stripScroll_;
+    for (float w : tabWidths_) x += w + kStripGap;
+    return Rect{x, strip.y, kAddWidth, kTabHeight};
+}
+
+Size TabView::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float outerW = std::min(available.w, margin.H() + 320.0f);
+    const float innerW = std::max(0.0f, outerW - margin.H());
+    EnsureTabWidths();
+    float desired = kTabHeight;
+    // The content area takes the remaining height. Asking the selected item for
+    // its own height keeps a short tab from being stretched to fill the window.
+    if (selectedIndex_ >= 0) {
+        if (Widget* content = TabContentAt(static_cast<size_t>(selectedIndex_))) {
+            const Size s = content->Measure(Size{innerW, 1.0e6f});
+            desired += s.h;
+        }
+    }
+    desired_ = Size{outerW, desired};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void TabView::Arrange(const Rect& finalRect) {
+    bounds_ = finalRect;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float contentY = finalRect.y + margin.t + kTabHeight;
+    contentTop_ = contentY;
+    const float w = std::max(0.0f, finalRect.w - margin.H());
+    // Only the selected tab's content participates in layout; the others are not
+    // measured, so their children keep stale bounds and cannot steal clicks.
+    for (size_t i = 0; i < ItemCount(); ++i) {
+        if (Widget* content = TabContentAt(i)) {
+            if (static_cast<int>(i) == selectedIndex_) {
+                content->Arrange(Rect{finalRect.x + margin.l, contentY, w,
+                                      std::max(0.0f, finalRect.h - margin.t - kTabHeight)});
+            } else {
+                content->Arrange(Rect{0, 0, 0, 0});
+            }
+        }
+    }
+}
+Widget* TabView::TabContentAt(size_t index) {
+    size_t childIndex = 0;
+    for (const auto& c : children_) {
+        if (!c->IsVisible()) continue;
+        if (childIndex == index) return c.get();
+        ++childIndex;
+    }
+    return nullptr;
+}
+
+void TabView::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    EnsureTabWidths();
+
+    const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    if (bg.a > 0) ctx.FillRoundRect(bounds_, 6.0f, bg);
+
+    const Rect strip = StripBounds();
+    ctx.PushClip(Rect{bounds_.x, bounds_.y, bounds_.w, kTabHeight});
+
+    ITextService* text = TextSystem::Get();
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+    const Color textPrimary = palette.colors[static_cast<int>(Token::TextPrimary)];
+    const Color textSecondary = palette.colors[static_cast<int>(Token::TextSecondary)];
+
+    for (size_t i = 0; i < tabWidths_.size(); ++i) {
+        const Rect tab = TabBounds(i);
+        const bool active = static_cast<int>(i) == selectedIndex_;
+
+        // Active tab is filled and sits "in front"; inactive ones are flat. This
+        // is the whole affordance -- there are no borders to lean on.
+        if (active) {
+            ctx.FillRoundRect(Rect{tab.x, tab.y + 4.0f, tab.w, tab.h - 4.0f}, 6.0f,
+                              palette.colors[static_cast<int>(Token::CardBackground)]);
+            ctx.FillRect(Rect{tab.x + 4.0f, tab.y + tab.h - 2.0f, tab.w - 8.0f, 2.0f}, accent);
+        }
+
+        // Title comes from the model. A plain TabEntryModel is the common case;
+        // a sample with its own document class supplies it through IBoundTitle.
+        const std::wstring title = TitleFor(i);
+        bool dirty = false;
+        bool closable = true;
+        if (auto entry = std::dynamic_pointer_cast<TabEntryModel>(ItemAt(i))) {
+            dirty = entry->IsDirty();
+            closable = entry->IsClosable();
+        }
+        float textX = tab.x + kTabPadding;
+        if (text) {
+            const Size m = text->Measure(title, 13.0f, WeightNormal);
+            ctx.DrawText(title, Rect{textX, tab.y, m.w, tab.h},
+                         active ? textPrimary : textSecondary, 13.0f, WeightNormal, TextAlign::Left);
+            textX += m.w + 6.0f;
+        }
+
+        // Dirty marker: a dot where the close button would be. Showing both at
+        // once would be ambiguous, so the dot replaces the × until saved.
+        if (dirty) {
+            // A circle drawn as a fully rounded rect -- no ellipse primitive yet.
+            const Rect dot{textX, tab.y + (tab.h - kDirtyDot) * 0.5f, kDirtyDot, kDirtyDot};
+            ctx.FillRoundRect(dot, kDirtyDot * 0.5f, accent);
+        } else if (closable) {
+            const Rect close = CloseButtonBounds(i);
+            // Two strokes rather than a glyph: no icon font needed.
+            const Color xColor = textSecondary;
+            ctx.DrawText(L"\u00d7", close, xColor, 15.0f, WeightNormal, TextAlign::Center);
+        }
+    }
+
+    // The + button, so "add a tab" is discoverable rather than only a menu item.
+    const Rect add = AddButtonBounds();
+    if (add.x + add.w <= bounds_.x + bounds_.w) {
+        ctx.FillRoundRect(add, 4.0f, palette.colors[static_cast<int>(Token::ControlFill)]);
+        ctx.DrawText(L"+", add, textPrimary, 16.0f, WeightNormal, TextAlign::Center);
+    }
+    ctx.PopClip();
+
+    // Content background, so an empty tab still reads as a panel.
+    if (contentTop_ > 0 && bounds_.y + bounds_.h > contentTop_) {
+        ctx.FillRect(Rect{bounds_.x, contentTop_, bounds_.w, bounds_.y + bounds_.h - contentTop_},
+                     palette.colors[static_cast<int>(Token::CardBackground)]);
+    }
+}
+
+Widget* TabView::HitTest(const Point& p) {
+    if (!bounds_.Contains(p)) return nullptr;
+
+    EnsureTabWidths();
+    // The strip is checked before the content, because a tab strip overlapping
+    // its own content is normal.
+    if (p.y >= bounds_.y && p.y < bounds_.y + kTabHeight) {
+        if (AddButtonBounds().Contains(p)) return this;
+        for (size_t i = 0; i < tabWidths_.size(); ++i) {
+            const Rect tab = TabBounds(i);
+            if (tab.Contains(p)) return this;
+        }
+        return this; // empty strip area still belongs to the TabView
+    }
+
+    if (selectedIndex_ >= 0) {
+        if (Widget* content = TabContentAt(static_cast<size_t>(selectedIndex_))) {
+            if (Widget* hit = content->HitTest(p)) return hit;
+        }
+    }
+    return this;
+}
+
+void TabView::RequestClose(size_t index) {
+    if (index < ItemCount()) closeRequested_ = static_cast<int>(index);
+}
+
+void TabView::OnPointerUp(const Point& local) {
+    // Tabs select on press (below); the strip's ×, the + and the inactive tab
+    // body are handled on release so a press-and-drag-away cancels.
+    if (local.y >= bounds_.y && local.y < bounds_.y + kTabHeight) {
+        if (AddButtonBounds().Contains(local)) {
+            PushAddCommand();
+            return;
+        }
+        for (size_t i = 0; i < tabWidths_.size(); ++i) {
+            if (!TabBounds(i).Contains(local)) continue;
+            // The × sits inside the tab, so it must be tested first -- otherwise
+            // closing a tab would just reselect it.
+            if (CloseButtonBounds(i).Contains(local)) {
+                RequestClose(i);
+            }
+            return;
+        }
+    }
+}
+
+void TabView::OnPointerDown(const Point& local) {
+    if (local.y < bounds_.y || local.y >= bounds_.y + kTabHeight) return;
+    for (size_t i = 0; i < tabWidths_.size(); ++i) {
+        if (!TabBounds(i).Contains(local)) continue;
+        // Pressing the × must not change the selection.
+        if (!CloseButtonBounds(i).Contains(local)) SetSelectedIndex(static_cast<int>(i));
+        return;
+    }
+}
+
+void TabView::PushAddCommand() {
+    if (slotAddCommand_ < 0) return;
+    auto cmd = Get<RefPtr>(slotAddCommand_);
+    if (!cmd) return;
+    if (auto* relay = dynamic_cast<ICommand*>(cmd.get())) {
+        if (relay->CanExecute()) relay->Execute();
+    }
+}
+
+bool TabView::OnKeyDown(int vk) {
+    // Left/Right move between tabs. Ctrl+Tab needs modifier state, which the
+    // framework does not track yet (the host would have to pass it in) -- so the
+    // arrows are the supported path for now, and Ctrl+Tab is a follow-up rather
+    // than a silently dead shortcut.
+    const int count = static_cast<int>(ItemCount());
+    if (count == 0) return Widget::OnKeyDown(vk);
+    if (vk == KeyLeft || vk == KeyRight) {
+        int next = selectedIndex_ + (vk == KeyRight ? 1 : -1);
+        if (next < 0) next = count - 1;
+        if (next >= count) next = 0;
+        SetSelectedIndex(next);
+        return true;
+    }
+    return Widget::OnKeyDown(vk);
+}
 } // namespace wui

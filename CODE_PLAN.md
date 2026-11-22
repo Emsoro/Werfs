@@ -48,7 +48,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 91 用例 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 99 用例 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **15 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** | ✅ | 类型注册表 16 项（含 DataTemplate） |
@@ -70,8 +70,8 @@ build.ps1  CMakeLists.txt
 | **Visibility + 转换器** | ✅ | `Collapsed` 不占位不点击；4 个内置转换器；未知名字是加载错误（7 用例） |
 | **浮层**（Popup / Flyout） | ⬜ 规划 | z-order、点外关闭、边缘翻转，见 §10c.3 |
 | **模态**（ContentDialog） | ⬜ 规划 | 遮罩 + 焦点陷阱，见 §10c.3 |
-| **单选模型**（Selector 基类） | ⬜ 规划 | 供 TabView / ListBox / ComboBox 复用，见 §10c.3 |
-| **菜单 / 工具栏 / 多标签** | ⬜ 规划 | 见 §10c.2 |
+| **单选模型**（Selector 基类） | ✅ | `SelectedIndex`/`SelectedItem` 双向；`ListBox` 点击与键盘选中；7 用例 |
+| **TabView**（多标签切换/关闭/新增） | ✅ | 数据驱动标签条、×关闭请求、+新增、横向溢出不依赖浮层；5 用例 |
 
 ## 3. 产物
 
@@ -1474,7 +1474,7 @@ public:
 
 # 附录
 
-## A. 测试清单（91 用例）
+## A. 测试清单（99 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1499,6 +1499,8 @@ public:
 | visibility | 2 | `Collapsed` 不占位、不参与命中测试与绘制 |
 | converter | 3 | `BoolToVisibility` 双向、`Not` 取反、未知名字报加载错误并给建议 |
 | filedialog | 2 | 无宿主时安全返回、假实现往返路径 |
+| selector | 3 | 点击选中、双向往返、键盘移动并钳制 |
+| tabview | 5 | 切换标签换内容、点×不选中、+调命令、增删后选中有效、标题来自模型 |
 | *（无前缀）* | 2 | 页面级集成：basic 页滚动、滚动后按钮仍可点 |
 
 ## B. 复现方式

@@ -202,6 +202,44 @@
           </Viewbox>
         </StackPanel>
       </Border>
+      <!-- ================= 7. TabView: selection model ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="7 · TabView and the selection model" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="Click a tab to switch. The active tab is highlighted and its content is the only thing laid out; the others are measured out of existence rather than merely hidden."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <TabView ItemsSource="{Binding Documents}"
+                   SelectedIndex="{Binding ActiveTab, Mode=TwoWay}"
+                   AddCommand="{Binding AddTabCommand}"
+                   Height="150">
+            <StackPanel Orientation="Vertical" Spacing="6" Padding="12">
+              <TextBlock Text="{Binding ActiveDocumentTitle}" FontSize="14"
+                         FontWeight="SemiBold" Foreground="TextPrimary"/>
+              <TextBlock Text="Each tab owns its own content. Switching tabs swaps which subtree participates in layout."
+                         FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Orientation="Vertical" Spacing="6" Padding="12">
+              <TextBlock Text="Second tab" FontSize="14" FontWeight="SemiBold"
+                         Foreground="TextPrimary"/>
+              <TextBlock Text="Tabs are data: the strip is drawn from ItemsSource, not from child widgets."
+                         FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Orientation="Vertical" Spacing="6" Padding="12">
+              <TextBlock Text="Third tab" FontSize="14" FontWeight="SemiBold"
+                         Foreground="TextPrimary"/>
+              <TextBlock Text="The + at the end of the strip invokes AddCommand, so the ViewModel decides what a new tab is."
+                         FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+            </StackPanel>
+          </TabView>
+
+          <TextBlock Text="{Binding ActiveTabSummary}" FontSize="12"
+                     Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
 
       <!-- ================= Footer ================= -->
       <TextBlock Text="ScrollViewer wraps the whole page — that is why this content can exceed the window."
