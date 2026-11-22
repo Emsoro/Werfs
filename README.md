@@ -132,11 +132,14 @@ framework/src/
     platform/   Resources：资源与文件加载、VERSIONINFO、路径解析
     render/     SoftwareRender（测试用）、D2DRender（真实后端）
 
-samples/gallery/        ← 示例应用，自带 VM、WAML、资源
-    Gallery.waml
-    GalleryVm.h
-    App.cpp
-    resources/
+samples/                ← 示例，单向依赖框架
+    gallery/               当前唯一示例：WAML + ViewModel + Win32 宿主 + 资源
+    shared/                （规划）共享宿主与资源，避免各示例重复
+    basic/                 （规划）基础控件
+    usercontrol/           （规划）父子组件、两个独立数据源
+    binding/               （规划）四种绑定模式对照
+    list/                  （规划）集合与 DataTemplate
+    theming/               （规划）Light/Dark 主题
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
@@ -144,6 +147,21 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 关键约束：`framework/` 里**没有**任何 `Gallery.waml`、`GalleryVm` 或 `IDR_WAML_*` 的引用。资源 id 属于示例，定义在 `samples/gallery/resources/Resource.h`；框架只提供「按类型名 + id 读取 RCDATA」的通用接口。
 
 新增示例：复制 `samples/gallery/` 改名、改 `Resource.h` 里的 id、在 `build.ps1` 加一个目标函数即可，框架侧零改动。
+
+### 示例路线
+
+示例不是一堆 demo，而是一条由简到繁的学习路径，同时是框架能力的验收矩阵：
+
+| 示例 | 内容 | 状态 |
+|---|---|---|
+| `basic` | TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | 规划中 |
+| `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
+| `binding` | 四种绑定模式并排对照 | 规划中 |
+| `list` | DataTemplate、每项独立上下文、动态增删 | 规划中 |
+| `theming` | Light/Dark 切换与 token | 规划中 |
+| `gallery` | 把所有示例组织成可浏览的图库（产品形态） | 当前示例的演进目标 |
+
+每个示例都是独立可执行文件（`waml_basic.exe`、`waml_usercontrol.exe`…），便于单独调试与截图。详细规划见 `CODE_PLAN.md` §10a。
 
 ---
 
@@ -212,6 +230,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **无 Grid**：只有线性的 `StackPanel`，复杂版面需嵌套模拟。
 - **无动画**：主题切换是瞬时的。
 - **`ListBox` 无选中**：只渲染列表，无 `SelectedIndex`。
+- **`DataContext` 不可绑定**：`{Binding ..., Source=...}` 在 v0.5 被明确拒绝，无法在 WAML 里给子树换数据源——这意味着**组件复用目前只能靠复制 WAML**。这是实现 `usercontrol` 示例的前置阻塞项。
 - **不虚拟化**：见性能基线。
 
 这些都在路线图里，见 `CODE_PLAN.md`。
