@@ -455,19 +455,23 @@ GalleryVm
 
 示例不是「一堆 demo」，而是一条**由简到繁的学习路径**，同时是框架能力的验收矩阵。每个示例独立可构建、可运行、可单独截图，任何一个失败都说明某项框架能力退化。
 
-### 10a.1 分层原则
+### 10a.1 分层原则与顺序
+
+示例按**概念难度递增**排列，顺序是刻意设计的：前四个不需要任何新框架能力，第五个（`usercontrol`）才开始逼出框架的组件层设计。
 
 ```
 samples/
-  basic/          基础：单个组件、单一数据源
-  usercontrol/    组合：父子组件、两个独立数据源 ← 验证框架的关键一步
-  binding/        绑定：四种模式的完整对照
-  list/           集合：DataTemplate 与列表
-  theming/        主题：Light/Dark 与 token
-  gallery/        集大成：把所有示例组织成可导航的图库
+  1. basic/        基础：单个组件、单一数据源
+  2. binding/      绑定：四种模式的完整对照
+  3. list/         集合：DataTemplate 与列表
+  4. theming/      主题：Light/Dark 与 token
+  5. usercontrol/  组合：父子组件、两个独立数据源 ← 框架的关键缺口
+  6. gallery/      集大成：按 WinUI-Gallery 的组件分类组织全部控件页
 ```
 
-**依赖方向**：示例之间**不互相引用**。`gallery` 是唯一例外——它以**只读方式**复用其他示例的 WAML 与 ViewModel（见 10a.6），因为它就是「这些示例的目录」。
+**为什么 `usercontrol` 排第五**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前四个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
+
+**依赖方向**：示例之间**不互相引用**。`gallery` 是唯一例外——它以**只读方式**复用其他示例的 WAML 与 ViewModel（见 10a.7），因为它就是「这些示例的目录」。
 
 ### 10a.2 `samples/basic/` — 基础组件
 
@@ -485,7 +489,45 @@ samples/
 
 **验收**：五个控件各一个示例，全部可交互且状态正确。
 
-### 10a.3 `samples/usercontrol/` — 父子组件、两个数据源 ⭐
+### 10a.3 `samples/binding/` — 四种绑定模式对照
+**目的**：绑定是 MVVM 的核心，但「OneTime 和 OneWay 到底差在哪」很难靠文字讲清。这里用**并排四列**、同一个数据源，让差异肉眼可见。
+
+| 示例 | 内容 | 教什么 |
+|---|---|---|
+| 四模式并排 | 同一 `Name` 分别以 OneTime/OneWay/TwoWay/OneWayToSource 绑到四个 TextBox | 改 VM → 哪些变；改输入框 → 哪些回写 |
+| StringFormat | `{Binding Count, StringFormat='Count: {0}'}` | 值格式化 |
+| FallbackValue | 绑定一个不存在的路径 | 失败兜底与诊断上报 |
+| LostFocus | `UpdateSourceTrigger=LostFocus` | 回写时机差异 |
+
+**验收**：OneTime 列在 VM 变化后**不动**（这是最容易误判的一条）。
+
+### 10a.4 `samples/list/` — 集合与模板
+
+**目的**：列表是真实应用最常见的结构，也是 §7.1 缺陷的现场。
+
+| 示例 | 内容 | 教什么 |
+|---|---|---|
+| 基础列表 | `ItemsSource` + `ItemTemplate` 显示 4 项 | DataTemplate 实例化 |
+| 每项独立 | 每行显示**自己的** Index 与 Title | 数据上下文隔离（回归 §7.1） |
+| 动态增删 | 按钮 Add/Remove 改 `ObservableList` | 集合变更通知 |
+| 空列表 | 0 项时的表现 | 边界情况 |
+
+**验收**：每行内容互不相同（直接对应曾经「所有行渲染同一份数据」的缺陷）。
+
+### 10a.5 `samples/theming/` — 主题与 token
+
+**目的**：展示「同一份 WAML 换主题」，这是 token 设计的意义所在。
+
+| 示例 | 内容 | 教什么 |
+|---|---|---|
+| 主题切换 | 按钮在 Light/Dark 间切换，整页即时重绘 | token 解析与重绘边界 |
+| token 面板 | 13 个 token 各显示一块色卡与其名字 | 语义化颜色的含义 |
+| 硬编码 vs token | 左边 `#FF0000`，右边 `Accent`，切换主题 | token 跟随主题，字面量不变 |
+| 自定义颜色 | `Foreground="#6B6B6B"` | 字面量与 token 混用 |
+
+**验收**：切换后背景/文字/强调色全部变化，且**硬编码的红色保持不变**（证明 token 与字面量是两条路径）。
+
+### 10a.6 `samples/usercontrol/` — 父子组件、两个数据源 ⭐
 
 **目的**：这是**框架目前做不到**的一件事，也是它必须补上的能力——让一个子组件拥有**自己的**数据源，而不继承父级。
 
@@ -534,33 +576,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 - 卡片内嵌的 `StatusBadge` 跟随**卡片**的 `Enabled`，而非页面的；
 - 用 `waml_interact.exe` 断言三者的独立性。
 
-### 10a.4 `samples/binding/` — 四种绑定模式对照
-
-**目的**：绑定是 MVVM 的核心，但「OneTime 和 OneWay 到底差在哪」很难靠文字讲清。这里用**并排四列**、同一个数据源，让差异肉眼可见。
-
-| 示例 | 内容 | 教什么 |
-|---|---|---|
-| 四模式并排 | 同一 `Name` 分别以 OneTime/OneWay/TwoWay/OneWayToSource 绑到四个 TextBox | 改 VM → 哪些变；改输入框 → 哪些回写 |
-| StringFormat | `{Binding Count, StringFormat='Count: {0}'}` | 值格式化 |
-| FallbackValue | 绑定一个不存在的路径 | 失败兜底与诊断上报 |
-| LostFocus | `UpdateSourceTrigger=LostFocus` | 回写时机差异 |
-
-**验收**：OneTime 列在 VM 变化后**不动**（这是最容易误判的一条）。
-
-### 10a.5 `samples/list/` — 集合与模板
-
-**目的**：列表是真实应用最常见的结构，也是 §7.1 缺陷的现场。
-
-| 示例 | 内容 | 教什么 |
-|---|---|---|
-| 基础列表 | `ItemsSource` + `ItemTemplate` 显示 4 项 | DataTemplate 实例化 |
-| 每项独立 | 每行显示**自己的** Index 与 Title | 数据上下文隔离（回归 §7.1） |
-| 动态增删 | 按钮 Add/Remove 改 `ObservableList` | 集合变更通知 |
-| 空列表 | 0 项时的表现 | 边界情况 |
-
-**验收**：每行内容互不相同（直接对应曾经「所有行渲染同一份数据」的缺陷）。
-
-### 10a.6 `samples/gallery/` — 总的 Gallery
+### 10a.7 `samples/gallery/` — 总的 Gallery
 
 **目的**：把所有示例组织成一个可浏览的图库，即产品形态。它**不是再写一遍示例**，而是**索引**上面的示例。
 
@@ -589,20 +605,81 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 **导航模型**：因 `ListBox` 暂无选中（R3），侧栏先用**按钮列表**；迭代 3.3 完成后换成真正的列表控件。
 
-### 10a.7 实施顺序与依赖
+#### 10a.7.1 组件清单：来源与分级
+
+清单取自本项目参考的 WinUI-Gallery 数据文件（`ControlInfoData.json`，**不提交**），18 个分组、126 个条目。剔除后剩 90 个待实现控件：
+
+| 类别 | 数量 | 处理 |
+|---|---|---|
+| 概念/设计页（Fundamentals / Design / Accessibility） | 15 | 不是控件。其中 Binding、Style、Resources、Custom & User Controls 四项分别由 `binding/`、迭代 2、`usercontrol/` 覆盖 |
+| 需要 OS 子系统集成 | 14 | **不做**：`WebView2`、`MediaPlayerElement`、`MapControl`、`Capture Element`、`Sound`、通知中心、Badge、JumpList、`AppWindow`、`AppWindowTitleBar`、`ContentIsland`、`Storage pickers`、`System Backdrops`、`SystemBackdropElement` |
+| 纯控件 | 97 | 已有 7 个 → **90 个待实现** |
+
+**不追求一次做完 90 个**。按日常使用频率与实现成本分三档，本轮**只做 P0**：
+
+| 档位 | 数量 | 范围 | 何时做 |
+|---|---|---|---|
+| **P0 必做** | **21** | 日常界面几乎必用、且**不需要新子系统** | 本轮目标 |
+| P1 常用增强 | 16 | 共同卡在「浮层/弹出」这一层 | 浮层完成后顺带解锁 |
+| P2 长尾 | 53 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
+
+**P0 — 本轮要做的 21 个**（加已有 9 个 = 30 个控件）：
+
+| 分组 | 控件 | 新增框架能力 |
+|---|---|---|
+| 布局 | `Grid` | **行列定义 + 跨行跨列**（卡片布局硬需求） |
+| 布局 | `Canvas` | 绝对定位 |
+| 布局 | `WrapPanel` | 换行排列 |
+| 布局 | `Viewbox` | 缩放子内容 |
+| 布局 | `Expander` | 折叠展开（需高度变化重排） |
+| 基础输入 | `ToggleButton` | 布尔 + 视觉状态 |
+| 基础输入 | `RepeatButton` | 按住连续触发 |
+| 基础输入 | `HyperlinkButton` | 链接样式 |
+| 基础输入 | `RadioButton` | **组互斥**（需 GroupName 作用域） |
+| 基础输入 | `Slider` | 拖动 + 数值范围 |
+| 基础输入 | `ToggleSwitch` | 布尔 + 滑块位置 |
+| 文本 | `PasswordBox` | 掩码显示 |
+| 文本 | `NumberBox` | 数值输入 + 校验 |
+| 状态 | `ProgressBar` | 纯渲染 |
+| 状态 | `ProgressRing` | 弧形绘制 |
+| 状态 | `InfoBar` | 内联提示条 |
+| 状态 | `InfoBadge` | 数字角标 |
+| 媒体 | `Image` | **WIC 解码 + 缩放** |
+| 媒体 | `PersonPicture` | 圆形头像（Image + 裁剪） |
+| 图形 | `Line` | `PaintCtx` 需加画线 |
+| 图形 | `Shape` | 基础几何绘制 |
+
+**P0 里真正的框架改造只有四项**，其余是「注册类型 + 实现 Measure/Arrange/OnPaint」的重复劳动：
+
+1. `Grid` 的行列布局算法
+2. `Image` 的 WIC 解码与缓存
+3. `PaintCtx` 增加 `DrawLine` / 路径绘制（支撑 `Line`、`Shape`、`ProgressRing`）
+4. `RadioButton` 的组作用域
+
+**P1 — 之后做（16 个）**：`ComboBox`、`Popup`、`Flyout`、`MenuFlyout`、`ToolTip`、`ContentDialog`、`TeachingTip`、`AutoSuggestBox`、`CommandBar`、`AppBarButton`、`AppBarToggleButton`、`AppBarSeparator`、`BreadcrumbBar`、`MenuBar`、`SplitView`、`RatingControl`
+
+这 16 个共同卡在一个缺失子系统上：**浮层（Popup/Flyout）**。它要处理 z-order、点外关闭、焦点陷阱、窗口外定位，成本高于 P0 任意单项——但做完这一次，其中大多数会顺带完成。
+
+**P2 — 按需，不承诺（53 个）**：虚拟化集合（`ListView`/`GridView`/`TreeView`/`ItemsRepeater`/`FlipView`/`ItemsView`/`TableView`/`PullToRefresh`）、日期时间（4 个）、动画过渡（7 个）、导航容器（`NavigationView`/`TabView`/`Pivot`/`SelectorBar`）、分割按钮（3 个）、`ColorPicker`、`RichEditBox`、滚动增强（`PipsPager`/`PagerControl`/`SemanticZoom`/`AnnotatedScrollBar`/`ScrollView`）、画刷（`AcrylicBrush`/`RadialGradientBrush`）、`ThemeShadow`、`IconElement`/`AnimatedIcon`、`Compact Sizing`、`Clipboard`、`Chart`、`InkCanvas`、`AnimatedVisualPlayer`、`TitleBar`、`Window`、`LayoutPanel`/`RelativePanel`/`VariableSizedWrapGrid`、命令对象（`StandardUICommand`/`XamlUICommand`）
+
+**为什么这样切**：P0 覆盖「写一个真实窗口界面」的绝大部分，且除 Grid/Image/画线/组互斥外都是低风险增量。P1 被浮层这一项统一卡住，集中攻克一次即可解锁一批。P2 里的虚拟化与动画是另一个量级（见 R4、迭代 3），混进 P0 会拖垮进度。
+
+### 10a.8 实施顺序与依赖
 
 | 顺序 | 示例 | 依赖的框架能力 | 状态 |
 |---|---|---|---|
 | 1 | `basic` | 无（现有能力足够） | **可立即开始** |
-| 2 | `usercontrol` | **`DataContext` 可绑定**（10a.3） | 需先补框架 |
-| 3 | `binding` | 无 | 可立即开始 |
-| 4 | `list` | 无 | 可立即开始 |
-| 5 | `theming` | 无（主题已支持） | 可立即开始 |
-| 6 | `gallery` | 多文档资源 + 路由（迭代 1） | 依赖前五项 |
+| 2 | `binding` | 无 | 可立即开始 |
+| 3 | `list` | 无 | 可立即开始 |
+| 4 | `theming` | 无（主题已支持） | 可立即开始 |
+| 5 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
+| 6 | `gallery` | 多文档资源 + 路由（迭代 1）、P0 控件（10a.7.1） | 依赖前五项 |
 
-**关键判断**：`usercontrol` 是唯一被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。建议优先补 `DataContext` 可绑定，再回到示例建设。
+**关键判断**：`usercontrol` 是唯一被框架能力卡住的示例，也是**信息量最大**的一个——它逼出了「组件复用」这一层设计。排第五意味着前四个可以先落地，把框架改造集中成一次迭代，而不是一开始就卡在设计决策上。
 
-### 10a.8 构建与打包
+**关于 gallery 的组件数**：完整对齐 WinUI-Gallery 是 90 个待实现控件，**不一次做完**。本次只做 P0 的 21 个（10a.7.1），加上已有 9 个共 30 个控件；P1 的 16 个等浮层子系统完成后顺带解锁；P2 的 53 个按需再议。
+
+### 10a.9 构建与打包
 
 每个示例是**独立可执行文件**（便于单独调试与截图）：
 
@@ -648,11 +725,11 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 1.3 ExampleCard 结构 | 统一卡片 WAML 片段（标题/演示区/代码区） | 3 页复用它 |
 | 1.4 前 3 个控件页 | Button / TextBox / CheckBox | 每页 ≥3 个示例 |
 | 1.5 侧栏导航 | 按钮列表 + 当前页高亮 | 高亮跟随路由 |
-| 1.6 **文件级引用** | gallery 读取 `samples/*/` 的 WAML，不复制内容（10a.6） | 改示例文件，gallery 同步变化 |
+| 1.6 **文件级引用** | gallery 读取 `samples/*/` 的 WAML，不复制内容（10a.7.1） | 改示例文件，gallery 同步变化 |
 
 **风险**：页面切换时的绑定泄漏（旧树未 detach）→ 切换前显式 `DetachBindings()`。
 
-**同期交付示例**：`binding/`、`list/`、`theming/`（10a.4–10a.5），它们不依赖路由，且正好提供 gallery 的内容。
+**同期交付示例**：`binding/`、`list/`、`theming/`（10a.3–10a.5），它们不依赖路由，且正好提供 gallery 的内容。
 
 ## 13. 迭代 2：布局与样式补齐（v0.7）
 
@@ -666,11 +743,11 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 **风险**：`Style` 引入后，属性优先级（本地值 > 样式 > 默认值）需明确并测试。
 
-**同期交付示例**：`samples/basic/`、`samples/binding/`、`samples/list/`、`samples/theming/`（见 10a.7，均不依赖本迭代的新能力，可与迭代 2 并行）。
+**同期交付示例**：`samples/basic/`、`samples/binding/`、`samples/list/`、`samples/theming/`（见 10a.2–10a.5，均不依赖本迭代的新能力，可与迭代 2 并行）。
 
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
-**这是 `samples/usercontrol/` 的前置条件，也是 MVVM 价值兑现的关键一步**（详见 10a.3）。
+**这是 `samples/usercontrol/` 的前置条件，也是 MVVM 价值兑现的关键一步**（详见 10a.6）。
 
 | 任务 | 说明 | 验收 |
 |---|---|---|
@@ -752,7 +829,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | R8 | 每控件 7.7 行注册样板 | 30 控件时约 230 行重复 | v0.6 引入聚合式 `PropList` |
 | R9 | 跨机器字体不一致 | 快照金样误报 | CI 固定或内嵌字体子集 |
 | R10 | IME 未实现 | 自绘 TextBox 无法输入中文 | 见 §20；需做垂直切片决策 |
-| R11 | `DataContext` 不可绑定 | 无法复用组件，示例只能复制粘贴 WAML | 迭代 2b（见 10a.3），底层已就绪只缺标记层入口 |
+| R11 | `DataContext` 不可绑定 | 无法复用组件，示例只能复制粘贴 WAML | 迭代 2b（见 10a.6），底层已就绪只缺标记层入口 |
 | R12 | 示例之间复制宿主代码 | 六份 Win32+D2D 初始化重复，改动发散 | 迭代 0 先抽 `samples/shared/` |
 
 ## 20. 未覆盖 / 明确不做
@@ -774,8 +851,8 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 1. **启动即 gallery**：双击 exe，左栏列出所有示例，点击进入。
 2. **示例矩阵齐备**（10a）：`basic`、`usercontrol`、`binding`、`list`、`theming`、`gallery` 六个可独立运行的示例。
-3. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.3 的四条断言）。
-4. **至少 10 个控件页**，每页 ≥3 个可交互示例。
+3. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
+4. **控件页覆盖 P0 清单**：10a.7.1 的 21 个新控件 + 已有 9 个 = 30 个控件都有示例页，每页 ≥3 个可交互示例。
 5. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
 6. **主题可切换**：Light/Dark 即时生效，无需重启。
 7. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。

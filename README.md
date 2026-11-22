@@ -135,11 +135,11 @@ framework/src/
 samples/                ← 示例，单向依赖框架
     gallery/               当前唯一示例：WAML + ViewModel + Win32 宿主 + 资源
     shared/                （规划）共享宿主与资源，避免各示例重复
-    basic/                 （规划）基础控件
-    usercontrol/           （规划）父子组件、两个独立数据源
-    binding/               （规划）四种绑定模式对照
-    list/                  （规划）集合与 DataTemplate
-    theming/               （规划）Light/Dark 主题
+    basic/                 （规划 1）基础控件
+    binding/               （规划 2）四种绑定模式对照
+    list/                  （规划 3）集合与 DataTemplate
+    theming/               （规划 4）Light/Dark 主题
+    usercontrol/           （规划 5）父子组件、两个独立数据源
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
@@ -152,16 +152,30 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 示例不是一堆 demo，而是一条由简到繁的学习路径，同时是框架能力的验收矩阵：
 
-| 示例 | 内容 | 状态 |
-|---|---|---|
-| `basic` | TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | 规划中 |
-| `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
-| `binding` | 四种绑定模式并排对照 | 规划中 |
-| `list` | DataTemplate、每项独立上下文、动态增删 | 规划中 |
-| `theming` | Light/Dark 切换与 token | 规划中 |
-| `gallery` | 把所有示例组织成可浏览的图库（产品形态） | 当前示例的演进目标 |
+| 顺序 | 示例 | 内容 | 状态 |
+|---|---|---|---|
+| 1 | `basic` | TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | 规划中 |
+| 2 | `binding` | 四种绑定模式并排对照 | 规划中 |
+| 3 | `list` | DataTemplate、每项独立上下文、动态增删 | 规划中 |
+| 4 | `theming` | Light/Dark 切换与 token | 规划中 |
+| 5 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
+| 6 | `gallery` | 把全部控件页组织成可浏览的图库（产品形态） | 规划中 |
+
+`usercontrol` 排在第五，是因为它依赖的能力（`DataContext` 可绑定）目前还不存在；把它放在中段可以让前四个示例先落地，而不是一开始就卡在设计决策上。
 
 每个示例都是独立可执行文件（`waml_basic.exe`、`waml_usercontrol.exe`…），便于单独调试与截图。详细规划见 `CODE_PLAN.md` §10a。
+
+### Gallery 的组件范围
+
+对齐 WinUI-Gallery 的完整清单是 **90 个待实现控件**（已剔除 15 个概念页与 14 个需要 OS 集成的条目）。本项目**不追求一次做完**，按使用频率分三档：
+
+| 档位 | 数量 | 内容 | 何时做 |
+|---|---|---|---|
+| **P0 必做** | 21 | `Grid` `Canvas` `WrapPanel` `Viewbox` `Expander` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 当前目标 |
+| P1 常用增强 | 16 | `ComboBox` `Popup` `Flyout` `ToolTip` `ContentDialog` `MenuFlyout` `CommandBar` `AutoSuggestBox` 等 | 浮层子系统完成后 |
+| P2 长尾 | 53 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
+
+加上已有 9 个，P0 完成后共 **30 个可用控件**。P0 里真正的框架改造只有四项：`Grid` 布局算法、`Image` 的 WIC 解码、`PaintCtx` 画线/路径、`RadioButton` 组作用域。
 
 ---
 
