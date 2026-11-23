@@ -410,6 +410,81 @@ int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm)
         }
     }
 
+    std::printf("\n[19] Popup primitive opens and closes its declared child\n");
+    {
+        root->SetOverlay(nullptr);
+        Widget* popupWidget = FindFirst(root, "wui/Popup");
+        auto* popup = dynamic_cast<Popup*>(popupWidget);
+        Expect(popup != nullptr, "the page has a Popup");
+        if (popup != nullptr) {
+            const Rect box = popup->Bounds();
+            popup->OnPointerUp(Point{box.x + 8.0f, box.y + 8.0f});
+            OverlayLayer* layer = root->Overlay();
+            Expect(layer != nullptr, "it opened an overlay");
+            Expect(popup->Children().empty(), "the content left the tree");
+            if (layer != nullptr) {
+                Expect(layer->OnPointerDown(Point{2.0f, 2.0f}), "an outside press is consumed");
+                Expect(!layer->Active(), "and it closes");
+            }
+            Expect(!popup->Get<bool>(popup->SlotOf("IsOpen")), "IsOpen reports closed");
+            // Reopening must work: the flag lives in one place now, which is exactly the bug
+            // that made a control dead after its first close.
+            popup->OnPointerUp(Point{box.x + 8.0f, box.y + 8.0f});
+            Expect(root->Overlay() != nullptr, "and it can be reopened");
+            root->SetOverlay(nullptr);
+        }
+    }
+
+    std::printf("\n[20] AutoSuggestBox: type, highlight, commit\n");
+    {
+        root->SetOverlay(nullptr);
+        Widget* suggestWidget = FindFirst(root, "wui/AutoSuggestBox");
+        auto* box = dynamic_cast<AutoSuggestBox*>(suggestWidget);
+        Expect(box != nullptr, "the page has an AutoSuggestBox");
+        if (box != nullptr) {
+            box->OnChar(L's');
+            box->OnChar(L'e');
+            // "se" matches Seattle and Seoul, so the list opens with row 0 highlighted.
+            Expect(root->Overlay() != nullptr, "typing opened the suggestion list");
+            Expect(box->Highlighted() == 0, "the first match is highlighted");
+            Expect(box->OnKeyDown(KeyDown), "Down moved the highlight");
+            Expect(box->Highlighted() == 1, "to the second match");
+            Expect(box->OnKeyDown(KeyReturn), "Enter committed it");
+            Expect(box->Get<std::wstring>(box->SlotOf("Text")) == L"Seoul",
+                   "the committed text replaced the query");
+            // The TwoWay binding must have carried it into the model.
+            Expect(vm->Query.Get() == L"Seoul", "the ViewModel received the committed text");
+            Expect(root->Overlay() == nullptr, "committing closed the list");
+        }
+    }
+
+    std::printf("\n[21] AutoSuggestBox: Escape keeps the typed text\n");
+    {
+        root->SetOverlay(nullptr);
+        Widget* suggestWidget = FindFirst(root, "wui/AutoSuggestBox");
+        auto* box = dynamic_cast<AutoSuggestBox*>(suggestWidget);
+        if (box != nullptr) {
+            // Clear through the VIEWMODEL and confirm it reached the control before typing.
+            // Text is TwoWay, so order matters: a stale model value would be pushed back over
+            // the control between the clear and the typing.
+            vm->Query.Set(L"");
+            root->ForceLayout(Size{860, 660});
+            Expect(box->Get<std::wstring>(box->SlotOf("Text")).empty(),
+                   "clearing the model reached the control");
+            box->OnChar(L'l');
+            box->OnChar(L'o');
+            Expect(box->Get<std::wstring>(box->SlotOf("Text")) == L"lo", "the box holds 'lo'");
+            Expect(root->Overlay() != nullptr, "typing reopened the list");
+            const std::wstring typed = box->Get<std::wstring>(box->SlotOf("Text"));
+            Expect(box->OnKeyDown(KeyEscape), "Escape is handled");
+            Expect(root->Overlay() == nullptr, "the list closed");
+            // Escape means "stop suggesting", not "undo what I typed".
+            Expect(box->Get<std::wstring>(box->SlotOf("Text")) == typed,
+                   "and the typed text survived");
+            root->SetOverlay(nullptr);
+        }
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }

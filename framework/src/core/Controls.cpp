@@ -4174,12 +4174,215 @@ void PersonPicture::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 }
 
 // ---------------------------------------------------------------------------
-// Flyout
+// PopupBase
+//
+// The shared half of every "opens a floating card" control. Both Flyout and ComboBox used
+// to carry their own copy of this, including the flag that drifted out of sync and left the
+// control permanently unopenable (CODE_PLAN §7.25). It lives here once now.
 // ---------------------------------------------------------------------------
 namespace {
-constexpr float kFlyoutButtonPadX = 14.0f;
-constexpr float kFlyoutButtonPadY = 7.0f;
+constexpr float kPopupPadX = 14.0f;
+constexpr float kPopupPadY = 7.0f;
 } // namespace
+
+bool PopupBase::IsOpen() const {
+    const int slot = SlotOf("IsOpen");
+    return slot >= 0 && Get<bool>(slot);
+}
+
+Point PopupBase::AnchorPoint() const {
+    return Point{bounds_.x, bounds_.y + bounds_.h};
+}
+
+Widget* PopupBase::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void PopupBase::OnPointerEnter() {
+    hovered_ = true;
+    Invalidate(AffectsRender);
+}
+
+void PopupBase::OnPointerLeave() {
+    hovered_ = false;
+    SetPressed(false);
+    Invalidate(AffectsRender);
+}
+
+void PopupBase::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    if (slot != SlotOf("IsOpen")) return;
+    bool open = false;
+    if (!ValueCodec<bool>::From(value, open)) return;
+    // EVERY close path converges here: a click on the control, the layer dismissing itself,
+    // and a ViewModel writing the binding. Keeping ownLayer_ in this one place is what makes
+    // "close then reopen" work; each path clearing its own copy is how it broke before.
+    if (open && !ownLayer_) {
+        // A ViewModel set IsOpen=true. Ask the subclass what belongs in the card; if it has
+        // nothing to say the write is ignored rather than opening an empty popup.
+        OpenWith(BuildContentForSlotOpen(), PopupSize());
+        return;
+    }
+    if (!open && ownLayer_) {
+        ownLayer_ = false;
+        OnPopupClosed();
+        Invalidate(AffectsRender);
+    }
+}
+
+void PopupBase::OpenWith(WidgetPtr content, Size size, int placement) {
+    if (ownLayer_) return;
+    Widget* root = Root();
+    if (root == nullptr || root == this) return;
+
+    FlyoutRequest request;
+    request.content = std::move(content);
+    if (request.content == nullptr) {
+        // An empty card beats silently doing nothing: a missing child is then visible
+        // instead of mysterious.
+        request.content = CreateWidget("wui/StackPanel");
+    }
+    request.anchor = AnchorPoint();
+    request.size = size.w > 0.0f || size.h > 0.0f ? size : PopupSize();
+    request.placement = placement;
+    request.lightDismiss = true;
+    request.onClosed = [self = this] {
+        // The layer closed itself (click outside, Escape). Report through the same slot the
+        // control uses, so its appearance and any TwoWay binding agree with reality.
+        self->ownLayer_ = false;
+        if (self->Root() != nullptr && self->Root()->Overlay() != nullptr) {
+            self->Root()->SetOverlay(nullptr);
+        }
+        self->OnPopupClosed();
+        const int slot = self->SlotOf("IsOpen");
+        if (slot >= 0) self->SetSlotValue(slot, Value::Bool(false), true);
+        self->Invalidate(AffectsRender);
+    };
+
+    auto layer = MakeFlyoutLayer(std::move(request));
+    ownLayer_ = true;
+    root->SetOverlay(layer.release());
+    const int slot = SlotOf("IsOpen");
+    if (slot >= 0 && !Get<bool>(slot)) SetSlotValue(slot, Value::Bool(true), true);
+    Invalidate(AffectsRender);
+}
+
+void PopupBase::ClosePopup() {
+    if (!ownLayer_) return;
+    ownLayer_ = false;
+    OnPopupClosed();
+    // Detach the layer here, not just lower the flag. Relying on the host to notice an
+    // inactive layer meant the overlay stayed installed until the next input event, so an
+    // immediate reopen (type two characters in a suggest box) installed nothing while the
+    // stale card was still on screen.
+    //
+    // The comment this replaces worried about freeing the layer inside its own event handler.
+    // That concern is real but belongs to the layer's own dismissal path (onClosed, which
+    // clears the overlay itself); this function is only ever called from OUR code, where
+    // returning into a destroyed layer is impossible.
+    if (Widget* root = Root()) {
+        if (root->Overlay() != nullptr) root->SetOverlay(nullptr);
+    }
+    const int slot = SlotOf("IsOpen");
+    if (slot >= 0 && Get<bool>(slot)) SetSlotValue(slot, Value::Bool(false), true);
+    Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// Popup -- the bare primitive
+// ---------------------------------------------------------------------------
+Size Popup::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring label = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = static_cast<float>(label.size()) * fontSize * 0.55f;
+    float lineH = fontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(label, fontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    // Same shape as the flyout button: a label plus a caret, so the two read as the same
+    // kind of affordance.
+    desired_ = Size{textW + kPopupPadX * 2 + 14.0f + margin.H(),
+                    std::max(lineH, 16.0f) + kPopupPadY * 2 + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void Popup::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool open = IsOpen();
+    Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
+    if (Pressed()) fill = palette.colors[static_cast<int>(Token::ControlFillPressed)];
+    else if (open || Hovered()) fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+    ctx.FillRoundRect(box, 4.0f, fill);
+    ctx.StrokeRect(box, palette.colors[static_cast<int>(open ? Token::Accent : Token::CardBorder)],
+                   open ? 1.5f : 1.0f, 4.0f);
+
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")),
+                 Rect{box.x + kPopupPadX, box.y, box.w - kPopupPadX * 2 - 12.0f, box.h},
+                 palette.colors[static_cast<int>(Token::TextPrimary)], fontSize, WeightNormal,
+                 TextAlign::Left);
+    ctx.DrawText(open ? L"\u25B2" : L"\u25BC", Rect{box.Right() - 16.0f, box.y, 12.0f, box.h},
+                 palette.colors[static_cast<int>(Token::TextSecondary)], 9.0f, WeightNormal,
+                 TextAlign::Center);
+    if (Focused()) {
+        ctx.StrokeRect(box.Inflate(1.0f), palette.colors[static_cast<int>(Token::Accent)], 1.0f,
+                       4.0f);
+    }
+}
+
+WidgetPtr Popup::BuildContentForSlotOpen() {
+    // Same extract-the-declared-child rule as the click path, so binding IsOpen and clicking
+    // end up opening the same thing.
+    if (Children().empty()) return nullptr;
+    WidgetPtr content = Children().front();
+    ClearChildren();
+    return content;
+}
+
+void Popup::OnPointerDown(const Point&) { SetPressed(true); }
+
+void Popup::OnPointerUp(const Point& local) {
+    SetPressed(false);
+    // A toggle only needs a release inside: a synthetic click or a keyboard activation
+    // arrives without a matching press and must still work.
+    if (!bounds_.Contains(local)) return;
+    if (IsOpen()) {
+        ClosePopup();
+        return;
+    }
+    // The declared children ARE the card. Copy before clearing: ClearChildren would destroy
+    // the very widget being handed to the layer.
+    WidgetPtr content;
+    if (!Children().empty()) {
+        content = Children().front();
+        ClearChildren();
+    }
+    OpenWith(std::move(content));
+}
+
+bool Popup::OnKeyDown(int vk) {
+    if (vk == KeySpace || vk == KeyReturn) {
+        if (IsOpen()) ClosePopup();
+        else OnPointerUp(Point{bounds_.x + 1.0f, bounds_.y + 1.0f});
+        return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Flyout
+// ---------------------------------------------------------------------------
 
 Size Flyout::Measure(const Size& available) {
     (void)available;
@@ -4194,8 +4397,8 @@ Size Flyout::Measure(const Size& available) {
         lineH = std::max(lineH, m.h);
     }
     // A caret is drawn after the label, so the button is wide enough for both.
-    desired_ = Size{textW + kFlyoutButtonPadX * 2 + 14.0f + margin.H(),
-                    std::max(lineH, 16.0f) + kFlyoutButtonPadY * 2 + margin.V()};
+    desired_ = Size{textW + kPopupPadX * 2 + 14.0f + margin.H(),
+                    std::max(lineH, 16.0f) + kPopupPadY * 2 + margin.V()};
     ApplySizeConstraints();
     return desired_;
 }
@@ -4217,7 +4420,7 @@ void Flyout::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 
     const float fontSize = Get<float>(SlotOf("FontSize"));
     ctx.DrawText(Get<std::wstring>(SlotOf("Content")),
-                 Rect{box.x + kFlyoutButtonPadX, box.y, box.w - kFlyoutButtonPadX * 2 - 12.0f, box.h},
+                 Rect{box.x + kPopupPadX, box.y, box.w - kPopupPadX * 2 - 12.0f, box.h},
                  palette.colors[static_cast<int>(Token::TextPrimary)], fontSize, WeightNormal,
                  TextAlign::Left);
     // A caret, flipped while open: the button has to say which way it is pointing or the
@@ -4231,111 +4434,43 @@ void Flyout::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     }
 }
 
-Widget* Flyout::HitTest(const Point& p) {
-    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
-    return bounds_.Contains(p) ? this : nullptr;
-}
-
-void Flyout::OnPointerDown(const Point&) { SetPressed(true); Invalidate(AffectsRender); }
+void Flyout::OnPointerDown(const Point&) { SetPressed(true); }
 
 void Flyout::OnPointerUp(const Point& local) {
     SetPressed(false);
-    // Toggling needs only a release inside: unlike Button, a flyout is a toggle, so a
-    // release without a matching press (synthetic click, keyboard activation, a test) must
-    // still work. Requiring the press made the control look dead everywhere except the one
-    // path that happened to send a down first.
-    if (bounds_.Contains(local)) {
-        if (Get<bool>(SlotOf("IsOpen"))) Close();
-        else Open();
-    }
-    Invalidate(AffectsRender);
-}
-
-void Flyout::OnPointerEnter() {
-    hovered_ = true;
-    Invalidate(AffectsRender);
-}
-
-void Flyout::OnPointerLeave() {
-    hovered_ = false;
-    SetPressed(false);
+    // Only a release inside toggles. A release outside is the drag-off cancel.
+    if (bounds_.Contains(local)) Toggle();
     Invalidate(AffectsRender);
 }
 
 bool Flyout::OnKeyDown(int vk) {
     if (vk == KeySpace || vk == KeyReturn) {
-        if (Get<bool>(SlotOf("IsOpen"))) Close();
-        else Open();
+        Toggle();
         return true;
     }
     return false;
 }
 
-void Flyout::OnSlotChanged(int slot, const Value& value) {
-    Widget::OnSlotChanged(slot, value);
-    if (slot != SlotOf("IsOpen")) return;
-    bool open = false;
-    if (!ValueCodec<bool>::From(value, open)) return;
-    // Driven by the slot so a ViewModel can open the flyout too, and so a layer that
-    // dismissed itself lands here instead of each path resetting its own state.
-    if (open && !ownLayer_) Open();
-    else if (!open && ownLayer_) Close();
+WidgetPtr Flyout::BuildContentForSlotOpen() {
+    if (Children().empty()) return nullptr;
+    WidgetPtr content = Children().front();
+    ClearChildren();
+    return content;
 }
 
-void Flyout::Open() {
-    if (ownLayer_) return;
-    Widget* root = Root();
-    if (root == nullptr || root == this) return;
-
-    FlyoutRequest request;
-    // Taking the single child out of the tree: a closed flyout that stayed in the tree
-    // would still be measured (reserving space for something invisible) and clipped by any
-    // ScrollViewer above it.
+void Flyout::Toggle() {
+    if (IsOpen()) {
+        ClosePopup();
+        return;
+    }
+    // The declared child IS the card. Copy before clearing: ClearChildren would destroy the
+    // widget being handed to the layer.
+    WidgetPtr content;
     if (!Children().empty()) {
-        // Copy the pointer before clearing: ClearChildren would destroy the very widget we
-        // are about to hand to the layer.
-        request.content = Children().front();
+        content = Children().front();
         ClearChildren();
     }
-    if (request.content == nullptr) {
-        // No content: still open an empty card rather than silently doing nothing, so a
-        // missing child is visible instead of mysterious.
-        request.content = CreateWidget("wui/StackPanel");
-    }
-    // Anchor below this button, in window space.
-    request.anchor = Point{bounds_.x, bounds_.y + bounds_.h};
-    request.placement = 0;
-    request.lightDismiss = true;
-    request.onClosed = [self = this] {
-        // The layer closed itself (click outside, Escape). Report through IsOpen so the
-        // button's caret and any TwoWay binding agree with reality.
-        self->ownLayer_ = false;
-        if (self->Root() != nullptr && self->Root()->Overlay() != nullptr) {
-            self->Root()->SetOverlay(nullptr);
-        }
-        const int slot = self->SlotOf("IsOpen");
-        if (slot >= 0) self->SetSlotValue(slot, Value::Bool(false), true);
-        self->Invalidate(AffectsRender);
-    };
-
-    auto layer = MakeFlyoutLayer(std::move(request));
-    ownLayer_ = true;
-    root->SetOverlay(layer.release());
-    // The layer owns itself once installed; the host clears it. Mark the slot without
-    // re-entering Open.
-    const int slot = SlotOf("IsOpen");
-    if (slot >= 0 && !Get<bool>(slot)) SetSlotValue(slot, Value::Bool(true), true);
-    Invalidate(AffectsRender);
-}
-
-void Flyout::Close() {
-    if (!ownLayer_) return;
-    ownLayer_ = false;
-    const int slot = SlotOf("IsOpen");
-    if (slot >= 0 && Get<bool>(slot)) SetSlotValue(slot, Value::Bool(false), true);
-    // The layer is destroyed by the host when it notices it is inactive; asking the root to
-    // drop it here would free it inside its own event handler.
-    Invalidate(AffectsRender);
+    OpenWith(std::move(content));
 }
 
 // ---------------------------------------------------------------------------
@@ -4436,8 +4571,6 @@ std::vector<std::wstring> ComboBox::SplitItems(const std::wstring& items) {
     return out;
 }
 
-float ComboBox::RowHeight() const { return kComboRowH; }
-
 Size ComboBox::Measure(const Size& available) {
     (void)available;
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
@@ -4491,27 +4624,15 @@ void ComboBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
                  TextAlign::Center);
 }
 
-Widget* ComboBox::HitTest(const Point& p) {
-    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
-    return bounds_.Contains(p) ? this : nullptr;
-}
 
-void ComboBox::OnPointerDown(const Point&) { Invalidate(AffectsRender); }
+void ComboBox::OnPointerDown(const Point&) { SetPressed(true); }
 
 void ComboBox::OnPointerUp(const Point& local) {
     if (!bounds_.Contains(local)) return;
-    if (Get<bool>(SlotOf("IsOpen"))) CloseDropDown();
+    // Hit testing, hover and press all come from PopupBase; this only decides whether the
+    // release opens or closes the list.
+    if (IsOpen()) ClosePopup();
     else OpenDropDown();
-}
-
-void ComboBox::OnPointerEnter() {
-    hoveredRow_ = true;
-    Invalidate(AffectsRender);
-}
-
-void ComboBox::OnPointerLeave() {
-    hoveredRow_ = false;
-    Invalidate(AffectsRender);
 }
 
 bool ComboBox::OnKeyDown(int vk) {
@@ -4533,32 +4654,21 @@ bool ComboBox::OnKeyDown(int vk) {
         return true;
     }
     if (vk == KeyReturn || vk == KeySpace) {
-        if (Get<bool>(SlotOf("IsOpen"))) CloseDropDown();
+        if (Get<bool>(SlotOf("IsOpen"))) ClosePopup();
         else OpenDropDown();
         return true;
     }
     if (vk == KeyEscape && Get<bool>(SlotOf("IsOpen"))) {
-        CloseDropDown();
+        ClosePopup();
         return true;
     }
     return false;
 }
-
 void ComboBox::OnSlotChanged(int slot, const Value& value) {
-    Widget::OnSlotChanged(slot, value);
+    // The base owns IsOpen, including the ownLayer_ bookkeeping that used to drift and leave
+    // the box unopenable (CODE_PLAN §7.25). This only adds the derived text.
+    PopupBase::OnSlotChanged(slot, value);
     if (slot == SlotOf("SelectedIndex")) ApplySelection();
-    if (slot == SlotOf("IsOpen")) {
-        // IsOpen can be written from three places: a click on the box, the layer reporting
-        // a dismissal, and a ViewModel binding. Routing all of them through this one place
-        // is what keeps ownLayer_ honest -- when it drifted out of sync the box opened once
-        // and then silently refused to reopen, which reads as a dead control.
-        bool open = false;
-        if (!ValueCodec<bool>::From(value, open)) return;
-        if (open && !ownLayer_) OpenDropDown();
-        // Closing is handled by whoever closed it (they own the layer teardown); only the
-        // flag is cleared here so a later open is not blocked.
-        if (!open) ownLayer_ = false;
-    }
 }
 
 void ComboBox::ApplySelection() {
@@ -4586,52 +4696,46 @@ Rect ComboBox::DropDownBounds() const {
 }
 
 void ComboBox::OpenDropDown() {
-    if (ownLayer_) return;
-    Widget* root = Root();
-    if (root == nullptr || root == this) return;
     const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
     if (items.empty()) return;
-
-    FlyoutRequest request;
-    // A list of rows is built as a real widget tree rather than as a menu model: the rows
-    // need per-row hit testing and the selected row needs a distinct look, and the menu
-    // layer's row model has neither.
+    // A list of rows is a real widget tree rather than a menu model: the rows need per-row
+    // hit testing and the selected row needs a distinct look, and the menu layer's row model
+    // has neither.
     auto list = std::make_shared<FlyoutList>();
     list->Configure(items, Get<int>(SlotOf("SelectedIndex")), [this](int chosen) {
         // Choosing is a user edit, so TwoWay bindings push it outward.
         SetSlotValue(SlotOf("SelectedIndex"), Value::Number(chosen), true);
         ApplySelection();
-        // Close by asking the slot; the layer's onClosed path resets ownLayer_.
-        SetSlotValue(SlotOf("IsOpen"), Value::Bool(false), true);
+        // Close through the base so ownLayer_ and the slot stay in step.
+        ClosePopup();
     });
-    request.content = list;
-    const Rect drop = DropDownBounds();
-    request.anchor = Point{drop.x, drop.y};
-    request.size = Size{drop.w, drop.h};
-    request.placement = 0;
-    request.lightDismiss = true;
-    request.onClosed = [self = this] {
-        self->ownLayer_ = false;
-        if (self->Root() != nullptr && self->Root()->Overlay() != nullptr) {
-            self->Root()->SetOverlay(nullptr);
-        }
-        const int slot = self->SlotOf("IsOpen");
-        if (slot >= 0) self->SetSlotValue(slot, Value::Bool(false), true);
-        self->Invalidate(AffectsRender);
-    };
-
-    auto layer = MakeFlyoutLayer(std::move(request));
-    ownLayer_ = true;
-    root->SetOverlay(layer.release());
-    SetSlotValue(SlotOf("IsOpen"), Value::Bool(true), true);
-    Invalidate(AffectsRender);
+    // Anchor and size come from the overrides, so the geometry lives in DropDownBounds only.
+    OpenWith(list);
 }
 
-void ComboBox::CloseDropDown() {
-    if (!ownLayer_) return;
-    ownLayer_ = false;
-    SetSlotValue(SlotOf("IsOpen"), Value::Bool(false), true);
-    Invalidate(AffectsRender);
+WidgetPtr ComboBox::BuildContentForSlotOpen() {
+    // A ViewModel opening the list is a legitimate thing to bind, so build the same row list
+    // the click path builds rather than ignoring the write.
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    if (items.empty()) return nullptr;
+    auto list = std::make_shared<FlyoutList>();
+    list->Configure(items, Get<int>(SlotOf("SelectedIndex")), [this](int chosen) {
+        SetSlotValue(SlotOf("SelectedIndex"), Value::Number(chosen), true);
+        ApplySelection();
+        ClosePopup();
+    });
+    return list;
+}
+
+Point ComboBox::AnchorPoint() const {
+    const Rect drop = DropDownBounds();
+    // One pixel of overlap with the box, so the list reads as attached to it.
+    return Point{drop.x, drop.y - 2.0f};
+}
+
+Size ComboBox::PopupSize() const {
+    const Rect drop = DropDownBounds();
+    return Size{drop.w, drop.h};
 }
 
 // ---------------------------------------------------------------------------
@@ -4706,6 +4810,223 @@ void FlyoutList::OnPointerUp(const Point& local) {
     const int index = IndexAt(local);
     if (index < 0) return;
     if (onChosen_) onChosen_(index);
+}
+
+// ---------------------------------------------------------------------------
+// AutoSuggestBox
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kSuggestPadX = 10.0f;
+constexpr float kSuggestPadY = 6.0f;
+constexpr float kSuggestRowH = 26.0f;
+constexpr float kSuggestFontSize = 13.0f;
+constexpr float kSuggestMaxRows = 6.0f;
+} // namespace
+
+std::vector<std::wstring> AutoSuggestBox::SplitItems(const std::wstring& items) {
+    // Delegated so the two controls cannot drift on what a separator is.
+    return ComboBox::SplitItems(items);
+}
+
+Size AutoSuggestBox::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(fontSize)
+                                          : fontSize * 1.33f;
+    // Wide enough for the widest suggestion, so the box does not jump when the list opens.
+    float widest = 120.0f;
+    if (ITextService* svc = TextSystem::Get()) {
+        for (const auto& item : SplitItems(Get<std::wstring>(SlotOf("Items")))) {
+            widest = std::max(widest, svc->Measure(item, fontSize, WeightNormal).w);
+        }
+    }
+    desired_ = Size{widest + kSuggestPadX * 2 + 24.0f + margin.H(),
+                    std::max(lineH, 18.0f) + kSuggestPadY * 2 + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void AutoSuggestBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+    const bool open = IsOpen();
+    ctx.FillRoundRect(box, 4.0f, palette.colors[static_cast<int>(Token::ControlFill)]);
+    ctx.StrokeRect(box, Focused() || open ? accent : palette.colors[static_cast<int>(Token::CardBorder)],
+                   Focused() || open ? 1.5f : 1.0f, 4.0f);
+
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    if (text.empty()) {
+        ctx.DrawText(Get<std::wstring>(SlotOf("PlaceholderText")),
+                     Rect{box.x + kSuggestPadX, box.y, box.w - kSuggestPadX * 2, box.h},
+                     palette.colors[static_cast<int>(Token::TextSecondary)], fontSize,
+                     WeightNormal, TextAlign::Left);
+    } else {
+        ctx.DrawText(text,
+                     Rect{box.x + kSuggestPadX, box.y, box.w - kSuggestPadX * 2 - 20.0f, box.h},
+                     palette.colors[static_cast<int>(Token::TextPrimary)], fontSize, WeightNormal,
+                     TextAlign::Left);
+    }
+    // A search glyph on the right: the box has to say it suggests, not just accept input.
+    ctx.DrawText(L"\u2315", Rect{box.Right() - 22.0f, box.y, 16.0f, box.h},
+                 palette.colors[static_cast<int>(Token::TextSecondary)], 12.0f, WeightNormal,
+                 TextAlign::Center);
+}
+
+std::vector<std::wstring> AutoSuggestBox::Filtered() const {
+    const std::wstring query = Get<std::wstring>(SlotOf("Text"));
+    const std::vector<std::wstring> all = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    std::vector<std::wstring> out;
+    if (query.empty()) return out; // nothing to suggest before the user types
+
+    std::wstring lowerQuery = query;
+    for (wchar_t& c : lowerQuery) c = static_cast<wchar_t>(std::towlower(c));
+    for (const auto& item : all) {
+        std::wstring lower = item;
+        for (wchar_t& c : lower) c = static_cast<wchar_t>(std::towlower(c));
+        // Substring rather than prefix: users type a distinctive middle word ("gal" for
+        // "Seattle Galleria") far more often than they type the first letters.
+        if (lower.find(lowerQuery) != std::wstring::npos) out.push_back(item);
+    }
+    return out;
+}
+
+WidgetPtr AutoSuggestBox::BuildContentForSlotOpen() {
+    const std::vector<std::wstring> matches = Filtered();
+    if (matches.empty()) return nullptr;
+    auto list = std::make_shared<FlyoutList>();
+    list->Configure(matches, highlighted_, [this](int chosen) { Commit(chosen); });
+    return list;
+}
+
+Point AutoSuggestBox::AnchorPoint() const {
+    return Point{bounds_.x, bounds_.y + bounds_.h + 2.0f};
+}
+
+Size AutoSuggestBox::PopupSize() const {
+    const float rows = std::min(static_cast<float>(Filtered().size()), kSuggestMaxRows);
+    return Size{bounds_.w, std::max(kSuggestRowH, rows * kSuggestRowH) + 8.0f};
+}
+
+void AutoSuggestBox::OnPointerDown(const Point&) { SetPressed(true); }
+
+void AutoSuggestBox::OnPointerUp(const Point& local) {
+    SetPressed(false);
+    // The box does not toggle from a click: clicking into it is just focusing it, which is
+    // what a text field does. The list appears as the user types.
+    (void)local;
+    Invalidate(AffectsRender);
+}
+
+bool AutoSuggestBox::OnChar(wchar_t ch) {
+    if (ch < 32 && ch != L'\t') return false;
+    // The slot is the source of truth, re-read on EVERY keystroke. A buffer refreshed only
+    // when empty meant an externally written value (a binding, a reset) was invisible: the
+    // text on screen changed, but the next keystroke appended to the stale buffer and
+    // silently produced a string the user never typed.
+    //
+    // Insert at the END rather than at a caret: this control deliberately has no caret
+    // model, because a suggest box you cannot see the caret in still types correctly, and a
+    // caret would mean reimplementing TextBox for one feature.
+    editing_ = Get<std::wstring>(SlotOf("Text"));
+    editing_.push_back(ch);
+    SetSlotValue(SlotOf("Text"), Value::Text(editing_));
+    Refresh();
+    return true;
+}
+
+bool AutoSuggestBox::OnKeyDown(int vk) {
+    // Re-read for the same reason as OnChar: the slot may have been written by a binding.
+    editing_ = Get<std::wstring>(SlotOf("Text"));
+
+    if (vk == KeyEscape) {
+        if (!IsOpen()) return false;
+        // Dismiss WITHOUT touching the text: Escape means "stop suggesting", not "undo what
+        // I typed".
+        ClosePopup();
+        return true;
+    }
+    if (vk == KeyBack) {
+        if (editing_.empty()) return false;
+        editing_.pop_back();
+        SetSlotValue(SlotOf("Text"), Value::Text(editing_));
+        Refresh();
+        return true;
+    }
+
+    const std::vector<std::wstring> matches = Filtered();
+    if (vk == KeyDown) {
+        if (matches.empty()) return false;
+        // Opening on the first Down is what makes the list reachable by keyboard alone.
+        if (!IsOpen()) OpenSuggestions();
+        highlighted_ = std::min(highlighted_ + 1, static_cast<int>(matches.size()) - 1);
+        Invalidate(AffectsRender);
+        return true;
+    }
+    if (vk == KeyUp) {
+        if (matches.empty()) return false;
+        if (!IsOpen()) OpenSuggestions();
+        highlighted_ = std::max(highlighted_ - 1, 0);
+        Invalidate(AffectsRender);
+        return true;
+    }
+    if (vk == KeyReturn) {
+        if (!IsOpen()) return false;
+        // Enter commits the HIGHLIGHTED row; with nothing highlighted it takes the first
+        // match, so typing a full word and pressing Enter does what the user expects.
+        Commit(highlighted_ >= 0 ? highlighted_ : 0);
+        return true;
+    }
+    return false;
+}
+
+void AutoSuggestBox::Refresh() {
+    const std::vector<std::wstring> matches = Filtered();
+    highlighted_ = matches.empty() ? -1 : 0;
+    if (matches.empty()) {
+        // Nothing matches: close rather than showing an empty card. An empty popup reads as
+        // a bug, and there is nothing to choose from anyway.
+        if (IsOpen()) ClosePopup();
+        return;
+    }
+    if (IsOpen()) {
+        // Already open: only the contents changed, so re-open with the new list rather than
+        // leaving the old rows on screen.
+        ClosePopup();
+    }
+    OpenSuggestions();
+}
+
+void AutoSuggestBox::OpenSuggestions() {
+    const std::vector<std::wstring> matches = Filtered();
+    if (matches.empty()) return;
+    auto list = std::make_shared<FlyoutList>();
+    // The list highlights `highlighted_`, so the keyboard and the pointer agree on which row
+    // is "current" instead of maintaining two independent ideas.
+    list->Configure(matches, highlighted_, [this](int chosen) { Commit(chosen); });
+    OpenWith(list);
+}
+
+void AutoSuggestBox::Commit(int index) {
+    const std::vector<std::wstring> matches = Filtered();
+    if (index < 0 || index >= static_cast<int>(matches.size())) {
+        ClosePopup();
+        return;
+    }
+    const std::wstring chosen = matches[static_cast<size_t>(index)];
+    // The chosen text replaces what was typed: committing IS the point of the control, and
+    // leaving the partial query in place would make Enter look like it did nothing.
+    editing_ = chosen;
+    SetSlotValue(SlotOf("Text"), Value::Text(chosen), true);
+    highlighted_ = -1;
+    ClosePopup();
+    Invalidate(AffectsRender);
 }
 
 } // namespace wui

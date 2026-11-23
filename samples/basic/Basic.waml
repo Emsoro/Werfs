@@ -268,6 +268,34 @@
           <ToolTip Text="Tooltips appear on hover and pass clicks through." Margin="0,12,0,0">
             <TextBlock Text="Hover this sentence for a hint." FontSize="13"/>
           </ToolTip>
+
+          <!-- A bare popup: the same overlay machinery with no opinion about what it holds. -->
+          <Popup Content="Popup primitive" HorizontalAlignment="Left" Margin="0,12,0,0">
+            <StackPanel Spacing="6">
+              <TextBlock Text="A Popup is the base every card uses." FontSize="12"
+                         Foreground="TextSecondary" TextWrapping="Wrap"/>
+              <TextBlock Text="It just shows its child next to the control." FontSize="12"
+                         TextWrapping="Wrap"/>
+            </StackPanel>
+          </Popup>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= AutoSuggestBox ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel>
+          <TextBlock Text="AutoSuggest" FontSize="15" FontWeight="SemiBold"
+                     Padding="0,0,0,10"/>
+          <TextBlock Text="Type “se” or “lon”: it matches anywhere in the word, not just the start. Down/Up move the highlight, Enter takes it, Escape dismisses without clearing what you typed."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"
+                     Padding="0,0,0,8"/>
+          <AutoSuggestBox Items="Seattle;Seoul;Berlin;Lisbon;London;Sydney"
+                          Text="{Binding Query, Mode=TwoWay}"
+                          PlaceholderText="Search cities"
+                          HorizontalAlignment="Left" Width="260"/>
+          <TextBlock Text="{Binding QueryText}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,6,0,0"/>
         </StackPanel>
       </Border>
 

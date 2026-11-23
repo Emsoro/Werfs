@@ -746,6 +746,29 @@ void TypeRegistry::RegisterBuiltins() {
         add(t);
     }
     {
+        auto t = std::make_shared<TypeInfo>("wui/Popup", ContentModel::SingleChild,
+                                            []() -> WidgetPtr { return std::make_shared<Popup>(); });
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L"Open"), AffectsMeasure);
+        t->Prop("IsOpen", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/AutoSuggestBox", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<AutoSuggestBox>(); });
+        AddLayoutProps(*t);
+        t->Prop("Text", VType::Text, Value::Text(L""), AffectsRender, BindingMode::TwoWay);
+        // ';' again, shared with ComboBox through one SplitItems so the two cannot drift.
+        t->Prop("Items", VType::Text, Value::Text(L""), AffectsMeasure);
+        t->Prop("PlaceholderText", VType::Text, Value::Text(L"Search..."), AffectsRender);
+        t->Prop("IsOpen", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
+        add(t);
+    }
+    {
         auto t = std::make_shared<TypeInfo>("wui/ToolTip", ContentModel::SingleChild,
                                             []() -> WidgetPtr { return std::make_shared<ToolTip>(); });
         AddLayoutProps(*t);

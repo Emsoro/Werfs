@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.9.0.0
+> 版本：0.9.1.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.9.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**45 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**205 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.9.1.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**214 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 205 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 214 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -84,7 +84,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 205 个单元/集成用例 |
+| `waml_tests.exe` | 214 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.9.0.0         [ ok ]
+file version: 0.9.1.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -708,6 +708,33 @@ if (explicitSize > 0) v = explicitSize;   // margin 被一起覆盖掉了
 - **动画与"可重复"天然冲突**，任何快照/截图/像素测试都会第一时间撞上它。这不是"以后再说"的问题，而是引入动画那一轮就必须解决的配套项。
 - **修复要选固定步长而不是"一次跳到底"**。一次大 `dt` 也能到终点，但那是靠钳制侥幸；固定步长让"稳定下来"这件事本身也是确定性的。
 - **测试的绿不代表门禁的绿**。205 个单元测试和 18 组交互全过，只有快照这一个环节能发现"同一个页面渲染两次不一样"。三道门禁各管一类风险，缺一道就会漏。
+
+## 7.27 【中】"缓冲区为空才同步"：外部写入对控件不可见
+
+**现象**：`AutoSuggestBox` 单独测全绿，但放进示例页（`Text` 走 TwoWay 绑定）后，**清空模型再输入会拼出 `Seoullo` 这种用户从未输入过的字符串**。
+
+**根因**：
+
+```cpp
+if (editing_.empty()) editing_ = Get<std::wstring>(SlotOf("Text"));
+```
+
+这个"省事"的写法把两种不同情况混成了一个：
+
+1. 缓冲区**从未初始化**
+2. 缓冲区**有旧内容，但槽位被外部改过**
+
+第二种情况下它不重新同步，于是屏幕上的字已经变了（槽位是新的），下一次按键却接在**旧缓冲**后面。
+
+**为什么单独测不到**：单测从干净实例开始，第一条分支总是走"未初始化"，`editing_` 必然等于槽位。只有"先有内容 → 外部清空 → 再输入"这个序列才暴露。
+
+**修复**：每次按键都从槽位重读。代价是一次 `Get<std::wstring>`，收益是槽位成为唯一真源。
+
+**教训**：
+
+- **"为空就初始化"是缓存失效逻辑里最危险的形状**。它把"缺省"和"脏"当成同一件事，而缓存系统里这两者必须分开判断。
+- 一个控件只要持有跨事件的缓冲，就必须明确回答：**谁是真源**。这里答案是槽位；凡是偏离它的读取都要有理由。
+- 这条缺陷和 §7.25、§7.26 是同一类：**状态在多处各自维护**。三次都是把状态收敛到单一位置才修掉。
 
 # 第四部分：目标架构
 ## 8. 分层
@@ -1691,6 +1718,40 @@ token 颜色（`Accent`、`CardBackground` 等）**不插值**，直接切换。
 改 `Width`/`FontSize` 会触发重排，一帧里反复重排的代价与收益不成比例。目前的状态过渡只动绘制属性。
 
 
+
+### 13.6 `PopupBase`、`Popup` 与 `AutoSuggestBox`
+
+**为什么把三处逻辑抽到一个基类**
+
+`Flyout` 和 `ComboBox` 原本各有一份"取出声明的子控件、装进浮层、关闭时复位标志"的实现。它们不只是重复，而是**重复了同一个缺陷**（§7.25 的 `ownLayer_` 漂移）。把这段抽进 `PopupBase` 之后：
+
+- 关闭路径收敛到一处（`OnSlotChanged` 的 `IsOpen` 分支）
+- 子类只回答两件事：**长什么样**、**何时打开**
+- 新增第三种弹层（`Popup`、`AutoSuggestBox`）不再需要重新实现一遍关闭约定
+
+`PopupBase::OpenWith` 里还有一条自愈规则值得记：
+
+```cpp
+if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
+```
+
+宿主可能在控件不知情的情况下摘掉浮层（窗口销毁、测试用例之间复位）。此时标志位说"开着"、根上其实什么都没有；**相信根，不相信自己的标志**——否则控件会永远拒绝打开，症状与 §7.25 一模一样但成因完全不同。
+
+**`Popup` 是最小原语**
+
+它只做"把声明的子控件显示在控件旁边"，不掺任何筛选或选择逻辑。保留它而不是让作者直接用 `Flyout`，是因为"在这里开个卡片"本身就是正当需求，多一层约定反而是负担。
+
+**`AutoSuggestBox` 的两个关键决定**
+
+*筛选用子串，不用前缀*。用户更常输入词中间的特征片段（"lon" → London、"se" → Seattle/Seoul）。前缀匹配会把这类输入判成无结果，而"无结果"在下拉框里表现为**列表根本不出现**，用户会以为控件坏了。
+
+*每次按键都从槽位重读文本*。它没有光标模型（刻意如此：看不见光标的建议框仍然能正确输入，而光标意味着为这一个特性重写 `TextBox`）。但"缓冲区为空才同步"是错的，见 §7.27。
+
+**槽位驱动打开需要子类参与**
+
+`IsOpen` 是 TwoWay，ViewModel 可以把它设为 true。但基类只知道"该开一个浮层"，不知道**里面放什么**——那只有子类清楚。所以有个 `BuildContentForSlotOpen()` 钩子：返回空表示"这个控件不能这样打开"，返回内容则照常开。没有这个钩子时，绑定 `IsOpen` 会**静默无效**。
+
+
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
 **这是 `samples/usercontrol/` 的前置条件，也是 MVVM 价值兑现的关键一步**（详见 10a.6）。
@@ -1894,7 +1955,7 @@ token 颜色（`Accent`、`CardBackground` 等）**不插值**，直接切换。
 
 # 附录
 
-## A. 测试清单（205 用例）
+## A. 测试清单（214 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1921,6 +1982,7 @@ token 颜色（`Accent`、`CardBackground` 等）**不插值**，直接切换。
 | filedialog | 2 | 无宿主时安全返回、假实现往返路径 |
 | selector | 3 | 点击选中、双向往返、键盘移动并钳制 |
 | tabview | 5 | 切换标签换内容、点×不选中、+调命令、增删后选中有效、标题来自模型 |
+| **p1-popup2** | **9** | Popup 打开声明子控件/ViewModel 驱动 IsOpen 生效/点外关闭回写槽位；AutoSuggestBox 子串大小写无关筛选/未输入不提示/输入开列表并回车提交高亮项/Escape 不清文本/退格无匹配则关闭/同前缀保持打开 | 已实现 |
 | **animation** | **13** | 四条缓动曲线端点一致/中点各异、数值插值并精确落点、零时长立即生效、延迟期间不动、被中断时从当前值续接（不跳回起点）；视觉状态进入生效/离开恢复、按下优先于悬停/禁用优先于两者、离开清除按下（拖出不会卡住）、过渡是动画而非瞬变、未知状态名报错并列出合法值、空状态报错、非法 Transition 报错、无状态不分配宿主 | 已实现 |
 | **p1-popups** | **11** | ComboBox 分隔符/派生 `SelectedText`/方向键直选/打开浮层/点外关闭不改值/选中回写模型；Flyout 承载子控件/绑定驱动 IsOpen/点外关闭同步回槽/逃生键/卡内点击不关闭；ToolTip 悬停显隐且不拦截点击；FontFamily 改变测量宽度/传递到绘制/缺省不记录字体/等宽族名识别 | 已实现 |
 | **shell** | **10** | 菜单打开/执行/关闭、点外关闭且吞掉点击、禁用命令不执行且菜单不关、子菜单两级 Esc、工具栏溢出与边界、溢出菜单携带隐藏命令、对话框模态性（吞点外）、Esc 映射取消、Enter 映射默认、快捷键解析与格式化一致 |

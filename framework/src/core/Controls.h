@@ -341,8 +341,65 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Popups: Flyout, ToolTip
+// Popups: Popup, Flyout, ToolTip
 // ---------------------------------------------------------------------------
+
+// The base every "opens a floating card" control shares.
+//
+// What it owns is exactly the part that is identical in all of them and that is easy to get
+// subtly wrong: taking the declared content out of the tree, installing it as an overlay,
+// and closing again through ONE path when the layer dismisses itself. Flyout and ComboBox
+// both carried their own copy of that logic, including the same flag that could drift and
+// leave a control permanently unopenable (CODE_PLAN §7.25); it lives here once now.
+//
+// Subclasses decide the appearance and WHEN to open.
+class PopupBase : public Widget {
+public:
+    Widget* HitTest(const Point& p) override;
+    void OnPointerEnter() override;
+    void OnPointerLeave() override;
+    void OnSlotChanged(int slot, const Value& value) override;
+
+    bool IsOpen() const;
+    // Installs `content` in an overlay anchored to this control. Ownership transfers.
+    void OpenWith(WidgetPtr content, Size size = Size{0, 0}, int placement = 0);
+    void ClosePopup();
+
+protected:
+    bool OwnsLayer() const { return ownLayer_; }
+    // Where the card goes, in window space. Default: just below this control.
+    virtual Point AnchorPoint() const;
+    // Size the card should take; zero means "whatever the content wants".
+    virtual Size PopupSize() const { return Size{0, 0}; }
+    // Builds the content for a SLOT-DRIVEN open (a ViewModel writing IsOpen=true). Returning
+    // null means this control cannot open that way. The base needs this hook because it can
+    // clear the flag on close, but only a subclass knows what belongs in the card -- without
+    // it, binding IsOpen would silently do nothing.
+    virtual WidgetPtr BuildContentForSlotOpen() { return nullptr; }
+    // Called right after the layer dismissed itself and the flag was cleared.
+    virtual void OnPopupClosed() {}
+
+private:
+    bool ownLayer_ = false;
+};
+
+// A bare popup: a button-like surface that shows whatever content you declare in it.
+//
+// This is the primitive the others could have been built from, kept as its own control
+// because "open this card next to this thing" is a legitimate thing to want with no further
+// opinion about filtering or selection.
+class Popup : public PopupBase {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+private:
+    WidgetPtr BuildContentForSlotOpen() override;
+};
 
 // A button that opens a popup containing real controls.
 //
@@ -352,27 +409,18 @@ private:
 //
 // IsOpen is TwoWay so a ViewModel can open it and so the layer can report that the user
 // dismissed it.
-class Flyout : public Widget {
+class Flyout : public PopupBase {
 public:
     Size Measure(const Size& available) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
-    Widget* HitTest(const Point& p) override;
     void OnPointerDown(const Point& local) override;
     void OnPointerUp(const Point& local) override;
-    void OnPointerEnter() override;
-    void OnPointerLeave() override;
     bool OnKeyDown(int vk) override;
     bool Focusable() const override { return true; }
-    void OnSlotChanged(int slot, const Value& value) override;
 
 private:
-    void Open();
-    void Close();
-
-    // The content subtree while the flyout is open. Held here so the widget tree is not
-    // destroyed when the layer closes.
-    std::vector<WidgetPtr> parked_;
-    bool ownLayer_ = false;
+    void Toggle();
+    WidgetPtr BuildContentForSlotOpen() override;
 };
 
 // Shows a short label when the pointer is over its content.
@@ -427,15 +475,12 @@ private:
     std::function<void(int)> onChosen_;
 };
 
-class ComboBox : public Widget {
+class ComboBox : public PopupBase {
 public:
     Size Measure(const Size& available) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
-    Widget* HitTest(const Point& p) override;
     void OnPointerDown(const Point& local) override;
     void OnPointerUp(const Point& local) override;
-    void OnPointerEnter() override;
-    void OnPointerLeave() override;
     bool OnKeyDown(int vk) override;
     bool Focusable() const override { return true; }
     void OnSlotChanged(int slot, const Value& value) override;
@@ -443,12 +488,16 @@ public:
     // The items, split on ';'. Public so the parser and tests agree on the separator.
     static std::vector<std::wstring> SplitItems(const std::wstring& items);
 
+protected:
+    // The list is exactly as wide as the box and sits under it.
+    Point AnchorPoint() const override;
+    Size PopupSize() const override;
+    WidgetPtr BuildContentForSlotOpen() override;
+
 private:
     void OpenDropDown();
-    void CloseDropDown();
     void ApplySelection();
     Rect DropDownBounds() const;
-    float RowHeight() const;
 
     bool ownLayer_ = false;
     bool hoveredRow_ = false;
@@ -484,6 +533,47 @@ private:
     size_t caret_ = 0;
     bool caretVisible_ = true;
     std::wstring editing_;
+};
+
+// A text field that suggests completions as you type.
+//
+// Filtering is a plain substring match on a ';'-separated list, for the same reason ComboBox
+// uses one: an item template needs the virtualising collection subsystem, and a control that
+// silently ignored its template would be worse than one that never had it.
+//
+// Two keys are why this is not just a TextBox with a flyout: Down/Up move the highlight while
+// the list is open, and Enter commits the highlighted suggestion instead of doing nothing.
+// Escape dismisses without changing the text.
+class AutoSuggestBox : public PopupBase {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    bool OnChar(wchar_t ch) override;
+    bool Focusable() const override { return true; }
+
+    // The suggestions for the current Text.
+    std::vector<std::wstring> Filtered() const;
+    // Index of the highlighted row, or -1.
+    int Highlighted() const { return highlighted_; }
+
+    // Splits on ';' exactly like ComboBox, sharing the rule so the two cannot drift.
+    static std::vector<std::wstring> SplitItems(const std::wstring& items);
+
+protected:
+    Point AnchorPoint() const override;
+    Size PopupSize() const override;
+    WidgetPtr BuildContentForSlotOpen() override;
+
+private:
+    void Refresh();
+    void OpenSuggestions();
+    void Commit(int index);
+
+    std::wstring editing_;
+    int highlighted_ = -1;
 };
 
 // A text field that renders bullets instead of characters.

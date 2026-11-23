@@ -71,6 +71,8 @@ public:
         Make("LanguageIndex", LanguageIndex);
         Make("LanguageText", LanguageText);
         Make("WrapLines", WrapLines);
+        Make("Query", Query);
+        Make("QueryText", QueryText);
 
         // Each control that holds state gets its own observer, so the caption is derived
         // in one place instead of every control writing a caption as a side effect.
@@ -82,6 +84,7 @@ public:
         Quantity.Subscribe(this);
         Passphrase.Subscribe(this);
         LanguageIndex.Subscribe(this);
+        Query.Subscribe(this);
 
         // Watch IsAgreed so the caption question tracks the box. An observer
         // (rather than the page calling back) keeps the derivation inside the
@@ -123,6 +126,7 @@ public:
         Quantity.Unsubscribe(this);
         Passphrase.Unsubscribe(this);
         LanguageIndex.Unsubscribe(this);
+        Query.Unsubscribe(this);
     }
 
 private:
@@ -235,6 +239,10 @@ public:
     wui::ObservableProperty<int> LanguageIndex{"LanguageIndex", 2};
     wui::ObservableProperty<std::wstring> LanguageText{"LanguageText", L""};
     wui::ObservableProperty<bool> WrapLines{"WrapLines", true};
+    // The suggest box owns the text through a TwoWay binding; the caption is derived so the
+    // demo shows that a committed suggestion arrives in the model.
+    wui::ObservableProperty<std::wstring> Query{"Query", L""};
+    wui::ObservableProperty<std::wstring> QueryText{"QueryText", L"Nothing typed yet."};
 
 private:
     wui::ObservableProperty<wui::RefPtr> clickCommand_{"ClickCommand"};

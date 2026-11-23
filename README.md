@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.9.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.9.1.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -96,7 +96,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 205 个用例 |
+| `tests` | `waml_tests.exe` | 214 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -211,7 +211,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | P1 常用增强 | 16（**3 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` ／ 待做 `Popup` `ContentDialog`（已提前）`AutoSuggestBox` 等 | 进行中 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **45 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 3 个）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**。
+目前 **47 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 5 个）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**。
 
 ---
 
@@ -221,7 +221,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 205 个单元/集成用例 |
+| `waml_tests.exe` | 214 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -449,6 +449,28 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **离开状态会恢复**。每个状态进入时记下被它改动的槽位的原值，离开时写回。所以 `Normal` 不必把其它状态的每个属性再声明一遍。
 - **`Normal` 是隐式的**，永远存在，表示“没有任何状态修饰”。不声明它也行——这正是关键：如果把它当成“未知状态名”而忽略，上一个状态的值就会永久留在控件上。
 - **动画时间是注入的**。`AnimationHost::AdvanceAll(dt)` 接收调用方给的秒数：宿主给真实流逝时间，测试给 `1/60` 并断言精确中间值。内部去读系统时钟会让每个动画测试天生不稳定。
+
+### 写法示例：Popup 原语与 AutoSuggestBox
+
+```xml
+<!-- Popup：最原始的弹层，只负责"把这个孩子显示在控件旁边" -->
+<Popup Content="Details">
+  <StackPanel Spacing="6">
+    <TextBlock Text="任何控件都可以放进来。"/>
+  </StackPanel>
+</Popup>
+
+<!-- AutoSuggestBox：输入即筛选，方向键选，回车提交 -->
+<AutoSuggestBox Items="Seattle;Seoul;Berlin;Lisbon;London;Sydney"
+                Text="{Binding Query, Mode=TwoWay}"
+                PlaceholderText="Search cities"/>
+```
+
+三条约束值得记住：
+
+- **`Popup` 是 `Flyout`/`ComboBox` 的共同底座**。它们曾各自持有一份“取出子控件、装进浮层、关闭时复位标志”的逻辑，包括那个会让控件关一次就再也打不开的缺陷（§7.25）。现在这些只在 `PopupBase` 里存在一份，子类只决定外观和**何时**打开。
+- **筛选是子串匹配，不是前缀**。用户更常输入词中间的特征片段（“lon” → London、“se” → Seattle/Seoul），前缀匹配会把这类输入判成无结果。
+- **`AutoSuggestBox` 每次按键都从槽位重读文本**。它没有光标模型，早期版本用“缓冲区为空才同步”来省事，结果是**外部写入（绑定、重置）对它不可见**：屏幕上的字变了，下一次按键却接在旧缓冲后面，凭空拼出用户没输入过的字符串。这类缺陷只有“先清空再输入”的测试能抓到。
 
 - **动画只覆盖视觉状态过渡**：`VisualState` 的 `Transition` 会插值颜色/数值/Thickness，但没有关键帧、没有嵌套时间轴，也不对布局属性做动画（改尺寸的过渡会触发重排，目前只让绘制属性动）。
 - **`DataContext` 不可绑定**：`{Binding ..., Source=...}` 在 v0.5 被明确拒绝，无法在 WAML 里给子树换数据源——这意味着**组件复用目前只能靠复制 WAML**。这是实现 `usercontrol` 示例的前置阻塞项。

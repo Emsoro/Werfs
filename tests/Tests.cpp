@@ -4044,6 +4044,156 @@ TEST("visualstate: an element with no states pays nothing") {
     CHECK(b->VisualStates() == nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// Popup primitive and AutoSuggestBox.
+// ---------------------------------------------------------------------------
+TEST("popup: opens its declared child as an overlay and closes again") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Popup x:Name=\"p\" Content=\"Details\">"
+        "<StackPanel><Button Content=\"Inner\"/></StackPanel>"
+        "</Popup>",
+        "p", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    CHECK(f.root->Overlay() == nullptr);
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    CHECK(f.root->Overlay() != nullptr);
+    // The content left the tree: a closed popup must not reserve its space.
+    CHECK(f.target->Children().empty());
+    // A second click closes it.
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+}
+
+TEST("popup: a ViewModel-driven IsOpen opens it") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Popup x:Name=\"p\" Content=\"Details\"><TextBlock Text=\"Card\"/></Popup>", "p", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    f.target->SetSlotValue(f.target->SlotOf("IsOpen"), Value::Bool(true), true);
+    // The base asks the subclass for content; a ViewModel writing IsOpen must not be a
+    // silent no-op.
+    CHECK(f.root->Overlay() != nullptr);
+}
+
+TEST("popup: light dismiss reports back through IsOpen") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Popup x:Name=\"p\" Content=\"Details\"><TextBlock Text=\"Card\"/></Popup>", "p", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    layer->OnPointerDown(Point{-5.0f, -5.0f});
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+}
+
+TEST("autosuggest: filters case-insensitively on a substring") {
+    DiagnosticBag bag;
+    Widget* s = MakeWidget("AutoSuggestBox", "Items=\"Seattle;Berlin;Seoul;Lisbon\" Text=\"se\"",
+                           bag);
+    CHECK(s != nullptr);
+    if (!s) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(s);
+    CHECK(box != nullptr);
+    if (!box) return;
+    const auto matches = box->Filtered();
+    // "se" matches Seattle and Seoul -- as a substring, not a prefix (Seattle has it in the
+    // middle). Berlin and Lisbon do not contain it at all.
+    CHECK(matches.size() == 2);
+}
+
+TEST("autosuggest: nothing is suggested before the user types") {
+    DiagnosticBag bag;
+    Widget* s = MakeWidget("AutoSuggestBox", "Items=\"Alpha;Beta\"", bag);
+    CHECK(s != nullptr);
+    if (!s) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(s);
+    CHECK(box != nullptr);
+    if (!box) return;
+    // An empty query must not offer the whole list: that is a dropdown, not a suggestion.
+    CHECK(box->Filtered().empty());
+}
+
+TEST("autosuggest: typing opens the list and Enter commits the highlight") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Seattle;Seoul;Berlin\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->OnChar(L'S');
+    box->OnChar(L'e');
+    // Both match, so the list opens with the first row highlighted.
+    CHECK(f.root->Overlay() != nullptr);
+    CHECK(box->Highlighted() == 0);
+    CHECK(box->OnKeyDown(KeyDown));
+    CHECK(box->Highlighted() == 1);
+    // Enter takes the highlighted row, not the first one.
+    CHECK(box->OnKeyDown(KeyReturn));
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")) == L"Seoul");
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+}
+
+TEST("autosuggest: Escape dismisses without undoing the typing") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Seattle;Seoul\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+    box->OnChar(L'S');
+    box->OnChar(L'e');
+    CHECK(f.root->Overlay() != nullptr);
+    CHECK(box->OnKeyDown(KeyEscape));
+    CHECK(f.root->Overlay() == nullptr);
+    // Escape means "stop suggesting", not "undo what I typed".
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")) == L"Se");
+}
+
+TEST("autosuggest: backspace narrows and closes the list when nothing matches") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Seattle;Seoul\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+    box->OnChar(L'z');
+    // No match: an empty card reads as a bug, so the list stays closed.
+    CHECK(f.root->Overlay() == nullptr);
+    CHECK(box->OnKeyDown(KeyBack));
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")).empty());
+}
+
+TEST("autosuggest: an unchanged prefix keeps the list closed instead of empty") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Alpha\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+    box->OnChar(L'A');
+    CHECK(f.root->Overlay() != nullptr);
+    // Typing a second character that still matches keeps it open.
+    box->OnChar(L'l');
+    CHECK(f.root->Overlay() != nullptr);
+}
+
 // A widget plus the categories the shell tests need.
 struct ShellFixture {
     WidgetPtr root;
