@@ -59,9 +59,10 @@ DWriteTextService::DWriteTextService() : impl_(std::make_unique<Impl>()) {
 
 DWriteTextService::~DWriteTextService() = default;
 
-Size DWriteTextService::Measure(const std::wstring& text, float fontSize, int weight) {
+Size DWriteTextService::Measure(const std::wstring& text, float fontSize, int weight,
+                                  const std::wstring& family) {
     if (!impl_ || !impl_->factory) {
-        return FakeTextService{}.Measure(text, fontSize, weight);
+        return FakeTextService{}.Measure(text, fontSize, weight, family);
     }
     if (text.empty()) return Size{0, fontSize * 1.33f};
     const std::wstring key = text + L"|" + std::to_wstring(static_cast<int>(fontSize)) + L"|" +
@@ -70,23 +71,27 @@ Size DWriteTextService::Measure(const std::wstring& text, float fontSize, int we
     if (it == impl_->layouts.end()) {
         if (impl_->layouts.size() > 512) impl_->layouts.clear(); // Simple LRU-ish bound.
         ComPtr<IDWriteTextFormat> format;
-        HRESULT hr = impl_->factory->CreateTextFormat(L"Segoe UI", nullptr,
+        HRESULT hr = impl_->factory->CreateTextFormat(family.empty() ? L"Segoe UI" : family.c_str(), nullptr,
                                                       static_cast<DWRITE_FONT_WEIGHT>(FontWeightToDWrite(weight)),
                                                       DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                                       fontSize, L"", format.GetAddressOf());
-        if (FAILED(hr)) return FakeTextService{}.Measure(text, fontSize, weight);
+        if (FAILED(hr)) return FakeTextService{}.Measure(text, fontSize, weight, family);
         ComPtr<IDWriteTextLayout> layout;
         hr = impl_->factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
                                               format.Get(), 10000.0f, 1000.0f, layout.GetAddressOf());
-        if (FAILED(hr)) return FakeTextService{}.Measure(text, fontSize, weight);
+        if (FAILED(hr)) return FakeTextService{}.Measure(text, fontSize, weight, family);
         it = impl_->layouts.emplace(key, layout).first;
     }
     DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(it->second->GetMetrics(&metrics))) return FakeTextService{}.Measure(text, fontSize, weight);
+    if (FAILED(it->second->GetMetrics(&metrics))) return FakeTextService{}.Measure(text, fontSize, weight, family);
     return Size{metrics.width, metrics.height};
 }
 
-float DWriteTextService::LineHeight(float fontSize) { return fontSize * 1.33f; }
+float DWriteTextService::LineHeight(float fontSize, const std::wstring&) {
+    // Kept as a constant multiple rather than measured: line height varies by font, but a
+    // layout that jitters when a family changes is worse than one that is slightly loose.
+    return fontSize * 1.33f;
+}
 
 // ---------------------------------------------------------------------------
 // D2DSnapshotRenderer
@@ -157,14 +162,17 @@ struct D2DSnapshotRenderer::Impl {
         return inserted->second.Get();
     }
 
-    IDWriteTextFormat* Format(float fontSize, int weight) {
-        const std::wstring key =
-            std::to_wstring(static_cast<int>(fontSize * 4)) + L"/" + std::to_wstring(weight);
+    IDWriteTextFormat* Format(float fontSize, int weight, const std::wstring& family) {
+        // The family is part of the key: two families at one size are different formats,
+        // and a cache without it would silently draw the first one everywhere.
+        const std::wstring key = std::to_wstring(static_cast<int>(fontSize * 4)) + L"/" +
+                                 std::to_wstring(weight) + L"/" + family;
         auto it = formats.find(key);
         if (it != formats.end()) return it->second.Get();
         ComPtr<IDWriteTextFormat> format;
         if (FAILED(dwrite->CreateTextFormat(
-                L"Segoe UI", nullptr, static_cast<DWRITE_FONT_WEIGHT>(FontWeightToDWrite(weight)),
+                family.empty() ? L"Segoe UI" : family.c_str(), nullptr,
+                static_cast<DWRITE_FONT_WEIGHT>(FontWeightToDWrite(weight)),
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"",
                 format.GetAddressOf())))
             return nullptr;
@@ -278,10 +286,10 @@ public:
         impl_.target->DrawLine(D2D1::Point2F(a.x, a.y), D2D1::Point2F(b.x, b.y), brush, width);
     }
 
-    void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
-                  TextAlign align) override {
+    void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
+                  int weight, TextAlign align, const std::wstring& family) override {
         auto* brush = impl_.Brush(ResolveColor(c, palette_));
-        auto* format = impl_.Format(fontSize, weight);
+        auto* format = impl_.Format(fontSize, weight, family);
         if (!brush || !format) return;
         format->SetTextAlignment(align == TextAlign::Center   ? DWRITE_TEXT_ALIGNMENT_CENTER
                                  : align == TextAlign::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING

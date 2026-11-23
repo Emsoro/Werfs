@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.8.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.8.1.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -96,7 +96,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 177 个用例 |
+| `tests` | `waml_tests.exe` | 192 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -208,10 +208,10 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|---|---|
 | **P0 必做** | 23（**✅ 全部完成**） | ✅ `Grid` `Canvas` `WrapPanel` `VariableSizedWrapGrid` `Viewbox` `Expander` `RelativePanel` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 已完成 |
 | **已提前完成** | 12 | `TabView`（原 P2）· `MenuBar` `MenuBarItem` `MenuFlyout` `MenuFlyoutItem` `MenuFlyoutSubItem` `MenuFlyoutSeparator` `CommandBar` `AppBarButton` `AppBarSeparator` `ContentDialog`（原 P1，浮层完成后一并落地）· 以及 `OverlayLayer` 这个非控件能力 | 已实现 |
-| P1 常用增强 | 16 | `ComboBox` `Popup` `Flyout` `ToolTip` `ContentDialog` `MenuFlyout` `CommandBar` `AutoSuggestBox` 等 | 浮层子系统完成后 |
+| P1 常用增强 | 16（**3 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` ／ 待做 `Popup` `ContentDialog`（已提前）`AutoSuggestBox` 等 | 进行中 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **42 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**。
+目前 **45 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 3 个）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**。
 
 ---
 
@@ -221,7 +221,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 177 个单元/集成用例 |
+| `waml_tests.exe` | 192 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -384,6 +384,38 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **无 `VisualState` / 主题资源字典**：有 `Style`/`Setter`/`Trigger`，但没有多状态切换（`Normal`/`PointerOver`/`Pressed` 一站式的状态机）与过渡动画。触发器可以模拟简单的两态，复杂状态建议等动画落地。
 - **样式不能绑定**：`Setter` 只接受字面量（可引用资源）。样式在加载期解析成槽位值，「一个样式对所有使用者共享一份值」在这个前提下才有意义；需要按数据变化的外观用触发器或绑定到元素自身。
 - **样式不能跨文件共享**：没有合并字典，`<Style>` 只在声明它的文档内可见。
+
+### 写法示例：等宽字体与弹出层
+
+```xml
+<!-- 等宽字体：代码片段靠它对齐列 -->
+<TextBlock Text="name  = &quot;WAML&quot; /  value = 42"
+           FontFamily="Consolas" FontSize="13"/>
+
+<!-- ComboBox：Items 用 ';' 分隔（逗号会撞上「Paris, France」这类真实数据） -->
+<ComboBox Items="C++;C#;Rust;Python;Go"
+          SelectedIndex="{Binding LanguageIndex, Mode=TwoWay}"/>
+
+<!-- Flyout：弹层里放真实控件，不是一排菜单项 -->
+<Flyout Content="Advanced...">
+  <StackPanel Spacing="8">
+    <ToggleSwitch Content="Wrap long lines" IsChecked="{Binding WrapLines, Mode=TwoWay}"/>
+    <Button Content="Reset" Command="{Binding ResetCommand}"/>
+  </StackPanel>
+</Flyout>
+
+<!-- ToolTip：悬停显示，点击穿透到下面的控件 -->
+<ToolTip Text="这行提示只在悬停时出现。">
+  <TextBlock Text="把鼠标放在这句话上。"/>
+</ToolTip>
+```
+
+四条约束值得记住：
+
+- **`FontFamily` 空字符串 = 系统默认**，所以既有页面一个字都不用改。等宽族名（Consolas、Cascadia、Courier…）在 headless 文本服务里用 0.6 em 而不是 0.55 em 的字宽，这样布局测试能分辨字体，不用 DWrite 也能验证。
+- **`ComboBox` 的 `SelectedText` 是从 `SelectedIndex` 派生的**，绑哪个都行，两者不可能互相矛盾。方向键在**收起状态下**直接改选中项（Windows 惯例），不必先展开列表。
+- **`Flyout` 的内容会离开控件树**，进入浮层。这不是实现细节走漏：留在树里的弹层会被父布局测量（收起时仍占位），也会被上层的 `ScrollViewer` 裁剪。
+- **`ToolTip` 不是浮层**，而且 `HitTest` 恒返回空。它只负责给下面的控件贴标签，一旦拦截点击就会破坏它描述的那个控件。
 - **无动画**：主题切换、展开、菜单弹出都是瞬时的。
 - **`DataContext` 不可绑定**：`{Binding ..., Source=...}` 在 v0.5 被明确拒绝，无法在 WAML 里给子树换数据源——这意味着**组件复用目前只能靠复制 WAML**。这是实现 `usercontrol` 示例的前置阻塞项。
 - **`TextBox` 无 IME / 选区 / 剪贴板**：只有插入、退格、删除、方向键、Home/End、回车。**中文输入不可用** —— 对一个文本编辑器示例来说这是最明显的短板，见 `CODE_PLAN.md` R10。

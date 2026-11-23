@@ -238,6 +238,10 @@ void Widget::RebindDataContextBindings() {
     for (auto& c : children_) c->RebindDataContextBindings();
 }
 
+std::wstring Widget::FontFamily() const {
+    const int slot = SlotOf("FontFamily");
+    return slot >= 0 ? Get<std::wstring>(slot) : std::wstring();
+}
 void Widget::ApplySizeConstraints() {
     // Explicit Width/Height win over content; min/max clamp all of them.
     //

@@ -141,6 +141,10 @@ void TypeRegistry::RegisterBuiltins() {
         AddLayoutProps(*t);
         t->Prop("Text", VType::Text, Value::Text(L""), AffectsMeasure);
         t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        // Monospace is what code snippets need: without it a snippet cannot be aligned in
+        // columns, which is most of what a snippet is for. Empty means the system default,
+        // so existing markup is unchanged.
+        t->Prop("FontFamily", VType::Text, Value::Text(L""), AffectsMeasure);
         t->EnumProp("FontWeight", {"Normal", "Medium", "SemiBold", "Bold"}, WeightNormal, AffectsMeasure);
         t->Prop("Foreground", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}),
                 AffectsRender, BindingMode::OneWay, true, true);
@@ -727,6 +731,43 @@ void TypeRegistry::RegisterBuiltins() {
         // One Diameter rather than Width/Height: a person picture that is not round looks
         // like a bug, so the control does not offer the choice.
         t->Prop("Diameter", VType::Number, Value::Number(40), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Flyout", ContentModel::SingleChild,
+                                            []() -> WidgetPtr { return std::make_shared<Flyout>(); });
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L"Open"), AffectsMeasure);
+        // IsOpen is TwoWay: the ViewModel can open it, and the layer reports that the user
+        // dismissed it. Both directions must land in the same slot or the caret lies.
+        t->Prop("IsOpen", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ToolTip", ContentModel::SingleChild,
+                                            []() -> WidgetPtr { return std::make_shared<ToolTip>(); });
+        AddLayoutProps(*t);
+        t->Prop("Text", VType::Text, Value::Text(L""), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ComboBox", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<ComboBox>(); });
+        AddLayoutProps(*t);
+        // Items are a ';'-separated string: an item template needs a templated collection,
+        // and a comma separator would break on "Paris, France".
+        t->Prop("Items", VType::Text, Value::Text(L""), AffectsMeasure);
+        t->Prop("SelectedIndex", VType::Number, Value::Number(-1), AffectsRender,
+                BindingMode::TwoWay);
+        // Derived from SelectedIndex, so binding either one is safe and they cannot
+        // disagree.
+        t->Prop("SelectedText", VType::Text, Value::Text(L""), AffectsRender, BindingMode::OneWay);
+        t->Prop("PlaceholderText", VType::Text, Value::Text(L"Select..."), AffectsRender);
+        t->Prop("IsOpen", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
         add(t);
     }
 }

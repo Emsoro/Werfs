@@ -406,6 +406,24 @@ int FontWeightToDWrite(int w) {
     }
 }
 
+bool IsMonospaceFamily(const std::wstring& family) {
+    if (family.empty()) return false;
+    // Lower-cased substring match, so "Consolas" and "consolas" agree and
+    // "Cascadia Code" is recognised without listing every variant. Checking substrings
+    // rather than equality is deliberate: font names carry variants ("Cascadia Mono
+    // Light") that a strict table would miss.
+    std::wstring lower;
+    lower.reserve(family.size());
+    for (wchar_t c : family) lower.push_back(static_cast<wchar_t>(std::towlower(c)));
+    static const wchar_t* kMonospace[] = {L"consolas", L"courier", L"mono",  L"menlo",
+                                          L"monaco",   L"cascadia", L"lucida console",
+                                          L"fixed",    L"terminal"};
+    for (const wchar_t* name : kMonospace) {
+        if (lower.find(name) != std::wstring::npos) return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // Accelerators
 //

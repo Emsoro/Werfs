@@ -57,12 +57,14 @@ struct Ctx final : PaintCtx {
             return nullptr;
         return brushes.emplace(k, b).first->second.Get();
     }
-    IDWriteTextFormat* Format(float size, int weight) {
-        const std::wstring k = std::to_wstring(int(size * 4)) + L"/" + std::to_wstring(weight);
+    IDWriteTextFormat* Format(float size, int weight, const std::wstring& family) {
+        // Family in the key, or every family would render as whichever came first.
+        const std::wstring k = std::to_wstring(int(size * 4)) + L"/" + std::to_wstring(weight) +
+                               L"/" + family;
         auto it = formats.find(k);
         if (it != formats.end()) return it->second.Get();
         ComPtr<IDWriteTextFormat> f;
-        if (FAILED(dw->CreateTextFormat(L"Segoe UI", nullptr,
+        if (FAILED(dw->CreateTextFormat(family.empty() ? L"Segoe UI" : family.c_str(), nullptr,
                                         (DWRITE_FONT_WEIGHT)FontWeightToDWrite(weight),
                                         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size,
                                         L"", f.GetAddressOf())))
@@ -102,9 +104,9 @@ struct Ctx final : PaintCtx {
         (void)clip;
     }
     void DrawText(const std::wstring& t, const Rect& r, const Color& c, float size, int weight,
-                  TextAlign a) override {
+                  TextAlign a, const std::wstring& family) override {
         auto* b = Brush(ResolveColor(c, pal));
-        auto* f = Format(size, weight);
+        auto* f = Format(size, weight, family);
         if (!b || !f) return;
         f->SetTextAlignment(a == TextAlign::Center   ? DWRITE_TEXT_ALIGNMENT_CENTER
                             : a == TextAlign::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING

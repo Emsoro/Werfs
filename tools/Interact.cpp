@@ -238,6 +238,98 @@ int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm)
     // page from quietly growing into a second list sample.
     Expect(FindFirst(root, "wui/ListBox") == nullptr, "basic page has no ListBox");
 
+    std::printf("\n[13] ComboBox opens a real overlay and selecting a row writes the model\n");
+    {
+        root->SetOverlay(nullptr);
+        Widget* comboWidget = FindFirst(root, "wui/ComboBox");
+        auto* combo = dynamic_cast<ComboBox*>(comboWidget);
+        Expect(combo != nullptr, "the page has a ComboBox");
+        if (combo != nullptr) {
+            Expect(!combo->Get<bool>(combo->SlotOf("IsOpen")), "it starts closed");
+            const Rect box = combo->Bounds();
+            // Drive the real path: down then up inside the box.
+            combo->OnPointerDown(Point{box.x + 8.0f, box.y + 8.0f});
+            combo->OnPointerUp(Point{box.x + 8.0f, box.y + 8.0f});
+            Expect(combo->Get<bool>(combo->SlotOf("IsOpen")), "clicking it opens the list");
+            OverlayLayer* layer = root->Overlay();
+            Expect(layer != nullptr, "the list lives in an overlay, not in the card");
+            if (layer != nullptr) {
+                // Row 3 is "Python" (C++, C#, Rust, Python, Go).
+                const Rect lb = layer->Bounds();
+                const Point row3{lb.x + 20.0f, lb.y + 8.0f + 28.0f * 3.0f + 14.0f};
+                layer->OnPointerDown(row3);
+                layer->OnPointerUp(row3);
+                Expect(combo->Get<int>(combo->SlotOf("SelectedIndex")) == 3,
+                       "picking a row sets the index");
+                // The ViewModel must have heard it, through a TwoWay binding.
+                Expect(vm->LanguageIndex.Get() == 3, "the model received the new index");
+                Expect(!combo->Get<bool>(combo->SlotOf("IsOpen")), "choosing closes the list");
+            }
+        }
+    }
+
+    std::printf("\n[14] ComboBox outside-click dismisses without changing the value\n");
+    {
+        root->SetOverlay(nullptr);
+        Widget* comboWidget = FindFirst(root, "wui/ComboBox");
+        auto* combo = dynamic_cast<ComboBox*>(comboWidget);
+        if (combo != nullptr) {
+            const int before = combo->Get<int>(combo->SlotOf("SelectedIndex"));
+            const Rect box = combo->Bounds();
+            combo->OnPointerUp(Point{box.x + 8.0f, box.y + 8.0f});
+            OverlayLayer* layer = root->Overlay();
+            Expect(layer != nullptr, "the list is open again");
+            if (layer != nullptr) {
+                // A press outside must dismiss AND be consumed, so the click does not also
+                // activate whatever it landed on.
+                Expect(layer->OnPointerDown(Point{2.0f, 2.0f}), "the outside press is consumed");
+                Expect(!layer->Active(), "and the list closes");
+            }
+            Expect(combo->Get<int>(combo->SlotOf("SelectedIndex")) == before,
+                   "dismissing does not change the selection");
+            Expect(!combo->Get<bool>(combo->SlotOf("IsOpen")), "the control agrees it is closed");
+        }
+    }
+
+    std::printf("\n[15] Flyout hosts real controls and light-dismisses\n");
+    {
+        root->SetOverlay(nullptr);
+        Widget* flyoutWidget = FindFirst(root, "wui/Flyout");
+        auto* flyout = dynamic_cast<Flyout*>(flyoutWidget);
+        Expect(flyout != nullptr, "the page has a Flyout");
+        if (flyout != nullptr) {
+            const Rect box = flyout->Bounds();
+            flyout->OnPointerUp(Point{box.x + 8.0f, box.y + 8.0f});
+            OverlayLayer* layer = root->Overlay();
+            Expect(layer != nullptr, "the flyout opened an overlay");
+            Expect(flyout->Children().empty(),
+                   "its content left the tree, so a closed flyout reserves no space");
+            if (layer != nullptr) {
+                const Rect lb = layer->Bounds();
+                Expect(lb.w > 0.0f && lb.h > 0.0f, "the card has a real size");
+                Expect(layer->OnPointerDown(Point{lb.x + 20.0f, lb.y + 20.0f}),
+                       "a press inside the card is consumed");
+                Expect(layer->Active(), "and does not dismiss it");
+                // Escape closes it.
+                Expect(layer->OnKeyDown(KeyEscape, 0), "Escape is handled");
+                Expect(!flyout->Get<bool>(flyout->SlotOf("IsOpen")), "Escape closes the flyout");
+            }
+        }
+    }
+
+    std::printf("\n[16] ToolTip labels on hover and never intercepts clicks\n");
+    {
+        Widget* tipWidget = FindFirst(root, "wui/ToolTip");
+        auto* tip = dynamic_cast<ToolTip*>(tipWidget);
+        Expect(tip != nullptr, "the page has a ToolTip");
+        if (tip != nullptr) {
+            const Rect b = tip->Bounds();
+            // Hits must pass through, or the label would break the control under it.
+            Expect(tip->HitTest(Point{b.x + 2.0f, b.y + 2.0f}) == nullptr,
+                   "a tooltip does not claim hits");
+        }
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }

@@ -48,6 +48,11 @@ public:
     const char* TypeName() const { return type_ ? type_->Name().c_str() : "?"; }
     int SlotOf(std::string_view name) const;
 
+    // The element's FontFamily, or empty for the system default. A helper rather than an
+    // inline SlotOf/Get pair at each call site, because nine controls need it and a
+    // missing slot at any one of them would silently fall back to the wrong metrics.
+    std::wstring FontFamily() const;
+
     // --- slots --------------------------------------------------------------
     template <class T>
     T Get(int slot) const {

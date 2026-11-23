@@ -176,9 +176,9 @@ public:
         app_.target->DrawBitmap(d2d.Get(), R(dest), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
     }
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
-                  TextAlign align) override {
+                  TextAlign align, const std::wstring& family) override {
         auto* b = Brush(ResolveColor(c, palette_));
-        auto* f = Format(fontSize, weight);
+        auto* f = Format(fontSize, weight, family);
         if (!b || !f) return;
         f->SetTextAlignment(align == TextAlign::Center   ? DWRITE_TEXT_ALIGNMENT_CENTER
                             : align == TextAlign::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING
@@ -210,14 +210,16 @@ private:
         return app_.brushes.emplace(key, brush).first->second.Get();
     }
 
-    IDWriteTextFormat* Format(float fontSize, int weight) {
-        const std::wstring key =
-            std::to_wstring(static_cast<int>(fontSize * 4)) + L"/" + std::to_wstring(weight);
+    IDWriteTextFormat* Format(float fontSize, int weight, const std::wstring& family) {
+        // Family is part of the cache key: two families at one size are different formats.
+        const std::wstring key = std::to_wstring(static_cast<int>(fontSize * 4)) + L"/" +
+                                 std::to_wstring(weight) + L"/" + family;
         auto it = app_.formats.find(key);
         if (it != app_.formats.end()) return it->second.Get();
         ComPtr<IDWriteTextFormat> format;
         if (FAILED(app_.dwrite->CreateTextFormat(
-                L"Segoe UI", nullptr, static_cast<DWRITE_FONT_WEIGHT>(FontWeightToDWrite(weight)),
+                family.empty() ? L"Segoe UI" : family.c_str(), nullptr,
+                static_cast<DWRITE_FONT_WEIGHT>(FontWeightToDWrite(weight)),
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"",
                 format.GetAddressOf())))
             return nullptr;

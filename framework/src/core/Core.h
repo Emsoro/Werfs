@@ -197,13 +197,27 @@ public:
 class ITextService {
 public:
     virtual ~ITextService() = default;
-    virtual Size Measure(const std::wstring& text, float fontSize, int weight) = 0;
-    virtual float LineHeight(float fontSize) = 0;
+
+    // `family` is the FontFamily to measure with; empty means the system default. It is
+    // a trailing parameter with a default so that the ~90 existing call sites were not
+    // rewritten for a feature almost none of them use -- and so that adding another font
+    // attribute later does not mean touching them again.
+    virtual Size Measure(const std::wstring& text, float fontSize, int weight,
+                         const std::wstring& family = L"") = 0;
+    virtual float LineHeight(float fontSize, const std::wstring& family = L"") = 0;
 };
 
 // Default font weights (index into this table is the WAML enum value).
 enum FontWeight : int { WeightNormal = 0, WeightMedium = 1, WeightSemiBold = 2, WeightBold = 3 };
 int FontWeightToDWrite(int w);
+
+// True for a family name that should be treated as fixed-width.
+//
+// Used by the headless text service to give monospace a different advance, which is what
+// makes FontFamily observable in a layout test. The renderers do not need it -- they pass
+// the family to the real text stack -- but they DO need the same idea of which names are
+// monospace, so the list lives here rather than being duplicated three times.
+bool IsMonospaceFamily(const std::wstring& family);
 
 // ---------------------------------------------------------------------------
 // Painting abstraction: D2D/WIC in the app and snapshot tool, recording in tests.
@@ -243,7 +257,7 @@ public:
     virtual void DrawBitmap(const Bitmap* bitmap, const Rect& dest,
                             const Rect* clip = nullptr) = 0;
     virtual void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
-                          int weight, TextAlign align) = 0;
+                          int weight, TextAlign align, const std::wstring& family = L"") = 0;
     virtual void PushClip(const Rect& r) = 0;
     virtual void PopClip() = 0;
 };

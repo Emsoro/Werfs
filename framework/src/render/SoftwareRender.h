@@ -22,7 +22,7 @@ public:
     void FillEllipse(const Rect& r, const Color& c) override;
     void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override;
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
-                  TextAlign align) override;
+                  TextAlign align, const std::wstring& family) override;
     void PushClip(const Rect& r) override;
     void PopClip() override;
 
@@ -68,7 +68,7 @@ public:
     void FillEllipse(const Rect& r, const Color& c) override;
     void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override;
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
-                  TextAlign align) override;
+                  TextAlign align, const std::wstring& family) override;
     void PushClip(const Rect& r) override;
     void PopClip() override;
 
@@ -80,8 +80,9 @@ private:
 // Deterministic text metrics for headless tests (no DWrite).
 class FakeTextService final : public ITextService {
 public:
-    Size Measure(const std::wstring& text, float fontSize, int weight) override;
-    float LineHeight(float fontSize) override { return fontSize * 1.33f; }
+    Size Measure(const std::wstring& text, float fontSize, int weight,
+                 const std::wstring& family) override;
+    float LineHeight(float fontSize, const std::wstring&) override { return fontSize * 1.33f; }
 };
 
 } // namespace wui

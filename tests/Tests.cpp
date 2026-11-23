@@ -3420,6 +3420,290 @@ TEST("personpicture: is square and paints a circle") {
     CHECK(rec.Text().find("AL") != std::string::npos);
 }
 
+TEST("textblock: FontFamily changes the measured width") {
+    InstallText();
+    DiagnosticBag bag;
+    // The fake service gives monospace a wider advance (0.6 em vs 0.55 em), so the
+    // difference is observable without DWrite. Without such a difference this test would
+    // pass no matter what the control did with the property.
+    const char* src = R"WAML(
+<Page>
+  <TextBlock x:Name="plain" Text="abcdefghij" FontSize="20"/>
+  <TextBlock x:Name="mono" Text="abcdefghij" FontSize="20" FontFamily="Consolas"/>
+</Page>)WAML";
+    auto doc = Compile(src, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{600, 300});
+    Widget* plain = root->FindByName("plain");
+    Widget* mono = root->FindByName("mono");
+    CHECK(plain && mono);
+    if (!plain || !mono) return;
+    CHECK(mono->DesiredSize().w > plain->DesiredSize().w);
+}
+
+TEST("textblock: FontFamily is passed through to the paint call") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBlock x:Name="t" Text="x" FontFamily="Consolas"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{300, 100});
+    Widget* t = root->FindByName("t");
+    CHECK(t != nullptr);
+    if (!t) return;
+    RecordingPaintContext rec;
+    t->OnPaint(rec, MakePalette(ThemeKind::Light));
+    // The recording names the family, so a control that ignored it would record nothing.
+    CHECK(rec.Text().find("font=Consolas") != std::string::npos);
+}
+
+TEST("textblock: no FontFamily records no font, so existing markup is unchanged") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBlock x:Name="t" Text="x"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{300, 100});
+    Widget* t = root->FindByName("t");
+    CHECK(t != nullptr);
+    if (!t) return;
+    RecordingPaintContext rec;
+    t->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("font=") == std::string::npos);
+}
+
+TEST("textblock: monospace names are recognised, and a normal family is not") {
+    CHECK(IsMonospaceFamily(L"Consolas"));
+    CHECK(IsMonospaceFamily(L"consolas"));
+    CHECK(IsMonospaceFamily(L"Cascadia Mono"));
+    CHECK(IsMonospaceFamily(L"Courier New"));
+    CHECK(!IsMonospaceFamily(L"Segoe UI"));
+    CHECK(!IsMonospaceFamily(L""));
+}
+
+// ---------------------------------------------------------------------------
+// P1 popup batch: Flyout, ToolTip, ComboBox.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Installs a page and returns the root plus a named widget, so tests can reach both the
+// overlay and the control that opened it.
+struct PopupFixture {
+    WidgetPtr root;
+    Widget* target = nullptr;
+};
+
+PopupFixture MakePopup(const std::string& body, const char* name, DiagnosticBag& bag,
+                       Size size = Size{600, 400}) {
+    InstallText();
+    const std::string src = "<Page>" + body + "</Page>";
+    auto doc = Compile(src, bag);
+    if (!doc) {
+        std::printf("    diag: %s\n", bag.ToText().c_str());
+        return {};
+    }
+    static std::vector<WidgetPtr> keep;
+    keep.clear();
+    keep.push_back(doc->Instantiate(&g_fakeText));
+    WidgetPtr root = keep.back();
+    root->ForceLayout(size);
+    return PopupFixture{root, root->FindByName(name)};
+}
+
+} // namespace
+
+TEST("combobox: items split on semicolons, not commas") {
+    // A comma separator would break on real data ("Paris, France"), so ';' is the
+    // separator even though it is less pretty.
+    const auto items = ComboBox::SplitItems(L"One;Two;Three");
+    CHECK(items.size() == 3);
+    CHECK(items[0] == L"One");
+    CHECK(items[2] == L"Three");
+    CHECK(ComboBox::SplitItems(L"Paris, France;Berlin, Germany").size() == 2);
+    CHECK(ComboBox::SplitItems(L"").empty());
+    // Trailing and doubled separators must not produce empty rows.
+    CHECK(ComboBox::SplitItems(L"A;;B;").size() == 2);
+}
+
+TEST("combobox: selected text is derived from the index") {
+    DiagnosticBag bag;
+    Widget* c = MakeWidget("ComboBox", "Items=\"Red;Green;Blue\" SelectedIndex=\"1\"", bag);
+    CHECK(c != nullptr);
+    if (!c) return;
+    CHECK(c->Get<std::wstring>(c->SlotOf("SelectedText")) == L"Green");
+    c->SetSlotValue(c->SlotOf("SelectedIndex"), Value::Number(2), true);
+    // Deriving it means the two slots can never disagree.
+    CHECK(c->Get<std::wstring>(c->SlotOf("SelectedText")) == L"Blue");
+}
+
+TEST("combobox: arrows move the selection without opening the list") {
+    DiagnosticBag bag;
+    Widget* c = MakeWidget("ComboBox", "Items=\"A;B;C\" SelectedIndex=\"0\"", bag);
+    CHECK(c != nullptr);
+    if (!c) return;
+    CHECK(c->OnKeyDown(KeyDown));
+    CHECK(c->Get<int>(c->SlotOf("SelectedIndex")) == 1);
+    CHECK(c->OnKeyDown(KeyDown));
+    CHECK(c->Get<int>(c->SlotOf("SelectedIndex")) == 2);
+    // Clamped at the end rather than wrapping: wrapping on arrows surprises people who
+    // are stepping through a short list.
+    CHECK(c->OnKeyDown(KeyDown));
+    CHECK(c->Get<int>(c->SlotOf("SelectedIndex")) == 2);
+    CHECK(c->OnKeyDown(KeyUp));
+    CHECK(c->Get<int>(c->SlotOf("SelectedIndex")) == 1);
+}
+
+TEST("combobox: opening installs an overlay that dismissal clears") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup("<ComboBox x:Name=\"c\" Items=\"A;B;C\"/>", "c", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+    const Rect b = f.target->Bounds();
+    // Click the box: opens.
+    f.target->OnPointerUp(Point{b.x + b.w * 0.5f, b.y + b.h * 0.5f});
+    CHECK(f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+    CHECK(f.root->Overlay() != nullptr);
+
+    // A press outside the dropdown dismisses it AND is consumed, so the click does not
+    // also activate whatever it landed on.
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    CHECK(layer->OnPointerDown(Point{1.0f, 1.0f}));
+    CHECK(!layer->Active());
+}
+
+TEST("combobox: choosing a row writes the index and reports it as a user edit") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup("<ComboBox x:Name=\"c\" Items=\"A;B;C\"/>", "c", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + b.w * 0.5f, b.y + b.h * 0.5f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    const Rect lb = layer->Bounds();
+    // Rows are 28px tall inside an 8px card padding; row 1 is "B".
+    const Point row1{lb.x + 8.0f + 10.0f, lb.y + 8.0f + 28.0f + 14.0f};
+    layer->OnPointerDown(row1);
+    layer->OnPointerUp(row1);
+    CHECK(f.target->Get<int>(f.target->SlotOf("SelectedIndex")) == 1);
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("SelectedText")) == L"B");
+    // Choosing closes the list.
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+}
+
+TEST("flyout: opens an overlay hosting its declared child") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Flyout x:Name=\"fo\" Content=\"Settings\">"
+        "<StackPanel><Button Content=\"Inner\"/></StackPanel>"
+        "</Flyout>",
+        "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    CHECK(f.root->Overlay() == nullptr);
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    // The content left the widget tree and lives in the overlay instead: a closed flyout
+    // still in the tree would reserve its space.
+    CHECK(f.root->Overlay() != nullptr);
+    CHECK(f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+    CHECK(f.target->Children().empty());
+}
+
+TEST("flyout: a ViewModel-driven IsOpen also opens it") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup("<Flyout x:Name=\"fo\" Content=\"Go\"/>", "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    // Writing the slot (what a binding does) must open it, not only a click.
+    f.target->SetSlotValue(f.target->SlotOf("IsOpen"), Value::Bool(true), true);
+    CHECK(f.root->Overlay() != nullptr);
+}
+
+TEST("flyout: light dismiss closes it and syncs IsOpen back to false") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup("<Flyout x:Name=\"fo\" Content=\"Go\"/>", "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    layer->OnPointerDown(Point{-10.0f, -10.0f}); // outside
+    // The button's caret and any TwoWay binding must agree with reality, so the layer
+    // reports the dismissal through the same slot the button uses.
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+}
+
+TEST("flyout: Escape closes it") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup("<Flyout x:Name=\"fo\" Content=\"Go\"/>", "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+}
+
+TEST("flyout: a press inside the card reaches the hosted control") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Flyout x:Name=\"fo\" Content=\"Go\">"
+        "<Button x:Name=\"inner\" Content=\"Press\" Command=\"{Binding Cmd}\"/>"
+        "</Flyout>",
+        "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    const Rect lb = layer->Bounds();
+    // A press inside the card is consumed but does not dismiss: that is what makes a
+    // flyout able to hold real controls.
+    CHECK(layer->OnPointerDown(Point{lb.x + 12.0f, lb.y + 12.0f}));
+    CHECK(layer->Active());
+}
+
+TEST("tooltip: shows on hover and passes clicks through") {
+    DiagnosticBag bag;
+    Widget* t = MakeWidget("ToolTip", "Text=\"A helpful hint\"", bag);
+    CHECK(t != nullptr);
+    if (!t) return;
+    RecordingPaintContext idle;
+    t->OnPaint(idle, MakePalette(ThemeKind::Light));
+    CHECK(idle.Text().find("helpful") == std::string::npos); // hidden until hovered
+    t->OnPointerEnter();
+    RecordingPaintContext hover;
+    t->OnPaint(hover, MakePalette(ThemeKind::Light));
+    CHECK(hover.Text().find("helpful") != std::string::npos);
+    // A tooltip must not intercept: it labels a control, and swallowing its clicks would
+    // break the control underneath.
+    CHECK(t->HitTest(Point{t->Bounds().x + 2.0f, t->Bounds().y + 2.0f}) == nullptr);
+    t->OnPointerLeave();
+    RecordingPaintContext after;
+    t->OnPaint(after, MakePalette(ThemeKind::Light));
+    CHECK(after.Text().find("helpful") == std::string::npos);
+}
+
 // A widget plus the categories the shell tests need.
 struct ShellFixture {
     WidgetPtr root;

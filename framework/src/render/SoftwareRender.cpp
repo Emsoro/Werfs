@@ -69,10 +69,12 @@ void RecordingPaintContext::DrawLine(const Point& a, const Point& b, const Color
 }
 
 void RecordingPaintContext::DrawText(const std::wstring& text, const Rect& r, const Color& c,
-                                     float fontSize, int weight, TextAlign align) {
+                                 float fontSize, int weight, TextAlign align,
+                                 const std::wstring& family) {
+    const std::string fontPart = family.empty() ? std::string() : (" font=" + WideToUtf8(family));
     text_ += "text \"" + WideToUtf8(text) + "\" " + RectText(r) + " size=" + Num(fontSize) +
              " weight=" + std::to_string(weight) + " align=" + std::to_string(static_cast<int>(align)) +
-             " " + ColorText(c) + "\n";
+             fontPart + " " + ColorText(c) + "\n";
     ++ops_;
 }
 
@@ -212,8 +214,7 @@ void RasterPaintContext::DrawLine(const Point& a, const Point& b, const Color& c
 }
 
 void RasterPaintContext::DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
-                                  int, TextAlign align) {
-    // A glyph-block placeholder: proportional to the deterministic fake metrics.
+                                  int, TextAlign align, const std::wstring& family) {
     const float advance = fontSize * 0.55f;
     const float total = advance * static_cast<float>(text.size());
     float x = r.x;
@@ -235,13 +236,19 @@ void RasterPaintContext::PopClip() {
 // ---------------------------------------------------------------------------
 // FakeTextService
 // ---------------------------------------------------------------------------
-Size FakeTextService::Measure(const std::wstring& text, float fontSize, int weight) {
+Size FakeTextService::Measure(const std::wstring& text, float fontSize, int weight,
+                              const std::wstring& family) {
     // CJK glyphs are twice as wide as Latin ones; this keeps layout tests
     // meaningful without pulling in DWrite.
     float units = 0;
     for (wchar_t c : text) units += (c >= 0x2E80) ? 2.0f : 1.0f;
     const float weightScale = 1.0f + 0.02f * static_cast<float>(weight);
-    return Size{units * fontSize * 0.55f * weightScale, fontSize * 1.33f};
+    // A monospace family is 0.6 em per glyph instead of 0.55, so a layout test CAN tell
+    // the two apart without DWrite. Without this, FontFamily would be untestable in the
+    // headless harness -- which is exactly the kind of "covered but never exercised"
+    // feature that breaks silently.
+    const float advance = IsMonospaceFamily(family) ? 0.6f : 0.55f;
+    return Size{units * fontSize * advance * weightScale, fontSize * 1.33f};
 }
 
 void RecordingPaintContext::DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) {

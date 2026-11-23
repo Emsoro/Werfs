@@ -21,7 +21,8 @@ namespace wui {
 // newlines. Falls back to per-character breaking for a single word that is
 // wider than the line, so a long path never overflows.
 static std::vector<std::wstring> WrapText(ITextService* svc, const std::wstring& text, float fontSize,
-                                          int weight, float maxWidth) {
+                                          int weight, float maxWidth,
+                                          const std::wstring& family = L"") {
     std::vector<std::wstring> lines;
     if (!svc || maxWidth <= 0) {
         lines.push_back(text);
@@ -37,18 +38,18 @@ static std::vector<std::wstring> WrapText(ITextService* svc, const std::wstring&
         const bool newline = end < text.size() && text[end] == L'\n';
 
         const std::wstring candidate = current.empty() ? word : current + L" " + word;
-        if (current.empty() || svc->Measure(candidate, fontSize, weight).w <= maxWidth) {
+        if (current.empty() || svc->Measure(candidate, fontSize, weight, family).w <= maxWidth) {
             current = candidate;
         } else {
             lines.push_back(current);
             current = word;
         }
         // A single word wider than the line: break it by character.
-        if (!current.empty() && svc->Measure(current, fontSize, weight).w > maxWidth) {
+        if (!current.empty() && svc->Measure(current, fontSize, weight, family).w > maxWidth) {
             std::wstring piece;
             for (wchar_t ch : current) {
                 const std::wstring test = piece + ch;
-                if (!piece.empty() && svc->Measure(test, fontSize, weight).w > maxWidth) {
+                if (!piece.empty() && svc->Measure(test, fontSize, weight, family).w > maxWidth) {
                     lines.push_back(piece);
                     piece = std::wstring(1, ch);
                 } else {
@@ -77,6 +78,9 @@ Size TextBlock::Measure(const Size& available) {
     const std::wstring text = slotText >= 0 ? Get<std::wstring>(slotText) : L"";
     const float fontSize = slotSize >= 0 ? Get<float>(slotSize) : 14.0f;
     const int weight = slotWeight >= 0 ? Get<int>(slotWeight) : WeightNormal;
+    // The wrapped lines must be measured with the same family that will draw them;
+    // measuring with the default and drawing with Consolas breaks mid-word.
+    const std::wstring family = FontFamily();
     const Thickness pad = slotPad >= 0 ? Get<Thickness>(slotPad) : Thickness{};
     const Thickness margin = slotMargin >= 0 ? Get<Thickness>(slotMargin) : Thickness{};
     const bool wrap = Get<int>(SlotOf("TextWrapping")) == 1;
@@ -88,10 +92,10 @@ Size TextBlock::Measure(const Size& available) {
     const float maxWidth = std::max(0.0f, available.w - pad.H() - margin.H());
 
     if (wrap && maxWidth > 0 && !text.empty()) {
-        wrappedLines_ = WrapText(svc, text, fontSize, weight, maxWidth);
+        wrappedLines_ = WrapText(svc, text, fontSize, weight, maxWidth, family);
         float w = 0;
         for (const auto& line : wrappedLines_) {
-            const float lineW = svc ? svc->Measure(line, fontSize, weight).w
+            const float lineW = svc ? svc->Measure(line, fontSize, weight, family).w
                                     : static_cast<float>(line.size()) * fontSize * 0.55f;
             w = std::max(w, lineW);
         }
@@ -105,7 +109,7 @@ Size TextBlock::Measure(const Size& available) {
     wrappedLines_.clear();
     Size t{0, fontSize * 1.33f};
     if (svc) {
-        if (!text.empty()) t = svc->Measure(text, fontSize, weight);
+        if (!text.empty()) t = svc->Measure(text, fontSize, weight, family);
     } else {
         t.w = static_cast<float>(text.size()) * fontSize * 0.55f;
     }
@@ -129,18 +133,18 @@ void TextBlock::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const TextAlign align = static_cast<TextAlign>(Get<int>(SlotOf("TextAlignment")));
     const float fontSize = Get<float>(SlotOf("FontSize"));
     const int weight = Get<int>(SlotOf("FontWeight"));
-
+    const std::wstring family = FontFamily();
     if (wrappedLines_.size() > 1) {
         ITextService* svc = TextSystem::Get();
-        const float lineH = svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
+        const float lineH = svc ? svc->LineHeight(fontSize, family) : fontSize * 1.33f;
         float y = box.y;
         for (const auto& line : wrappedLines_) {
-            ctx.DrawText(line, Rect{box.x, y, box.w, lineH}, fg, fontSize, weight, align);
+            ctx.DrawText(line, Rect{box.x, y, box.w, lineH}, fg, fontSize, weight, align, family);
             y += lineH;
         }
         return;
     }
-    ctx.DrawText(text, box, fg, fontSize, weight, align);
+    ctx.DrawText(text, box, fg, fontSize, weight, align, family);
 }
 
 // ---------------------------------------------------------------------------
@@ -4167,6 +4171,541 @@ void PersonPicture::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const std::wstring initials = Initials(Get<std::wstring>(SlotOf("DisplayName")));
     ctx.DrawText(initials, circle, palette.colors[static_cast<int>(Token::TextOnAccent)],
                  d * 0.4f, WeightSemiBold, TextAlign::Center);
+}
+
+// ---------------------------------------------------------------------------
+// Flyout
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kFlyoutButtonPadX = 14.0f;
+constexpr float kFlyoutButtonPadY = 7.0f;
+} // namespace
+
+Size Flyout::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring label = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = static_cast<float>(label.size()) * fontSize * 0.55f;
+    float lineH = fontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(label, fontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    // A caret is drawn after the label, so the button is wide enough for both.
+    desired_ = Size{textW + kFlyoutButtonPadX * 2 + 14.0f + margin.H(),
+                    std::max(lineH, 16.0f) + kFlyoutButtonPadY * 2 + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void Flyout::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool open = Get<bool>(SlotOf("IsOpen"));
+    Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
+    if (pressed_) fill = palette.colors[static_cast<int>(Token::ControlFillPressed)];
+    else if (open || hovered_) fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+    ctx.FillRoundRect(box, 4.0f, fill);
+    ctx.StrokeRect(box, palette.colors[static_cast<int>(open ? Token::Accent : Token::CardBorder)],
+                   open ? 1.5f : 1.0f, 4.0f);
+
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")),
+                 Rect{box.x + kFlyoutButtonPadX, box.y, box.w - kFlyoutButtonPadX * 2 - 12.0f, box.h},
+                 palette.colors[static_cast<int>(Token::TextPrimary)], fontSize, WeightNormal,
+                 TextAlign::Left);
+    // A caret, flipped while open: the button has to say which way it is pointing or the
+    // user cannot tell whether the popup is already showing.
+    ctx.DrawText(open ? L"\u25B2" : L"\u25BC",
+                 Rect{box.Right() - 16.0f, box.y, 12.0f, box.h},
+                 palette.colors[static_cast<int>(Token::TextSecondary)], 9.0f, WeightNormal,
+                 TextAlign::Center);
+    if (focused_) {
+        ctx.StrokeRect(box.Inflate(1.0f), palette.colors[static_cast<int>(Token::Accent)], 1.0f, 4.0f);
+    }
+}
+
+Widget* Flyout::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void Flyout::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+
+void Flyout::OnPointerUp(const Point& local) {
+    pressed_ = false;
+    // Toggling needs only a release inside: unlike Button, a flyout is a toggle, so a
+    // release without a matching press (synthetic click, keyboard activation, a test) must
+    // still work. Requiring the press made the control look dead everywhere except the one
+    // path that happened to send a down first.
+    if (bounds_.Contains(local)) {
+        if (Get<bool>(SlotOf("IsOpen"))) Close();
+        else Open();
+    }
+    Invalidate(AffectsRender);
+}
+
+void Flyout::OnPointerEnter() {
+    hovered_ = true;
+    Invalidate(AffectsRender);
+}
+
+void Flyout::OnPointerLeave() {
+    hovered_ = false;
+    pressed_ = false;
+    Invalidate(AffectsRender);
+}
+
+bool Flyout::OnKeyDown(int vk) {
+    if (vk == KeySpace || vk == KeyReturn) {
+        if (Get<bool>(SlotOf("IsOpen"))) Close();
+        else Open();
+        return true;
+    }
+    return false;
+}
+
+void Flyout::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    if (slot != SlotOf("IsOpen")) return;
+    bool open = false;
+    if (!ValueCodec<bool>::From(value, open)) return;
+    // Driven by the slot so a ViewModel can open the flyout too, and so a layer that
+    // dismissed itself lands here instead of each path resetting its own state.
+    if (open && !ownLayer_) Open();
+    else if (!open && ownLayer_) Close();
+}
+
+void Flyout::Open() {
+    if (ownLayer_) return;
+    Widget* root = Root();
+    if (root == nullptr || root == this) return;
+
+    FlyoutRequest request;
+    // Taking the single child out of the tree: a closed flyout that stayed in the tree
+    // would still be measured (reserving space for something invisible) and clipped by any
+    // ScrollViewer above it.
+    if (!Children().empty()) {
+        // Copy the pointer before clearing: ClearChildren would destroy the very widget we
+        // are about to hand to the layer.
+        request.content = Children().front();
+        ClearChildren();
+    }
+    if (request.content == nullptr) {
+        // No content: still open an empty card rather than silently doing nothing, so a
+        // missing child is visible instead of mysterious.
+        request.content = CreateWidget("wui/StackPanel");
+    }
+    // Anchor below this button, in window space.
+    request.anchor = Point{bounds_.x, bounds_.y + bounds_.h};
+    request.placement = 0;
+    request.lightDismiss = true;
+    request.onClosed = [self = this] {
+        // The layer closed itself (click outside, Escape). Report through IsOpen so the
+        // button's caret and any TwoWay binding agree with reality.
+        self->ownLayer_ = false;
+        if (self->Root() != nullptr && self->Root()->Overlay() != nullptr) {
+            self->Root()->SetOverlay(nullptr);
+        }
+        const int slot = self->SlotOf("IsOpen");
+        if (slot >= 0) self->SetSlotValue(slot, Value::Bool(false), true);
+        self->Invalidate(AffectsRender);
+    };
+
+    auto layer = MakeFlyoutLayer(std::move(request));
+    ownLayer_ = true;
+    root->SetOverlay(layer.release());
+    // The layer owns itself once installed; the host clears it. Mark the slot without
+    // re-entering Open.
+    const int slot = SlotOf("IsOpen");
+    if (slot >= 0 && !Get<bool>(slot)) SetSlotValue(slot, Value::Bool(true), true);
+    Invalidate(AffectsRender);
+}
+
+void Flyout::Close() {
+    if (!ownLayer_) return;
+    ownLayer_ = false;
+    const int slot = SlotOf("IsOpen");
+    if (slot >= 0 && Get<bool>(slot)) SetSlotValue(slot, Value::Bool(false), true);
+    // The layer is destroyed by the host when it notices it is inactive; asking the root to
+    // drop it here would free it inside its own event handler.
+    Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// ToolTip
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kTipFontSize = 11.0f;
+constexpr float kTipPadX = 8.0f;
+constexpr float kTipPadY = 4.0f;
+} // namespace
+
+Size ToolTip::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    float textW = static_cast<float>(text.size()) * kTipFontSize * 0.55f;
+    float lineH = kTipFontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(text, kTipFontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    // Line height only: the bubble is drawn ON TOP of the content in the space the content
+    // reserved, so a tooltip must not make its element taller than it would be without one.
+    desired_ = Size{textW + kTipPadX * 2 + margin.H(), lineH + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void ToolTip::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    // Children are painted by PaintTree after this returns, so only the bubble is drawn
+    // here. Drawing the child here too would paint it twice.
+    if (!hovered_) return;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    if (text.empty()) return;
+    const float textW = [&] {
+        if (ITextService* svc = TextSystem::Get()) return svc->Measure(text, kTipFontSize, WeightNormal).w;
+        return static_cast<float>(text.size()) * kTipFontSize * 0.55f;
+    }();
+    const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(kTipFontSize)
+                                          : kTipFontSize * 1.33f;
+    const float w = textW + kTipPadX * 2;
+    const float h = lineH + kTipPadY * 2;
+    // Below the content, inside the space the element already occupies. It may be clipped
+    // by a tight parent, which is the acceptable trade for not stealing hover state.
+    const Rect bubble{bounds_.x + margin.l, bounds_.y + margin.t + bounds_.h - margin.V() + 2.0f,
+                      std::min(w, std::max(w, bounds_.w)), h};
+    ctx.FillRoundRect(bubble, 4.0f, palette.colors[static_cast<int>(Token::CardBackground)]);
+    ctx.StrokeRect(bubble, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f, 4.0f);
+    ctx.DrawText(text, bubble, palette.colors[static_cast<int>(Token::TextPrimary)], kTipFontSize,
+                 WeightNormal, TextAlign::Center);
+}
+
+Widget* ToolTip::HitTest(const Point& p) {
+    // Hits pass THROUGH to whatever is underneath: a tooltip labels a control, and making
+    // it intercept clicks would break the control it describes.
+    (void)p;
+    return nullptr;
+}
+
+void ToolTip::OnPointerEnter() {
+    hovered_ = true;
+    Invalidate(AffectsRender);
+}
+
+void ToolTip::OnPointerLeave() {
+    hovered_ = false;
+    Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// ComboBox
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kComboPadX = 10.0f;
+constexpr float kComboPadY = 6.0f;
+constexpr float kComboRowH = 28.0f;
+constexpr float kComboMaxRows = 8.0f;
+} // namespace
+
+std::vector<std::wstring> ComboBox::SplitItems(const std::wstring& items) {
+    std::vector<std::wstring> out;
+    std::wstring current;
+    for (wchar_t ch : items) {
+        // ';' rather than ',' because item text routinely contains commas ("Paris,
+        // France") and a separator that appears in real data is worse than a less pretty
+        // one.
+        if (ch == L';') {
+            if (!current.empty()) out.push_back(current);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) out.push_back(current);
+    return out;
+}
+
+float ComboBox::RowHeight() const { return kComboRowH; }
+
+Size ComboBox::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    // Wide enough for the widest item, so a longer choice is not clipped when selected.
+    float widest = 0.0f;
+    if (ITextService* svc = TextSystem::Get()) {
+        for (const auto& item : items) {
+            widest = std::max(widest, svc->Measure(item, fontSize, WeightNormal).w);
+        }
+    }
+    if (widest <= 0.0f) widest = 80.0f;
+    const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(fontSize)
+                                          : fontSize * 1.33f;
+    desired_ = Size{widest + kComboPadX * 2 + 24.0f + margin.H(),
+                    std::max(lineH, 18.0f) + kComboPadY * 2 + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void ComboBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool open = Get<bool>(SlotOf("IsOpen"));
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+    Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
+    if (hovered_ || open) fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+    ctx.FillRoundRect(box, 4.0f, fill);
+    ctx.StrokeRect(box, focused_ || open ? accent : palette.colors[static_cast<int>(Token::CardBorder)],
+                   focused_ || open ? 1.5f : 1.0f, 4.0f);
+
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    const int index = Get<int>(SlotOf("SelectedIndex"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const std::wstring text =
+        index >= 0 && index < static_cast<int>(items.size())
+            ? items[static_cast<size_t>(index)]
+            : Get<std::wstring>(SlotOf("PlaceholderText"));
+    const Color fg = palette.colors[static_cast<int>(
+        index >= 0 && index < static_cast<int>(items.size()) ? Token::TextPrimary
+                                                             : Token::TextSecondary)];
+    ctx.DrawText(text, Rect{box.x + kComboPadX, box.y, box.w - kComboPadX * 2 - 20.0f, box.h}, fg,
+                 fontSize, WeightNormal, TextAlign::Left);
+    ctx.DrawText(open ? L"\u25B2" : L"\u25BC", Rect{box.Right() - 20.0f, box.y, 14.0f, box.h},
+                 palette.colors[static_cast<int>(Token::TextSecondary)], 9.0f, WeightNormal,
+                 TextAlign::Center);
+}
+
+Widget* ComboBox::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void ComboBox::OnPointerDown(const Point&) { Invalidate(AffectsRender); }
+
+void ComboBox::OnPointerUp(const Point& local) {
+    if (!bounds_.Contains(local)) return;
+    if (Get<bool>(SlotOf("IsOpen"))) CloseDropDown();
+    else OpenDropDown();
+}
+
+void ComboBox::OnPointerEnter() {
+    hoveredRow_ = true;
+    Invalidate(AffectsRender);
+}
+
+void ComboBox::OnPointerLeave() {
+    hoveredRow_ = false;
+    Invalidate(AffectsRender);
+}
+
+bool ComboBox::OnKeyDown(int vk) {
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    if (items.empty()) return false;
+    const int current = Get<int>(SlotOf("SelectedIndex"));
+    // Arrows move the SELECTION directly when closed (the Windows convention), so a
+    // keyboard user does not have to open the list to change the value.
+    if (vk == KeyDown) {
+        const int next = std::min(current + 1, static_cast<int>(items.size()) - 1);
+        SetSlotValue(SlotOf("SelectedIndex"), Value::Number(next), true);
+        ApplySelection();
+        return true;
+    }
+    if (vk == KeyUp) {
+        const int next = std::max(current - 1, 0);
+        SetSlotValue(SlotOf("SelectedIndex"), Value::Number(next), true);
+        ApplySelection();
+        return true;
+    }
+    if (vk == KeyReturn || vk == KeySpace) {
+        if (Get<bool>(SlotOf("IsOpen"))) CloseDropDown();
+        else OpenDropDown();
+        return true;
+    }
+    if (vk == KeyEscape && Get<bool>(SlotOf("IsOpen"))) {
+        CloseDropDown();
+        return true;
+    }
+    return false;
+}
+
+void ComboBox::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    if (slot == SlotOf("SelectedIndex")) ApplySelection();
+    if (slot == SlotOf("IsOpen")) {
+        // IsOpen can be written from three places: a click on the box, the layer reporting
+        // a dismissal, and a ViewModel binding. Routing all of them through this one place
+        // is what keeps ownLayer_ honest -- when it drifted out of sync the box opened once
+        // and then silently refused to reopen, which reads as a dead control.
+        bool open = false;
+        if (!ValueCodec<bool>::From(value, open)) return;
+        if (open && !ownLayer_) OpenDropDown();
+        // Closing is handled by whoever closed it (they own the layer teardown); only the
+        // flag is cleared here so a later open is not blocked.
+        if (!open) ownLayer_ = false;
+    }
+}
+
+void ComboBox::ApplySelection() {
+    // SelectedText is DERIVED, so markup can bind either the index (stable across a list
+    // edit) or the text (readable in a caption). Deriving it here means the two can never
+    // disagree.
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    const int index = Get<int>(SlotOf("SelectedIndex"));
+    const int slotText = SlotOf("SelectedText");
+    if (slotText < 0) return;
+    const std::wstring text = index >= 0 && index < static_cast<int>(items.size())
+                                  ? items[static_cast<size_t>(index)]
+                                  : std::wstring();
+    if (Get<std::wstring>(slotText) != text) SetSlotValue(slotText, Value::Text(text));
+    Invalidate(AffectsRender);
+}
+
+Rect ComboBox::DropDownBounds() const {
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    const float rows = std::min(static_cast<float>(items.size()), kComboMaxRows);
+    // Never taller than the list needs, and never so tall it cannot fit: eight rows is the
+    // usual cap before a drop-down should be a scrollable list instead.
+    return Rect{bounds_.x, bounds_.y + bounds_.h + 2.0f, bounds_.w,
+                std::max(kComboRowH, rows * kComboRowH) + 8.0f};
+}
+
+void ComboBox::OpenDropDown() {
+    if (ownLayer_) return;
+    Widget* root = Root();
+    if (root == nullptr || root == this) return;
+    const std::vector<std::wstring> items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    if (items.empty()) return;
+
+    FlyoutRequest request;
+    // A list of rows is built as a real widget tree rather than as a menu model: the rows
+    // need per-row hit testing and the selected row needs a distinct look, and the menu
+    // layer's row model has neither.
+    auto list = std::make_shared<FlyoutList>();
+    list->Configure(items, Get<int>(SlotOf("SelectedIndex")), [this](int chosen) {
+        // Choosing is a user edit, so TwoWay bindings push it outward.
+        SetSlotValue(SlotOf("SelectedIndex"), Value::Number(chosen), true);
+        ApplySelection();
+        // Close by asking the slot; the layer's onClosed path resets ownLayer_.
+        SetSlotValue(SlotOf("IsOpen"), Value::Bool(false), true);
+    });
+    request.content = list;
+    const Rect drop = DropDownBounds();
+    request.anchor = Point{drop.x, drop.y};
+    request.size = Size{drop.w, drop.h};
+    request.placement = 0;
+    request.lightDismiss = true;
+    request.onClosed = [self = this] {
+        self->ownLayer_ = false;
+        if (self->Root() != nullptr && self->Root()->Overlay() != nullptr) {
+            self->Root()->SetOverlay(nullptr);
+        }
+        const int slot = self->SlotOf("IsOpen");
+        if (slot >= 0) self->SetSlotValue(slot, Value::Bool(false), true);
+        self->Invalidate(AffectsRender);
+    };
+
+    auto layer = MakeFlyoutLayer(std::move(request));
+    ownLayer_ = true;
+    root->SetOverlay(layer.release());
+    SetSlotValue(SlotOf("IsOpen"), Value::Bool(true), true);
+    Invalidate(AffectsRender);
+}
+
+void ComboBox::CloseDropDown() {
+    if (!ownLayer_) return;
+    ownLayer_ = false;
+    SetSlotValue(SlotOf("IsOpen"), Value::Bool(false), true);
+    Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// FlyoutList
+// ---------------------------------------------------------------------------
+void FlyoutList::Configure(std::vector<std::wstring> items, int selected,
+                           std::function<void(int)> onChosen) {
+    items_ = std::move(items);
+    selected_ = selected;
+    onChosen_ = std::move(onChosen);
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+Size FlyoutList::Measure(const Size& available) {
+    (void)available;
+    float widest = 0.0f;
+    if (ITextService* svc = TextSystem::Get()) {
+        for (const auto& item : items_) {
+            widest = std::max(widest, svc->Measure(item, 13.0f, WeightNormal).w);
+        }
+    }
+    desired_ = Size{widest + 24.0f, static_cast<float>(items_.size()) * kComboRowH};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void FlyoutList::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Rect box = bounds_.Deflate(Thickness{});
+    if (box.w <= 0 || box.h <= 0) return;
+    for (size_t i = 0; i < items_.size(); ++i) {
+        const Rect row{box.x, box.y + static_cast<float>(i) * kComboRowH, box.w, kComboRowH};
+        const bool isSelected = static_cast<int>(i) == selected_;
+        const bool isHovered = static_cast<int>(i) == hovered_;
+        if (isHovered) {
+            ctx.FillRoundRect(row.Deflate(Thickness{2, 0, 2, 0}), 3.0f,
+                              palette.colors[static_cast<int>(Token::ControlFillHover)]);
+        } else if (isSelected) {
+            // Selected and hovered must be distinguishable, or the pointer cannot tell the
+            // user what they are about to change to.
+            ctx.FillRoundRect(row.Deflate(Thickness{2, 0, 2, 0}), 3.0f,
+                              palette.colors[static_cast<int>(Token::ControlFill)]);
+        }
+        const Color fg = palette.colors[static_cast<int>(
+            isSelected ? Token::Accent : Token::TextPrimary)];
+        ctx.DrawText(items_[i], Rect{row.x + 10.0f, row.y, row.w - 20.0f, row.h}, fg, 13.0f,
+                     isSelected ? WeightSemiBold : WeightNormal, TextAlign::Left);
+    }
+}
+
+Widget* FlyoutList::HitTest(const Point& p) {
+    // Claims hits anywhere in its own rect, including the gaps between rows: a click in the
+    // list must not fall through and dismiss the flyout as "outside".
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+int FlyoutList::IndexAt(const Point& local) const {
+    if (!bounds_.Contains(local)) return -1;
+    const int index = static_cast<int>((local.y - bounds_.y) / kComboRowH);
+    if (index < 0 || index >= static_cast<int>(items_.size())) return -1;
+    return index;
+}
+
+void FlyoutList::OnPointerMove(const Point& local) {
+    const int index = IndexAt(local);
+    if (index == hovered_) return;
+    hovered_ = index;
+    Invalidate(AffectsRender);
+}
+
+void FlyoutList::OnPointerUp(const Point& local) {
+    const int index = IndexAt(local);
+    if (index < 0) return;
+    if (onChosen_) onChosen_(index);
 }
 
 } // namespace wui

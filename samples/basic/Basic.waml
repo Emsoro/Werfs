@@ -201,6 +201,60 @@
         </StackPanel>
       </Border>
 
+      <!-- ================= Typography: monospace ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel>
+          <TextBlock Text="Monospace" FontSize="15" FontWeight="SemiBold"
+                     Padding="0,0,0,10"/>
+          <TextBlock Text="A code snippet only lines up in a fixed-width font. Compare:"
+                     FontSize="12" Foreground="TextSecondary" Padding="0,0,0,8"/>
+
+          <!-- Proportionally spaced: the columns below do not line up. -->
+          <Border Background="AppBackground" CornerRadius="4" Padding="10">
+            <TextBlock Text="name  = &quot;WAML&quot; /  value = 42 /  ready = true"
+                       FontSize="13" TextWrapping="Wrap"/>
+          </Border>
+
+          <!-- Monospace: the same string, now readable as aligned columns. -->
+          <Border Background="AppBackground" CornerRadius="4" Padding="10" Margin="0,8,0,0">
+            <TextBlock Text="name  = &quot;WAML&quot; /  value = 42 /  ready = true"
+                       FontFamily="Consolas" FontSize="13" TextWrapping="Wrap"/>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= Popups: ComboBox, Flyout, ToolTip ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel>
+          <TextBlock Text="Popups" FontSize="15" FontWeight="SemiBold" Padding="0,0,0,10"/>
+
+          <!-- A drop-down that opens above the page, not inside the card: it must not be
+               clipped by anything the card sits in. -->
+          <TextBlock Text="Language" FontSize="12" Foreground="TextSecondary" Padding="0,0,0,4"/>
+          <ComboBox Items="C++;C#;Rust;Python;Go" SelectedIndex="{Binding LanguageIndex, Mode=TwoWay}"
+                    HorizontalAlignment="Left"/>
+          <TextBlock Text="{Binding LanguageText}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,4,0,12"/>
+
+          <!-- A flyout holding real controls: a small form, not a menu of rows. -->
+          <Flyout Content="Advanced..." HorizontalAlignment="Left">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Wrapped in an overlay, so no card clips it." FontSize="12"
+                         Foreground="TextSecondary" TextWrapping="Wrap"/>
+              <ToggleSwitch Content="Wrap long lines" IsChecked="{Binding WrapLines, Mode=TwoWay}"/>
+              <Button Content="Reset" Command="{Binding ResetCommand}"/>
+            </StackPanel>
+          </Flyout>
+
+          <!-- A tooltip labels its child without ever intercepting a click on it. -->
+          <ToolTip Text="Tooltips appear on hover and pass clicks through." Margin="0,12,0,0">
+            <TextBlock Text="Hover this sentence for a hint." FontSize="13"/>
+          </ToolTip>
+        </StackPanel>
+      </Border>
+
       <!-- ================= Footer ================= -->
       <TextBlock Text="That is every basic control. See samples/list for collections and layout panels."
                  FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"

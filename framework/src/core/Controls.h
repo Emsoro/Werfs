@@ -340,6 +340,120 @@ private:
     std::wstring decodedSource_;
 };
 
+// ---------------------------------------------------------------------------
+// Popups: Flyout, ToolTip
+// ---------------------------------------------------------------------------
+
+// A button that opens a popup containing real controls.
+//
+// The popup content is declared as the flyout's child in markup. It is reparented into the
+// overlay when opened -- it cannot stay in the tree, because a closed flyout would then
+// still be measured by its parent's layout and clipped by any ScrollViewer above it.
+//
+// IsOpen is TwoWay so a ViewModel can open it and so the layer can report that the user
+// dismissed it.
+class Flyout : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    void OnPointerEnter() override;
+    void OnPointerLeave() override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+    void OnSlotChanged(int slot, const Value& value) override;
+
+private:
+    void Open();
+    void Close();
+
+    // The content subtree while the flyout is open. Held here so the widget tree is not
+    // destroyed when the layer closes.
+    std::vector<WidgetPtr> parked_;
+    bool ownLayer_ = false;
+};
+
+// Shows a short label when the pointer is over its content.
+//
+// Not an overlay, deliberately. A tooltip has to appear next to the element and vanishes
+// when the pointer leaves; routing it through the overlay subsystem would mean the layer
+// steals the hover state that decides when to hide it, and a tooltip that closes on
+// pointer-press would flicker away exactly when the user acts. Overlays are for things the
+// user must interact with; this one only labels.
+class ToolTip : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerEnter() override;
+    void OnPointerLeave() override;
+};
+
+// A drop-down selector.
+//
+// Items are a plain string list rather than a templated collection: a combo box shows one
+// string per row and that is the whole contract. A real item template needs the
+// virtualising collection subsystem (CODE_PLAN P2), and pretending to support it here would
+// ship a control whose object list silently ignores its template.
+//
+// SelectedIndex is TwoWay -- picking a row IS the user choosing -- and SelectedText is
+// derived so markup can bind either one.
+// The row list a ComboBox drops down.
+//
+// A widget rather than a menu model because it needs per-row hit testing and a distinct
+// "currently selected" look, and the menu layer's row model has neither. Public so the
+// flyout can host it and tests can drive it directly.
+class FlyoutList : public Widget {
+public:
+    void Configure(std::vector<std::wstring> items, int selected,
+                   std::function<void(int)> onChosen);
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerMove(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+
+    // Index the pointer is over, or -1.
+    int HoveredIndex() const { return hovered_; }
+
+private:
+    int IndexAt(const Point& local) const;
+
+    std::vector<std::wstring> items_;
+    int selected_ = -1;
+    int hovered_ = -1;
+    std::function<void(int)> onChosen_;
+};
+
+class ComboBox : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    void OnPointerEnter() override;
+    void OnPointerLeave() override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+    void OnSlotChanged(int slot, const Value& value) override;
+
+    // The items, split on ';'. Public so the parser and tests agree on the separator.
+    static std::vector<std::wstring> SplitItems(const std::wstring& items);
+
+private:
+    void OpenDropDown();
+    void CloseDropDown();
+    void ApplySelection();
+    Rect DropDownBounds() const;
+    float RowHeight() const;
+
+    bool ownLayer_ = false;
+    bool hoveredRow_ = false;
+};
+
 class TextBox : public Widget {
 public:
     Size Measure(const Size& available) override;

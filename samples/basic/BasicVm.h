@@ -68,6 +68,9 @@ public:
         Make("IsBarOpen", IsBarOpen);
         Make("LinkText", LinkText);
         Make("OpenLinkCommand", openLinkCommand_);
+        Make("LanguageIndex", LanguageIndex);
+        Make("LanguageText", LanguageText);
+        Make("WrapLines", WrapLines);
 
         // Each control that holds state gets its own observer, so the caption is derived
         // in one place instead of every control writing a caption as a side effect.
@@ -78,6 +81,7 @@ public:
         IsCompact.Subscribe(this);
         Quantity.Subscribe(this);
         Passphrase.Subscribe(this);
+        LanguageIndex.Subscribe(this);
 
         // Watch IsAgreed so the caption question tracks the box. An observer
         // (rather than the page calling back) keeps the derivation inside the
@@ -102,6 +106,7 @@ public:
         BarMessage.Set(L"Press the ✕ above; the controls below move up rather than "
                        L"leaving a gap.");
         LinkText.Set(L"Open the docs");
+        LanguageText.Set(L"Selected: Rust (index 2).");
         Quantity.Set(L"12");
         Volume.Set(4);
         IsComfortable.Set(true);
@@ -117,6 +122,7 @@ public:
         IsCompact.Unsubscribe(this);
         Quantity.Unsubscribe(this);
         Passphrase.Unsubscribe(this);
+        LanguageIndex.Unsubscribe(this);
     }
 
 private:
@@ -148,6 +154,16 @@ private:
         IsQuantityValid.Set(valid);
         QuantityStatus.Set(valid ? qtyText + L" is a valid number."
                                  : L"\"" + qtyText + L"\" is not a number — the box shows a red edge.");
+        {
+            // Derived from the index the control owns, so the caption cannot disagree with
+            // the box above it.
+            static const wchar_t* kLangs[] = {L"C++", L"C#", L"Rust", L"Python", L"Go"};
+            const int idx = LanguageIndex.Get();
+            LanguageText.Set(idx >= 0 && idx < 5
+                                 ? std::wstring(L"Selected: ") + kLangs[idx] + L" (index " +
+                                       std::to_wstring(idx) + L")."
+                                 : std::wstring(L"Nothing selected."));
+        }
         PassphraseStatus.Set(std::to_wstring(Passphrase.Get().size()) +
                              L" characters, masked above. The text is readable here because "
                              L"the mask is a paint concern.");
@@ -214,6 +230,11 @@ public:
     wui::ObservableProperty<std::wstring> BarMessage{"BarMessage", L""};
     wui::ObservableProperty<bool> IsBarOpen{"IsBarOpen", true};
     wui::ObservableProperty<std::wstring> LinkText{"LinkText", L"Link"};
+    // The index is what the control owns; the text is derived for the caption. Both are
+    // exposed so the demo can show that they cannot disagree.
+    wui::ObservableProperty<int> LanguageIndex{"LanguageIndex", 2};
+    wui::ObservableProperty<std::wstring> LanguageText{"LanguageText", L""};
+    wui::ObservableProperty<bool> WrapLines{"WrapLines", true};
 
 private:
     wui::ObservableProperty<wui::RefPtr> clickCommand_{"ClickCommand"};

@@ -96,4 +96,39 @@ std::unique_ptr<OverlayLayer> MakeDialogLayer(std::wstring title, std::wstring m
                                               std::function<void(int)> onResult,
                                               std::function<void()> onClosed);
 
+// ---------------------------------------------------------------------------
+// Flyout: a popup that hosts a real widget subtree
+//
+// The difference from a menu is what it contains. A menu draws a data model of rows;
+// a flyout contains arbitrary CONTROLS -- a small form, a colour picker, a settings
+// card -- so it owns a Widget tree, measures it, and forwards pointer and key events
+// into it. That is also why it cannot be a widget itself: as a child it would be
+// measured by its parent's layout (so a closed flyout would still take space) and
+// clipped by any ScrollViewer above it.
+// ---------------------------------------------------------------------------
+struct FlyoutRequest {
+    // The content to host. Ownership transfers to the layer.
+    WidgetPtr content;
+    // Window-space top-left the caller wants. The layer flips or clamps it to fit, so a
+    // flyout opened near the right edge does not run off it.
+    Point anchor;
+    // Optional fixed size; zero means "as large as the content wants".
+    Size size{0, 0};
+    bool lightDismiss = true;
+    // True when the anchor is a control that should keep its "open" appearance.
+    std::function<void()> onClosed;
+    // Placement relative to the anchor rect: 0 below, 1 above, 2 right, 3 left.
+    int placement = 0;
+};
+
+std::unique_ptr<OverlayLayer> MakeFlyoutLayer(FlyoutRequest request);
+
+// A transient label. Deliberately non-interactive and NOT light-dismissing: it must not
+// swallow the click that dismisses whatever opened it, and a tooltip that closed on the
+// pointer press would flicker away exactly when the user acts.
+std::unique_ptr<OverlayLayer> MakeToolTipLayer(std::wstring text, Point anchor, Size available);
+
+// Sizes a flyout against the window it will appear in.
+void PrepareFlyoutLayerSizing(OverlayLayer* layer, Size available);
+
 } // namespace wui

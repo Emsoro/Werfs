@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.8.0.0
+> 版本：0.8.1.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.8.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**42 个控件**（含六个布局面板、十个外壳控件，以及 P0 补齐的 17 个：开关/滑块/单选/数值框/进度/信息条/角标/图形/图片/头像等）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**177 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.8.1.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**45 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**192 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 177 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 192 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -84,7 +84,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 177 个单元/集成用例 |
+| `waml_tests.exe` | 192 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.8.0.0         [ ok ]
+file version: 0.8.1.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -643,7 +643,7 @@ WidgetPtr root = doc->Instantiate(...); // 树建立
 - 写功能时应当顺手写一条**效果断言**（值变了没有），而不是只断言「解析出了字段」。`FallbackValue` 的测试此前不存在，`LostFocus` 的测试只验证了「延迟」，没有验证「最终会写」。
 - 延迟写回这类机制必须绑定到**一个真实事件**上。`Flush()` 本身没有错，错在它没有主人。
 
-## 7.23 显式尺寸吃掉自己的 margin，控件在布局里存在但在屏幕上消失
+## 7.24 显式尺寸吃掉自己的 margin，控件在布局里存在但在屏幕上消失
 
 **现象**：`<ProgressBar Value="0.45" Height="6" Margin="0,6,0,10"/>` 在页面上**完全看不见**，但布局里确实占着一行 6 像素的位置（下面的元素被正常推开）。
 
@@ -671,8 +671,29 @@ if (explicitSize > 0) v = explicitSize;   // margin 被一起覆盖掉了
 
 ---
 
-# 第四部分：目标架构
+## 7.25 【中】浮层关闭后 `ownLayer_` 不复位，控件从此打不开
 
+**现象**：`ComboBox` 第一次点开列表、选中一行都正常；**再点就毫无反应**。`Flyout` 同理。
+
+**根因**：控件用 `ownLayer_` 这个布尔记住"浮层是我开的"，`Open()` 开头 `if (ownLayer_) return;` 防止重入。但关闭走的是**三条不同路径**：
+
+1. 控件自己调 `Close()` —— 会清 `ownLayer_`
+2. 浮层因点外/`Esc` 自行关闭 —— `onClosed` 回调清 `ownLayer_`
+3. **选中一行时，业务代码直接写 `IsOpen=false` 槽位** —— 这条路径**谁也没清 `ownLayer_`**
+
+于是布尔永远停在 true，`Open()` 每次都在第一行返回。
+
+**修复**：把三条路径收敛到 `OnSlotChanged` 里的 `IsOpen` 分支——它是所有关闭方式唯一的共同终点，`ownLayer_` 在那里统一维护。
+
+**教训**：
+
+- **一个状态若有 N 条关闭路径，就必须有 1 个收口点**。这里每条路径都"自己记得清理"，而事实是漏了一条。
+- 症状极具误导性：交互测试的分步断言全绿（打开 ✓、选中 ✓、值回写 ✓、关闭 ✓），只有一个"**再开一次**"的断言能抓到它。这是为什么 `waml_interact` 值得为每个控件多走一步。
+- 修法不是补第三个 `ownLayer_ = false`，而是把它挪到唯一必经的位置——补丁式修复会让第四条路径重复同样的错误。
+
+---
+
+# 第四部分：目标架构
 ## 8. 分层
 
 ```
@@ -869,7 +890,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 档位 | 数量 | 范围 | 何时做 |
 |---|---|---|---|
 | **P0 必做** | **23**（✅ 全部完成） | 日常界面几乎必用、且**不需要新子系统** | ✅ |
-| P1 常用增强 | 16 | 共同卡在「浮层/弹出」这一层 | 浮层完成后顺带解锁 |
+| P1 常用增强 | 16（**3 已完成**） | 共同卡在「浮层/弹出」这一层 | ✅ `ComboBox` `Flyout` `ToolTip`；其余浮层完成后解锁 |
 | P2 长尾 | 51 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
 
 **P0 清单**（23 个全部 ✅ 完成）：
@@ -908,7 +929,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 2. ✅ **`Image` 的 WIC 解码** —— 放在可注入的 `IImageService` 后面，理由与文件对话框相同：测试/快照/交互工具绝不能碰 COM 和文件系统。WIC 而非自带解码器，因为它在 Windows 上白送 PNG/JPEG/BMP/GIF/TIFF/ICO，自带解码器则是更多代码、更少格式。解码结果按源缓存，失败**不**缓存（文件可能稍后才出现）。
 3. ✅ **`PaintCtx` 增加 `DrawLine` / `FillEllipse` / `DrawBitmap`** —— 只有三个原语，没有路径语言。`ProgressRing` 用 64 段折线绕圆，`PersonPicture` 用椭圆遮罩裁剪位图；这让三个后端各只多三个方法，而不是各自实现一套几何。
 4. ✅ **`RadioButton` 的组作用域** —— 按 `GroupName` 在**整棵树**里查同组，而不是「同一父节点」。一组单选按钮经常被拆在多个面板里（换行、分列），按父作用域会让一次重排悄悄改变互斥关系。
-5. ⬜ `TextBlock` 的 `FontFamily`（等宽字体，代码片段需要）—— 唯一未做的一项，它不影响任何 P0 控件。
+5. ✅ **`TextBlock` 的 `FontFamily`**（等宽字体）—— 见下节的接入方式。
 
 **本轮顺带修掉的两个框架缺陷**：
 
@@ -1573,6 +1594,44 @@ public:
 - 这个 bug 的症状极具误导性：**状态变量是对的，被观察的数据是错的**。`ActiveCount()` 这种自省接口反而让人相信逻辑没问题。断言必须落在**效果**上（属性值变了没），不能只看「触发器认为自己激活了」。
 - 如果当时只做单元测试、不做页面级验证，这个 bug 会漏掉——它需要「文档被释放、树还活着」这个真实使用模式。`waml_interact` 正是这个模式。
 
+### 13.4 `FontFamily` 与 P1 弹出层
+
+**`FontFamily`：为什么是尾部默认参数**
+
+`ITextService::Measure`/`LineHeight` 和 `PaintCtx::DrawText` 有约 147 处调用点。给它们加一个必填参数意味着全量改写，而其中几乎没有人用得上字体族。所以加的是**带默认值的尾参**：
+
+```cpp
+virtual Size Measure(const std::wstring&, float, int, const std::wstring& family = L"") = 0;
+```
+
+代价是每个实现多一个参数、几个缓存键要多带上字体族。**缓存键是最容易漏的地方**：DWrite 的 layout 缓存、渲染器的 format 缓存都以「字号+权重」为键，不把字体族并进去，第二个字体就会拿到第一个的格式——而且只在同一尺寸出现两种字体时才复现。
+
+headless 文本服务让等宽族名用 **0.6 em** 而不是 0.55 em 的字宽。这不是为了好看：它让 `FontFamily` 在**没有 DWrite 的布局测试里可观测**。否则这个属性会变成"测试覆盖了但从未真正验证"的那种功能。
+
+**`ComboBox`：字符串列表，不是模板集合**
+
+一项就是一行字符串，所以 `Items` 是 `;` 分隔的文本。为什么不是逗号：真实数据里就有「Paris, France」，一个会撞上数据的分隔符比一个不好看的分隔符糟糕得多。真正的项模板需要虚拟化集合子系统（P2），在这里假装支持只会得到一个"模板被静默忽略"的控件。
+
+`SelectedText` 从 `SelectedIndex` **派生**并写回槽位，所以绑哪个都不会矛盾。方向键在收起状态下直接改选中项（Windows 惯例）——必须先展开才能改值的下拉框会被认为反应迟钝。
+
+**`Flyout`：内容离开控件树**
+
+这是它与菜单最本质的差别：菜单画的是一个行数据模型，`Flyout` 承载**真实控件**。所以它必须在打开时把声明的子控件从树里**取出来**放进浮层：
+
+- 留在树里 → 被父布局 `Measure`，收起的弹层仍然占位
+- 留在树里 → 被上层的 `ScrollViewer` 裁剪（浮层就是为解决这个而存在的）
+
+关闭时的三种路径（点外、`Esc`、业务写 `IsOpen`）全部收敛到槽位，这也是 §7.25 那个缺陷的成因。
+
+**`ToolTip`：故意不是浮层**
+
+它 `HitTest` 恒返回空，点击穿透到下面的控件。走浮层会有两个问题：浮层会夺走决定"何时隐藏"的悬停状态；而且浮层在指针按下时会关闭/吞掉事件，工具提示正好在用户动手的那一刻消失。`Flyout` 是给用户**操作**的东西，`ToolTip` 只是给元素**贴标签**。
+
+代价是气泡画在元素自己占的空间里，可能被过紧的父容器裁掉——换来的是不介入事件分发。
+
+
+
+
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
 **这是 `samples/usercontrol/` 的前置条件，也是 MVVM 价值兑现的关键一步**（详见 10a.6）。
@@ -1776,7 +1835,7 @@ public:
 
 # 附录
 
-## A. 测试清单（177 用例）
+## A. 测试清单（192 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1803,6 +1862,7 @@ public:
 | filedialog | 2 | 无宿主时安全返回、假实现往返路径 |
 | selector | 3 | 点击选中、双向往返、键盘移动并钳制 |
 | tabview | 5 | 切换标签换内容、点×不选中、+调命令、增删后选中有效、标题来自模型 |
+| **p1-popups** | **11** | ComboBox 分隔符/派生 `SelectedText`/方向键直选/打开浮层/点外关闭不改值/选中回写模型；Flyout 承载子控件/绑定驱动 IsOpen/点外关闭同步回槽/逃生键/卡内点击不关闭；ToolTip 悬停显隐且不拦截点击；FontFamily 改变测量宽度/传递到绘制/缺省不记录字体/等宽族名识别 | 已实现 |
 | **shell** | **10** | 菜单打开/执行/关闭、点外关闭且吞掉点击、禁用命令不执行且菜单不关、子菜单两级 Esc、工具栏溢出与边界、溢出菜单携带隐藏命令、对话框模态性（吞点外）、Esc 映射取消、Enter 映射默认、快捷键解析与格式化一致 |
 | **style** | **19** | 样式生效、本地覆盖样式、`BasedOn` 继承与覆盖、裸 key 与 StaticResource 等价、后置声明可解析、单子元素容器内放 Style、以及错误路径：未定义 key（带建议）、未知属性（带建议）、非法值、类型不匹配、`BasedOn` 环、`BasedOn` 类型不一致、重复 key、缺 `TargetType`、Setter 内禁止绑定；另含模板内生效、样式计数 |
 | **resource** | **9** | 颜色/尺寸/Thickness 命名、在 Setter 内使用、资源嵌套引用、环检测、未定义 key（带建议）、重复 key、字典不计入子元素、普通属性引用 |

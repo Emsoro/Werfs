@@ -92,6 +92,17 @@ float MenuHeight(const std::vector<PopupMenuItem>& items) {
 // A menu that would run past the window edge is flipped to open the other way.
 // A menu taller than the window is clamped rather than flipped, because flipping
 // an overflowing menu only moves the overflow.
+// The first focusable widget in a subtree, depth-first in child order. Used by the flyout
+// to decide where a key goes without a focus stack.
+Widget* FirstFocusable(Widget* w) {
+    if (w == nullptr) return nullptr;
+    if (w->Focusable()) return w;
+    for (auto& child : w->Children()) {
+        if (Widget* found = FirstFocusable(child.get())) return found;
+    }
+    return nullptr;
+}
+
 Point PlaceNear(Point anchor, Size want, Size available) {
     float x = anchor.x;
     float y = anchor.y;
@@ -781,6 +792,234 @@ void PrepareDialogLayerSizing(OverlayLayer* layer, Size available) {
 
 void SetMenuHoverOnOpen(OverlayLayer* layer, bool on) {
     if (auto* menu = dynamic_cast<MenuLayer*>(layer)) menu->SetHoverOnOpen(on);
+}
+
+// ---------------------------------------------------------------------------
+// FlyoutLayer
+//
+// Hosts a widget subtree. The interesting part is that it must forward events INTO the
+// tree rather than interpret them itself: a flyout containing a button has to let the
+// button be clicked, which means hit-testing the tree and calling its handlers -- while a
+// press outside still dismisses the layer.
+// ---------------------------------------------------------------------------
+class FlyoutLayer final : public OverlayLayer {
+public:
+    explicit FlyoutLayer(FlyoutRequest request)
+        : content_(std::move(request.content)), anchor_(request.anchor),
+          fixedSize_(request.size), lightDismiss_(request.lightDismiss),
+          onClosed_(std::move(request.onClosed)), placement_(request.placement) {
+        bounds_ = Rect{anchor_.x, anchor_.y, 0, 0};
+    }
+
+    void SetAvailable(Size available) {
+        available_ = available;
+        Relayout();
+    }
+
+    Rect Bounds() const override { return bounds_; }
+
+    void Paint(PaintCtx& ctx, const ThemePalette& palette) override {
+        if (!laied_) Relayout();
+        // Shadow first, so a flyout over a same-coloured card is still locatable.
+        ctx.FillRoundRect(bounds_.Inflate(2.0f), 9.0f, Color{0, 0, 0, 0.12f});
+        ctx.FillRoundRect(bounds_, 8.0f, palette.colors[static_cast<int>(Token::CardBackground)]);
+        ctx.StrokeRect(bounds_, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f, 8.0f);
+        if (!content_) return;
+        // The content paints in the layer's own space; PaintTree translates from its
+        // bounds, which Relayout placed at the card's content origin.
+        content_->PaintTree(ctx, palette);
+    }
+
+    bool OnPointerDown(const Point& p) override {
+        if (bounds_.Contains(p)) {
+            if (content_) {
+                if (Widget* hit = content_->HitTest(p)) {
+                    hit->OnPointerDown(p);
+                    pressed_ = hit;
+                }
+            }
+            return true;
+        }
+        // A press outside a light-dismiss flyout closes it AND consumes the click: the
+        // user's intent was "get rid of this", not "activate what I hit".
+        if (lightDismiss_) {
+            Close();
+            return true;
+        }
+        return true; // a modal flyout swallows the press
+    }
+
+    void OnPointerUp(const Point& p) override {
+        if (pressed_ != nullptr) {
+            Widget* target = pressed_;
+            pressed_ = nullptr;
+            target->OnPointerUp(p);
+            return;
+        }
+        if (content_ && bounds_.Contains(p)) {
+            if (Widget* hit = content_->HitTest(p)) hit->OnPointerUp(p);
+        }
+    }
+
+    void OnPointerMove(const Point& p) override {
+        if (!content_) return;
+        // Hover state lives in the widgets, so a flyout holding a button must still
+        // deliver moves or the button never highlights.
+        if (Widget* hit = content_->HitTest(p)) hit->OnPointerMove(p);
+    }
+
+    bool OnKeyDown(int vk, int) override {
+        // Escape closes without asking; the content is a popup's payload, not a document,
+        // so there is nothing to lose by dismissing it.
+        if (vk == KeyEscape) {
+            Close();
+            return true;
+        }
+        if (content_) {
+            // No focus subsystem for overlays: the first focusable control in the content
+            // takes the key. That covers a one-input flyout (the common case) without
+            // inventing a focus stack the host would have to maintain.
+            if (Widget* focus = FirstFocusable(content_.get())) {
+                if (focus->OnKeyDown(vk)) return true;
+            }
+        }
+        return false;
+    }
+
+    bool Active() const override { return active_; }
+    bool LightDismiss() const override { return lightDismiss_; }
+
+private:
+    void Relayout() {
+        laied_ = true;
+        if (!content_) {
+            bounds_ = Rect{anchor_.x, anchor_.y, 0, 0};
+            active_ = false;
+            return;
+        }
+        const Size want = fixedSize_.w > 0 || fixedSize_.h > 0
+                              ? fixedSize_
+                              : content_->Measure(Size{available_.w, available_.h});
+        const Size size{want.w > 0 ? want.w : 160.0f, want.h > 0 ? want.h : 40.0f};
+
+        // Placement: below by default, flipping above when there is no room, which is what
+        // every OS popup does and what makes a flyout near the bottom edge usable.
+        Point origin{anchor_.x, anchor_.y};
+        if (placement_ == 1) {
+            origin.y = anchor_.y - size.h - kGap;
+        } else if (placement_ == 2) {
+            origin.x = anchor_.x + kGap;
+            origin.y = anchor_.y;
+        } else if (placement_ == 3) {
+            origin.x = anchor_.x - size.w - kGap;
+            origin.y = anchor_.y;
+        } else {
+            origin.y = anchor_.y + kGap;
+            if (origin.y + size.h > available_.h && anchor_.y - size.h - kGap >= 0) {
+                origin.y = anchor_.y - size.h - kGap; // flip above
+            }
+        }
+        origin.x = std::clamp(origin.x, 0.0f, std::max(0.0f, available_.w - size.w));
+        origin.y = std::clamp(origin.y, 0.0f, std::max(0.0f, available_.h - size.h));
+
+        bounds_ = Rect{origin.x, origin.y, size.w, size.h};
+        // The card's 8px padding is where the content lives.
+        content_->Arrange(Rect{origin.x + kPad, origin.y + kPad,
+                              std::max(0.0f, size.w - kPad * 2),
+                              std::max(0.0f, size.h - kPad * 2)});
+        active_ = true;
+    }
+
+    void Close() {
+        active_ = false;
+        if (onClosed_) {
+            auto cb = onClosed_;
+            onClosed_ = nullptr; // fire once: a second Close must not double-report
+            cb();
+        }
+    }
+
+    static constexpr float kGap = 6.0f;
+    static constexpr float kPad = 8.0f;
+
+    WidgetPtr content_;
+    Point anchor_;
+    Size fixedSize_;
+    Size available_{1280.0f, 720.0f};
+    bool lightDismiss_ = true;
+    bool laied_ = false;
+    bool active_ = true;
+    int placement_ = 0;
+    Widget* pressed_ = nullptr;
+    std::function<void()> onClosed_;
+    Rect bounds_;
+};
+
+// ---------------------------------------------------------------------------
+// ToolTipLayer
+// ---------------------------------------------------------------------------
+class ToolTipLayer final : public OverlayLayer {
+public:
+    ToolTipLayer(std::wstring text, Point anchor, Size available)
+        : text_(std::move(text)), anchor_(anchor) {
+        ITextService* svc = TextSystem::Get();
+        const float lineH = svc ? svc->LineHeight(kFontSize) : kFontSize * 1.33f;
+        float w = svc ? svc->Measure(text_, kFontSize, WeightNormal).w
+                      : static_cast<float>(text_.size()) * kFontSize * 0.55f;
+        w += kPadX * 2;
+        const float h = lineH + kPadY * 2;
+        // Offset below-right of the pointer, the way every tooltip behaves: directly under
+        // the cursor it would cover what the user is looking at.
+        Point origin{anchor.x + 12.0f, anchor.y + 20.0f};
+        if (origin.x + w > available.w) origin.x = std::max(0.0f, available.w - w);
+        if (origin.y + h > available.h) origin.y = std::max(0.0f, anchor.y - h - 8.0f);
+        bounds_ = Rect{std::max(0.0f, origin.x), std::max(0.0f, origin.y), w, h};
+        active_ = !text_.empty();
+    }
+
+    Rect Bounds() const override { return bounds_; }
+
+    void Paint(PaintCtx& ctx, const ThemePalette& palette) override {
+        ctx.FillRoundRect(bounds_.Inflate(1.0f), 5.0f, Color{0, 0, 0, 0.10f});
+        ctx.FillRoundRect(bounds_, 4.0f,
+                          palette.colors[static_cast<int>(Token::CardBackground)]);
+        ctx.StrokeRect(bounds_, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f, 4.0f);
+        ctx.DrawText(text_, bounds_, palette.colors[static_cast<int>(Token::TextPrimary)],
+                     kFontSize, WeightNormal, TextAlign::Center);
+    }
+
+    // A tooltip is not clickable and must not swallow clicks: if it consumed the press,
+    // clicking a control while its tooltip was up would do nothing.
+    bool OnPointerDown(const Point&) override { return false; }
+    void OnPointerUp(const Point&) override {}
+    bool OnKeyDown(int, int) override { return false; }
+    bool Active() const override { return active_; }
+    bool LightDismiss() const override { return false; }
+
+private:
+    static constexpr float kFontSize = 11.0f;
+    static constexpr float kPadX = 8.0f;
+    static constexpr float kPadY = 4.0f;
+
+    std::wstring text_;
+    Point anchor_;
+    Rect bounds_;
+    bool active_ = false;
+};
+
+std::unique_ptr<OverlayLayer> MakeFlyoutLayer(FlyoutRequest request) {
+    auto layer = std::make_unique<FlyoutLayer>(std::move(request));
+    layer->SetAvailable(Size{1280.0f, 720.0f});
+    return layer;
+}
+
+std::unique_ptr<OverlayLayer> MakeToolTipLayer(std::wstring text, Point anchor,
+                                               Size available) {
+    return std::make_unique<ToolTipLayer>(std::move(text), anchor, available);
+}
+
+void PrepareFlyoutLayerSizing(OverlayLayer* layer, Size available) {
+    if (auto* flyout = dynamic_cast<FlyoutLayer*>(layer)) flyout->SetAvailable(available);
 }
 
 } // namespace wui

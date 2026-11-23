@@ -20,8 +20,9 @@ public:
     ~DWriteTextService() override;
     bool Valid() const { return factory_ != nullptr; }
 
-    Size Measure(const std::wstring& text, float fontSize, int weight) override;
-    float LineHeight(float fontSize) override;
+    Size Measure(const std::wstring& text, float fontSize, int weight,
+                  const std::wstring& family) override;
+    float LineHeight(float fontSize, const std::wstring& family) override;
 
     struct Impl;
     Impl* GetImpl() { return impl_.get(); }
