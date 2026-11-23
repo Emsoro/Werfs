@@ -39,7 +39,11 @@ void Widget::SetTriggerHost(std::shared_ptr<StyleTriggerHost> host) {
 
 void Widget::BindType(const TypeInfo* type) {
     type_ = type;
-    if (!type_) return;
+    if (!type_) {
+        dataContextSlot_ = -1;
+        return;
+    }
+    dataContextSlot_ = SlotOf("DataContext");
     values_.clear();
     values_.resize(static_cast<size_t>(type_->SlotCount()));
     for (int i = 0; i < type_->SlotCount(); ++i) values_[static_cast<size_t>(i)] = type_->Properties()[static_cast<size_t>(i)].defaultValue;
@@ -59,6 +63,16 @@ const Value& Widget::RawSlot(int slot) const {
 
 void Widget::SetSlotValue(int slot, const Value& value, bool fromBinding) {
     if (slot < 0 || slot >= static_cast<int>(values_.size())) return;
+    if (slot == dataContextSlot_) {
+        // DataContext is a real WAML slot so markup can write it, but the tree
+        // lives on Widget::dataContext_, not in the slot. The slot is a mirror.
+        // An explicit null is a local value: it blocks inheritance (see
+        // EffectiveDataContext), which is what a binding whose source object
+        // disappeared should do.
+        const RefPtr dc = value.type == VType::Ref ? value.ref : nullptr;
+        SetDataContext(dc, true);
+        return;
+    }
     if (!fromBinding && value.Equals(values_[static_cast<size_t>(slot)])) {
         // Still notify slot observers so TwoWay initialisation can push values.
     }
@@ -131,18 +145,48 @@ void Widget::SetDataContext(RefPtr dc, bool own) {
     if (dataContext_ == dc && ownsDataContext_ == own) return;
     dataContext_ = std::move(dc);
     ownsDataContext_ = own;
-    // Push inherited context down first: binding resolution below may create new
-    // children (list items and templates), and those must not be clobbered by
-    // this write. Children that own their own context keep it (local value wins).
+    // Keep the WAML-visible mirror in step. Assign the vector directly rather
+    // than calling SetSlotValue, which would route straight back here.
+    if (dataContextSlot_ >= 0) {
+        values_[static_cast<size_t>(dataContextSlot_)] =
+            dataContext_ ? Value::Ref(dataContext_) : Value::Null();
+    }
+
+    // Resolve THIS widget's DataContext binding before pushing anything down.
+    // Its source is the parent's effective context, so it does not depend on the
+    // value just written -- and if it produces an object, the recursive
+    // SetDataContext call below pushes the real object down. Pushing the
+    // inherited value first would let children briefly resolve against the
+    // wrong context, which used to surface as a transient binding error for a
+    // perfectly valid nested card (page -> card -> badge).
+    const RefPtr beforeBindings = dataContext_;
+    const bool beforeOwn = ownsDataContext_;
+    const RefPtr parentDc = parent_ ? parent_->EffectiveDataContext() : nullptr;
+    for (auto& b : bindings_) {
+        if (b->Desc().hasSource || b->Slot() != dataContextSlot_) continue;
+        b->SetSource(parentDc);
+    }
+    if (dataContext_ != beforeBindings || ownsDataContext_ != beforeOwn) {
+        // The binding wrote a different context; that recursive call has already
+        // pushed and rebound the subtree. Do not overwrite it with `dc`.
+        return;
+    }
+
+    // Children that own their own context keep it (local value wins), but their
+    // DataContext BINDINGS still read this widget's effective context, so they
+    // must be re-resolved even though their object does not change.
     for (auto& c : children_) {
         if (!c->ownsDataContext_) c->SetDataContext(dataContext_, false);
+        else c->RebindDataContextBindings();
     }
     RebindAll();
     SetDirtyUpwards(AffectsMeasure | AffectsRender);
 }
 
 RefPtr Widget::EffectiveDataContext() const {
-    if (dataContext_) return dataContext_;
+    // An owned context wins even when it is null: owning null is how a subtree
+    // says "I have no data source" without falling back to an ancestor's.
+    if (ownsDataContext_ || dataContext_) return dataContext_;
     return parent_ ? parent_->EffectiveDataContext() : nullptr;
 }
 
@@ -165,25 +209,55 @@ void Widget::FlushBindings() {
 }
 
 void Widget::RebindAll() {
-    const RefPtr dc = EffectiveDataContext();
+    // DataContext bindings resolve against the PARENT's effective context. If
+    // they used this widget's own context, the first successful write would
+    // become the source for the second resolution and the path would be looked
+    // up on the wrong object (e.g. "{Binding SelectedServer}" asked of the
+    // server instead of the page).
     for (auto& b : bindings_) {
-        if (b->Desc().hasSource) continue;
-        b->SetSource(dc);
+        if (b->Desc().hasSource || b->Slot() != dataContextSlot_) continue;
+        b->SetSource(parent_ ? parent_->EffectiveDataContext() : nullptr);
+    }
+    // Everything else -- including the bindings of a subtree whose DataContext
+    // the pass above just replaced -- resolves against this widget's context.
+    // Two passes matter: the context may change in the first one, and a single
+    // cached value would then bind the rest of the page to the old object.
+    for (auto& b : bindings_) {
+        if (b->Desc().hasSource || b->Slot() == dataContextSlot_) continue;
+        b->SetSource(EffectiveDataContext());
     }
     for (auto& c : children_) c->RebindAll();
 }
 
+void Widget::RebindDataContextBindings() {
+    const RefPtr parentDc = parent_ ? parent_->EffectiveDataContext() : nullptr;
+    for (auto& b : bindings_) {
+        if (b->Desc().hasSource || b->Slot() != dataContextSlot_) continue;
+        b->SetSource(parentDc);
+    }
+    for (auto& c : children_) c->RebindDataContextBindings();
+}
+
 void Widget::ApplySizeConstraints() {
     // Explicit Width/Height win over content; min/max clamp all of them.
+    //
+    // An explicit size means the element's CONTENT box, so the margin is added on top --
+    // the same convention every Measure() uses ("content + margin"). Treating it as the
+    // total instead made `Height="6" Margin="0,6,0,10"` produce a widget whose own paint
+    // rect was -10 high: present in layout, invisible on screen, and no diagnostic said
+    // so.
+    const Thickness margin = SlotOf("Margin") >= 0 ? Get<Thickness>(SlotOf("Margin"))
+                                                  : Thickness{};
     struct Spec {
         const char* size;
         const char* min;
         const char* max;
         float* target;
+        float marginExtra;
     };
     const Spec specs[2] = {
-        {"Width", "MinWidth", "MaxWidth", &desired_.w},
-        {"Height", "MinHeight", "MaxHeight", &desired_.h},
+        {"Width", "MinWidth", "MaxWidth", &desired_.w, margin.H()},
+        {"Height", "MinHeight", "MaxHeight", &desired_.h, margin.V()},
     };
     for (const auto& spec : specs) {
         const int sSize = SlotOf(spec.size);
@@ -192,7 +266,7 @@ void Widget::ApplySizeConstraints() {
         float v = *spec.target;
         if (sSize >= 0) {
             const float explicitSize = Get<float>(sSize);
-            if (explicitSize > 0) v = explicitSize;
+            if (explicitSize > 0) v = explicitSize + spec.marginExtra;
         }
         if (sMax >= 0) {
             const float maxValue = Get<float>(sMax);

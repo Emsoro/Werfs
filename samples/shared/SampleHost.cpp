@@ -113,6 +113,68 @@ public:
         auto* b = Brush(ResolveColor(c, palette_));
         if (b) app_.target->DrawRoundedRectangle(D2D1::RoundedRect(R(r), radius, radius), b, width);
     }
+    void FillEllipse(const Rect& r, const Color& c) override {
+        auto* b = Brush(ResolveColor(c, palette_));
+        if (!b) return;
+        app_.target->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(r.x + r.w * 0.5f, r.y + r.h * 0.5f), r.w * 0.5f,
+                          r.h * 0.5f),
+            b);
+    }
+    void DrawLine(const Point& a, const Point& b, const Color& c, float width) override {
+        auto* brush = Brush(ResolveColor(c, palette_));
+        if (brush) app_.target->DrawLine(D2D1::Point2F(a.x, a.y), D2D1::Point2F(b.x, b.y), brush, width);
+    }
+    void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override {
+        if (bitmap == nullptr || !bitmap->Valid()) return;
+        // Premultiply on the way in: the decoder hands out straight alpha and D2D wants
+        // premultiplied, or transparent edges show bright fringes.
+        std::vector<uint32_t> premul(bitmap->pixels.size());
+        for (size_t i = 0; i < bitmap->pixels.size(); ++i) {
+            const uint32_t p = bitmap->pixels[i];
+            const uint32_t a = (p >> 24) & 0xFF;
+            const uint32_t r = ((p >> 16) & 0xFF) * a / 255;
+            const uint32_t g = ((p >> 8) & 0xFF) * a / 255;
+            const uint32_t bl = (p & 0xFF) * a / 255;
+            premul[i] = (a << 24) | (r << 16) | (g << 8) | bl;
+        }
+        ComPtr<ID2D1Bitmap> d2d;
+        const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (FAILED(app_.target->CreateBitmap(
+                D2D1::SizeU(static_cast<UINT32>(bitmap->width), static_cast<UINT32>(bitmap->height)),
+                premul.data(), static_cast<UINT32>(bitmap->width) * 4, props,
+                d2d.GetAddressOf()))) {
+            return;
+        }
+        if (clip != nullptr) {
+            // Circular crop for PersonPicture: an ellipse mask, not an axis-aligned clip,
+            // because clipping to the bounding box would leave the picture's corners.
+            ComPtr<ID2D1Factory> factory;
+            app_.target->GetFactory(factory.GetAddressOf());
+            ComPtr<ID2D1EllipseGeometry> geom;
+            const D2D1_RECT_F d = R(dest);
+            if (factory && SUCCEEDED(factory->CreateEllipseGeometry(
+                               D2D1::Ellipse(D2D1::Point2F(d.left + (d.right - d.left) * 0.5f,
+                                                           d.top + (d.bottom - d.top) * 0.5f),
+                                             (d.right - d.left) * 0.5f, (d.bottom - d.top) * 0.5f),
+                               geom.GetAddressOf()))) {
+                ComPtr<ID2D1Layer> layer;
+                D2D1_LAYER_PARAMETERS params = D2D1::LayerParameters();
+                params.geometricMask = geom.Get();
+                params.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
+                params.contentBounds = d;
+                if (SUCCEEDED(app_.target->CreateLayer(nullptr, layer.GetAddressOf()))) {
+                    app_.target->PushLayer(params, layer.Get());
+                    app_.target->DrawBitmap(d2d.Get(), d, 1.0f,
+                                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    app_.target->PopLayer();
+                    return;
+                }
+            }
+        }
+        app_.target->DrawBitmap(d2d.Get(), R(dest), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
                   TextAlign align) override {
         auto* b = Brush(ResolveColor(c, palette_));

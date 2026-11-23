@@ -1,0 +1,100 @@
+<?waml version="0.1"?>
+<!--
+  samples/usercontrol — one page, three data sources.
+
+  The page binds PageVm. Each card below opens with
+      DataContext="{Binding AlphaServer}"
+  which replaces the source for that whole subtree, so a plain
+  {Binding Port} inside the card reads the server, not the page.
+  The status badge does it a second time: its DataContext is the
+  card's Status object, which is why a component can nest.
+
+  Bound to sample::UserControlVm in UserControlVm.h.
+-->
+<Page Background="AppBackground" Padding="0">
+  <ScrollViewer>
+    <StackPanel Orientation="Vertical" Margin="24" Spacing="16">
+
+      <!-- ================= Header ================= -->
+      <TextBlock Text="Component scope" FontSize="30" FontWeight="SemiBold"
+                 Foreground="TextPrimary"/>
+      <TextBlock Text="{Binding Blurb}" FontSize="13" Foreground="TextSecondary"
+                 TextWrapping="Wrap"/>
+
+      <!-- ================= Page-owned source ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="Page data source" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="This title belongs to the page. The cards bind their own servers, so changing it must not move anything inside them."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button Content="Change page title" Command="{Binding CyclePageTitleCommand}"/>
+            <TextBlock Text="{Binding PageTitle, StringFormat='Page title: {0}'}"
+                       FontSize="13" Foreground="TextPrimary"/>
+          </StackPanel>
+          <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= Two independent cards ================= -->
+      <Grid ColumnDefinitions="1*,1*" ColumnSpacing="12">
+
+        <!-- Card 1: its DataContext is the alpha server. -->
+        <Border Grid.Column="0" x:Name="AlphaCard" Background="CardBackground"
+                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8"
+                Padding="16" DataContext="{Binding AlphaServer}">
+          <StackPanel Orientation="Vertical" Spacing="10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="{Binding Name}" FontSize="20" FontWeight="SemiBold"
+                         Foreground="TextPrimary"/>
+              <!-- Badge: a second DataContext binding, one level deeper. -->
+              <Border DataContext="{Binding Status}" Background="ControlFill"
+                      CornerRadius="12" Padding="8,2,8,2">
+                <TextBlock Text="{Binding Text}" Foreground="{Binding Color}"
+                           FontSize="12" FontWeight="SemiBold"/>
+              </Border>
+            </StackPanel>
+            <TextBlock Text="{Binding Port, StringFormat='Port {0}'}" FontSize="13"
+                       Foreground="TextSecondary"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Bump port" Command="{Binding BumpPortCommand}"/>
+              <Button Content="Toggle enabled" Command="{Binding ToggleCommand}"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Card 2: same markup, its own server. -->
+        <Border Grid.Column="1" x:Name="BetaCard" Background="CardBackground"
+                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8"
+                Padding="16" DataContext="{Binding BetaServer}">
+          <StackPanel Orientation="Vertical" Spacing="10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="{Binding Name}" FontSize="20" FontWeight="SemiBold"
+                         Foreground="TextPrimary"/>
+              <Border DataContext="{Binding Status}" Background="ControlFill"
+                      CornerRadius="12" Padding="8,2,8,2">
+                <TextBlock Text="{Binding Text}" Foreground="{Binding Color}"
+                           FontSize="12" FontWeight="SemiBold"/>
+              </Border>
+            </StackPanel>
+            <TextBlock Text="{Binding Port, StringFormat='Port {0}'}" FontSize="13"
+                       Foreground="TextSecondary"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Bump port" Command="{Binding BumpPortCommand}"/>
+              <Button Content="Toggle enabled" Command="{Binding ToggleCommand}"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- ================= Footer ================= -->
+      <TextBlock Text="Two cards, two sources, one page. The markup is duplicated here because a reusable component template is a separate framework feature; the DataContext binding is what makes the copies independent."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"
+                 Padding="0,0,0,16"/>
+
+    </StackPanel>
+  </ScrollViewer>
+</Page>

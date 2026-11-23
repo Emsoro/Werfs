@@ -8,6 +8,7 @@
 #include "EditorResource.h"  // IDR_WAML_EDITOR
 #include "EditorVm.h"
 #include "FileDialog.h"
+#include "Image.h"
 #include "SampleHost.h"
 
 #include <windows.h>
@@ -21,6 +22,7 @@ std::shared_ptr<sample::EditorVm> g_vm;
 // by the host before RunSample gets here. Created once and kept alive for the
 // process, because the service is registered process-wide.
 std::unique_ptr<wui::IFileDialogService> g_dialogs;
+std::unique_ptr<wui::IImageService> g_images;
 
 std::shared_ptr<wui::RefObject> MakeViewModel() {
     g_vm = std::make_shared<sample::EditorVm>();
@@ -31,6 +33,11 @@ std::shared_ptr<wui::RefObject> MakeViewModel() {
     g_dialogs.reset(wui::CreateWin32FileDialogService());
     wui::SetFileDialogService(g_dialogs.get());
     g_vm->SetDialogService(g_dialogs.get());
+
+    // Image decoding, for the same reason: the control asks for a decoder, and the
+    // headless tools leave this unregistered so nothing touches COM or the filesystem.
+    g_images.reset(wui::CreateWicImageService());
+    wui::SetImageService(g_images.get());
 
     return std::static_pointer_cast<wui::RefObject>(g_vm);
 }

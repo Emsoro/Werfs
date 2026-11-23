@@ -10,6 +10,7 @@
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
 #include "BindingVm.h"  // sample: the four binding modes page's ViewModel
 #include "ThemingVm.h"  // sample: the token/theme page's ViewModel
+#include "UserControlVm.h" // sample: the nested-data-source page's ViewModels
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "Mvvm.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (default page)
@@ -94,6 +95,7 @@ int main(int argc, char** argv) {
     const bool isBasicPage = source.find("Basic.waml") != std::string::npos;
     const bool isBindingPage = source.find("Binding.waml") != std::string::npos;
     const bool isThemingPage = source.find("Theming.waml") != std::string::npos;
+    const bool isUserControlPage = source.find("UserControl.waml") != std::string::npos;
     const bool isEditorPage = source.find("Editor.waml") != std::string::npos;
 
     std::shared_ptr<RefObject> vmRef;
@@ -113,6 +115,11 @@ int main(int argc, char** argv) {
         auto themingVm = std::make_shared<sample::ThemingVm>();
         std::printf("vm: ThemingVm (%s)\n", themingVm->IsDarkTheme.Get() ? "dark" : "light");
         vmRef = std::static_pointer_cast<RefObject>(themingVm);
+    } else if (isUserControlPage) {
+        auto userControlVm = std::make_shared<sample::UserControlVm>();
+        std::printf("vm: UserControlVm (alpha:%d beta:%d)\n", userControlVm->Alpha()->Port.Get(),
+                    userControlVm->Beta()->Port.Get());
+        vmRef = std::static_pointer_cast<RefObject>(userControlVm);
     } else if (isEditorPage) {
         auto editorVm = std::make_shared<sample::EditorVm>();
         std::printf("vm: EditorVm (%zu documents)\n", editorVm->DocumentCount());

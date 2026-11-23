@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 #include "Controls.h"
 
+#include "Image.h" // IImageService: the control asks for a decoder, it never decodes.
 #include "Overlay.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
+#include <cwctype>
 
 #include <algorithm>
 
@@ -496,13 +499,39 @@ void StackPanel::Arrange(const Rect& finalRect) {
     for (auto& c : LayoutChildren()) {
         if (!first) cursor += spacing;
         first = false;
+        const Size want = c->DesiredSize();
+        // Alignment is applied by the PARENT, because only the parent knows how much room
+        // is left over. Stretch (0) keeps the old behaviour exactly, so adding this did
+        // not move anything that was already laid out.
+        const int hAlign = c->SlotOf("HorizontalAlignment") >= 0
+                               ? c->Get<int>(c->SlotOf("HorizontalAlignment"))
+                               : 0;
+        const int vAlign = c->SlotOf("VerticalAlignment") >= 0
+                               ? c->Get<int>(c->SlotOf("VerticalAlignment"))
+                               : 0;
+        auto alignX = [&](float slotW, float childW) {
+            // Left already means "at the slot's start"; Center and Right shift.
+            if (hAlign == 2) return (slotW - childW) * 0.5f;
+            if (hAlign == 3) return slotW - childW;
+            return 0.0f;
+        };
+        auto alignY = [&](float slotH, float childH) {
+            if (vAlign == 2) return (slotH - childH) * 0.5f;
+            if (vAlign == 3) return slotH - childH;
+            return 0.0f;
+        };
         if (orientation == 0) {
-            const Size want = c->DesiredSize();
-            c->Arrange(Rect{content.x, cursor, content.w, want.h});
+            // Cross axis is horizontal here: the child gets its natural width unless
+            // stretched.
+            const float childW = hAlign == 0 ? content.w : want.w;
+            const float dx = alignX(content.w, childW);
+            c->Arrange(Rect{content.x + dx, cursor, childW, want.h});
             cursor += want.h;
         } else {
-            const Size want = c->DesiredSize();
-            c->Arrange(Rect{cursor, content.y, want.w, content.h});
+            // Cross axis is vertical.
+            const float childH = vAlign == 0 ? content.h : want.h;
+            const float dy = alignY(content.h, childH);
+            c->Arrange(Rect{cursor, content.y + dy, want.w, childH});
             cursor += want.w;
         }
     }
@@ -701,7 +730,10 @@ void TextBox::Arrange(const Rect& finalRect) {
 std::vector<std::wstring> TextBox::BuildDisplayLines(float wrapWidth, float fontSize,
                                                     int weight) const {
     std::vector<std::wstring> lines;
-    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    // DisplayText(), not Text: this is the ONLY place the paint path reads the content,
+    // so routing it through the virtual is what makes PasswordBox's mask apply to the
+    // whole drawing path instead of just the placeholder branch.
+    const std::wstring text = DisplayText();
     ITextService* svc = TextSystem::Get();
     const float lineH = svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
     // A box only one line tall has no room to wrap into; wrapping there would
@@ -759,6 +791,10 @@ std::vector<std::wstring> TextBox::BuildDisplayLines(float wrapWidth, float font
     return lines;
 }
 
+std::wstring TextBox::DisplayText() const {
+    return Get<std::wstring>(SlotOf("Text"));
+}
+
 void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
@@ -771,7 +807,7 @@ void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
                    focused_ ? 1.5f : 1.0f, 4.0f);
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
     const Rect textBox{box.x + pad.l, box.y + pad.t, box.w - pad.H(), box.h - pad.V()};
-    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    const std::wstring text = DisplayText();
     const float fontSize = Get<float>(SlotOf("FontSize"));
     const int weight = WeightNormal;
 
@@ -2839,4 +2875,1298 @@ void ContentDialog::Close(int result) {
     }
     Invalidate(AffectsRender);
 }
+// ---------------------------------------------------------------------------
+// ProgressBar
+// ---------------------------------------------------------------------------
+namespace {
+// Bar geometry shared by Measure and OnPaint so the two cannot disagree about how
+// tall a bar is.
+constexpr float kProgressBarHeight = 6.0f;
+constexpr float kProgressRingSize = 32.0f;
+constexpr float kProgressThickness = 3.0f;
+} // namespace
+
+Size ProgressBar::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    // Fills the width it is given. A progress bar that sized to its content would be
+    // a 6-pixel-wide dot.
+    const float w = available.w > 0 && available.w < 1.0e6f ? available.w : 160.0f;
+    desired_ = Size{w, kProgressBarHeight + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void ProgressBar::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect track{bounds_.x + margin.l, bounds_.y + margin.t,
+                     std::max(0.0f, bounds_.w - margin.H()),
+                     std::max(0.0f, bounds_.h - margin.V())};
+    if (track.w <= 0 || track.h <= 0) return;
+
+    const Color trackColor = palette.colors[static_cast<int>(Token::ControlFill)];
+    ctx.FillRoundRect(track, track.h * 0.5f, trackColor);
+
+    const float value = Get<float>(SlotOf("Value"));
+    // Clamped, not trusted: a ViewModel that briefly reports 1.2 must not paint
+    // outside its own track and cover the neighbouring control.
+    const float fraction = std::clamp(value, 0.0f, 1.0f);
+    if (fraction <= 0.0f) return;
+    const Color fill = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    const float w = track.w * fraction;
+    ctx.FillRoundRect(Rect{track.x, track.y, w, track.h}, track.h * 0.5f, fill);
+}
+
+// ---------------------------------------------------------------------------
+// ProgressRing
+// ---------------------------------------------------------------------------
+Size ProgressRing::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float size = Get<float>(SlotOf("Size"));
+    const float side = size > 0 ? size : kProgressRingSize;
+    desired_ = Size{side + margin.H(), side + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void ProgressRing::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+
+    const float thickness = Get<float>(SlotOf("Thickness"));
+    const float stroke = thickness > 0 ? thickness : kProgressThickness;
+    const float radius = std::min(box.w, box.h) * 0.5f - stroke * 0.5f;
+    if (radius <= 0) return;
+
+    const Point center{box.x + box.w * 0.5f, box.y + box.h * 0.5f};
+    // The track is a full circle; the value arc is drawn over it. Both are stepped
+    // segments -- 64 per revolution is smooth enough at these sizes and keeps the
+    // primitive count low in the determinism snapshot.
+    constexpr int kSegments = 64;
+    const Color trackColor = palette.colors[static_cast<int>(Token::ControlFill)];
+    auto pointAt = [&](float fraction) {
+        // 12 o'clock, clockwise. -pi/2 puts the start at the top.
+        const float angle = -3.14159265f * 0.5f + fraction * 6.28318530f;
+        return Point{center.x + std::cos(angle) * radius, center.y + std::sin(angle) * radius};
+    };
+    for (int i = 0; i < kSegments; ++i) {
+        const float f0 = static_cast<float>(i) / kSegments;
+        const float f1 = static_cast<float>(i + 1) / kSegments;
+        ctx.DrawLine(pointAt(f0), pointAt(f1), trackColor, stroke);
+    }
+
+    const float value = std::clamp(Get<float>(SlotOf("Value")), 0.0f, 1.0f);
+    if (value <= 0.0f) return;
+    const Color fill = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    const int arcSegments = static_cast<int>(static_cast<float>(kSegments) * value + 0.5f);
+    for (int i = 0; i < arcSegments; ++i) {
+        const float f0 = static_cast<float>(i) / kSegments;
+        const float f1 = static_cast<float>(i + 1) / kSegments;
+        ctx.DrawLine(pointAt(f0), pointAt(f1), fill, stroke);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InfoBar
+// ---------------------------------------------------------------------------
+namespace {
+// Severity -> the accent used for the left edge. Order matches the enum:
+// Informational, Success, Warning, Error.
+Token SeverityToken(int severity) {
+    switch (severity) {
+    case 1: return Token::Accent;  // Success -> accent in this palette
+    case 2: return Token::Accent;  // Warning
+    case 3: return Token::Accent;  // Error
+    default: return Token::TextSecondary; // Informational
+    }
+}
+constexpr float kInfoBarPadX = 12.0f;
+constexpr float kInfoBarPadY = 10.0f;
+constexpr float kInfoBarEdge = 4.0f;
+constexpr float kInfoBarTitleSize = 13.0f;
+constexpr float kInfoBarBodySize = 12.0f;
+} // namespace
+
+Rect InfoBar::CloseBounds() const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float size = 24.0f;
+    return Rect{bounds_.x + bounds_.w - margin.r - size, bounds_.y + margin.t + 4.0f, size, size};
+}
+
+Size InfoBar::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    // A dismissed bar takes no space. Doing it in Measure (rather than only skipping
+    // the paint) is what makes the controls below it move up -- a bar that stayed
+    // reserved while invisible leaves a gap nobody can explain.
+    if (!Get<bool>(SlotOf("IsOpen"))) {
+        desired_ = Size{0, 0};
+        return desired_;
+    }
+    const float w = available.w > 0 && available.w < 1.0e6f ? available.w : 320.0f;
+    const std::wstring title = Get<std::wstring>(SlotOf("Title"));
+    const std::wstring message = Get<std::wstring>(SlotOf("Message"));
+    ITextService* svc = TextSystem::Get();
+    float inner = std::max(0.0f, w - margin.H() - kInfoBarEdge - kInfoBarPadX * 2 - 28.0f);
+    float h = kInfoBarPadY * 2 + margin.V();
+    if (!title.empty()) h += svc ? svc->LineHeight(kInfoBarTitleSize) : kInfoBarTitleSize * 1.33f;
+    if (!message.empty()) {
+        // Wrapped height, estimated from the measured width so a long message makes
+        // the bar taller instead of running past its own right edge.
+        const float lineH = svc ? svc->LineHeight(kInfoBarBodySize) : kInfoBarBodySize * 1.33f;
+        const float textW = svc ? svc->Measure(message, kInfoBarBodySize, WeightNormal).w
+                                : static_cast<float>(message.size()) * kInfoBarBodySize * 0.55f;
+        const int lines = inner > 0 ? std::max(1, static_cast<int>(std::ceil(textW / inner))) : 1;
+        h += lineH * static_cast<float>(lines);
+    }
+    desired_ = Size{w, std::max(h, 40.0f)};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void InfoBar::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    if (!Get<bool>(SlotOf("IsOpen"))) return;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+
+    ctx.FillRoundRect(box, 4.0f, palette.colors[static_cast<int>(Token::CardBackground)]);
+    // Left edge carries the severity. A 4px strip rather than a full tinted
+    // background: an error bar tinted edge to edge makes the body text hard to read.
+    const Color edge = palette.colors[static_cast<int>(SeverityToken(Get<int>(SlotOf("Severity"))))];
+    ctx.FillRoundRect(Rect{box.x, box.y, kInfoBarEdge, box.h}, 2.0f, edge);
+
+    const float textX = box.x + kInfoBarEdge + kInfoBarPadX;
+    const float textW = std::max(0.0f, box.w - (textX - box.x) - kInfoBarPadX - 28.0f);
+    float y = box.y + kInfoBarPadY;
+    const std::wstring title = Get<std::wstring>(SlotOf("Title"));
+    const std::wstring message = Get<std::wstring>(SlotOf("Message"));
+    const Color fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    if (!title.empty()) {
+        const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(kInfoBarTitleSize)
+                                              : kInfoBarTitleSize * 1.33f;
+        ctx.DrawText(title, Rect{textX, y, textW, lineH}, fg, kInfoBarTitleSize, WeightSemiBold,
+                     TextAlign::Left);
+        y += lineH;
+    }
+    if (!message.empty()) {
+        const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(kInfoBarBodySize)
+                                              : kInfoBarBodySize * 1.33f;
+        ctx.DrawText(message, Rect{textX, y, textW, box.Bottom() - y},
+                     palette.colors[static_cast<int>(Token::TextSecondary)], kInfoBarBodySize,
+                     WeightNormal, TextAlign::Left);
+    }
+
+    if (Get<bool>(SlotOf("IsClosable"))) {
+        const Rect close = CloseBounds();
+        ctx.DrawText(L"\u2715", close, palette.colors[static_cast<int>(Token::TextSecondary)],
+                     12.0f, WeightNormal, TextAlign::Center);
+    }
+}
+
+Widget* InfoBar::HitTest(const Point& p) {
+    if (!bounds_.Contains(p)) return nullptr;
+    return this;
+}
+
+void InfoBar::OnPointerUp(const Point& local) {
+    if (!Get<bool>(SlotOf("IsClosable"))) return;
+    // Only the close affordance closes it. Clicking the message text must not dismiss
+    // a warning the user was still reading.
+    const Rect close = CloseBounds();
+    if (!close.Contains(local)) return;
+    // Reports through IsOpen (TwoWay) instead of hiding itself: whether the bar comes
+    // back is the ViewModel's decision.
+    const int slot = SlotOf("IsOpen");
+    if (slot >= 0) SetSlotValue(slot, Value::Bool(false), true);
+}
+
+// ---------------------------------------------------------------------------
+// InfoBadge
+// ---------------------------------------------------------------------------
+Size InfoBadge::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    // A dot when there is no text, a pill otherwise. The minimum width keeps a single
+    // digit round instead of squashed.
+    if (text.empty()) {
+        const float d = 8.0f;
+        desired_ = Size{d + margin.H(), d + margin.V()};
+        ApplySizeConstraints();
+        return desired_;
+    }
+    float textW = static_cast<float>(text.size()) * fontSize * 0.55f;
+    if (ITextService* svc = TextSystem::Get()) textW = svc->Measure(text, fontSize, WeightSemiBold).w;
+    const float h = std::max(18.0f, fontSize + 8.0f);
+    const float w = std::max(h, textW + 10.0f);
+    desired_ = Size{w + margin.H(), h + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void InfoBadge::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const Color fill = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    ctx.FillRoundRect(box, std::min(box.w, box.h) * 0.5f, fill);
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    if (text.empty()) return;
+    ctx.DrawText(text, box, ResolveColor(Get<Color>(SlotOf("Foreground")), palette),
+                 Get<float>(SlotOf("FontSize")), WeightSemiBold, TextAlign::Center);
+}
+
+// ---------------------------------------------------------------------------
+// Line
+// ---------------------------------------------------------------------------
+Size Line::Measure(const Size& available) {
+    (void)available;
+    // The bounding box of the two endpoints, so a diagonal reserves the space it
+    // actually covers instead of reporting zero and being laid out as a point.
+    const float x0 = Get<float>(SlotOf("StartX"));
+    const float y0 = Get<float>(SlotOf("StartY"));
+    const float x1 = Get<float>(SlotOf("EndX"));
+    const float y1 = Get<float>(SlotOf("EndY"));
+    const float stroke = std::max(1.0f, Get<float>(SlotOf("StrokeThickness")));
+    // Origin of the coordinate space is the parent's content box, so the box starts at
+    // min(x) and the extents are the absolute deltas.
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    desired_ = Size{std::abs(x1 - x0) + stroke + margin.H(),
+                    std::abs(y1 - y0) + stroke + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void Line::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    // Endpoints are relative to the parent content box, and this widget's bounds start
+    // where the smaller coordinate is. Converting through the bounds origin is what
+    // makes a line work without knowing its own layout position.
+    const float x0 = Get<float>(SlotOf("StartX"));
+    const float y0 = Get<float>(SlotOf("StartY"));
+    const float x1 = Get<float>(SlotOf("EndX"));
+    const float y1 = Get<float>(SlotOf("EndY"));
+    const float minX = std::min(x0, x1);
+    const float minY = std::min(y0, y1);
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float stroke = std::max(1.0f, Get<float>(SlotOf("StrokeThickness")));
+    // Half the stroke sits on either side of the mathematical segment, so shift by half
+    // a stroke to keep a horizontal line inside its box.
+    const Point a{bounds_.x + margin.l + (x0 - minX) + stroke * 0.5f,
+                  bounds_.y + margin.t + (y0 - minY) + stroke * 0.5f};
+    const Point b{bounds_.x + margin.l + (x1 - minX) + stroke * 0.5f,
+                  bounds_.y + margin.t + (y1 - minY) + stroke * 0.5f};
+    ctx.DrawLine(a, b, ResolveColor(Get<Color>(SlotOf("Stroke")), palette), stroke);
+}
+
+// ---------------------------------------------------------------------------
+// Shape
+// ---------------------------------------------------------------------------
+Size Shape::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    // A shape has no content to size to; an unspecified one is a 40x40 placeholder so
+    // it is visible in a layout rather than invisible.
+    const float w = Get<float>(SlotOf("ShapeWidth"));
+    const float h = Get<float>(SlotOf("ShapeHeight"));
+    desired_ = Size{(w > 0 ? w : 40.0f) + margin.H(), (h > 0 ? h : 40.0f) + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void Shape::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const Color fill = ResolveColor(Get<Color>(SlotOf("Fill")), palette);
+    const bool isEllipse = Get<int>(SlotOf("Kind")) == 1;
+    if (isEllipse) ctx.FillEllipse(box, fill);
+    else ctx.FillRoundRect(box, Get<float>(SlotOf("CornerRadius")), fill);
+
+    const float stroke = Get<float>(SlotOf("StrokeThickness"));
+    if (stroke > 0.0f) {
+        const Color strokeColor = ResolveColor(Get<Color>(SlotOf("Stroke")), palette);
+        // An ellipse outline is approximated by the fill of a slightly larger ellipse
+        // minus the inner one; StrokeRect cannot express it and an outline built from
+        // segments would need a second primitive for no benefit here.
+        if (isEllipse) {
+            ctx.FillEllipse(box, strokeColor);
+            ctx.FillEllipse(box.Deflate(Thickness{stroke, stroke, stroke, stroke}), fill);
+        } else {
+            ctx.StrokeRect(box, strokeColor, stroke, Get<float>(SlotOf("CornerRadius")));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ToggleButton
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kToggleButtonPadX = 16.0f;
+constexpr float kToggleButtonPadY = 7.0f;
+} // namespace
+
+Size ToggleButton::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = static_cast<float>(text.size()) * fontSize * 0.55f;
+    float lineH = fontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(text, fontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    desired_ = Size{textW + kToggleButtonPadX * 2 + margin.H(),
+                    std::max(lineH, 16.0f) + kToggleButtonPadY * 2 + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void ToggleButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool enabled = Get<bool>(SlotOf("IsEnabled"));
+    const bool checked = Get<bool>(SlotOf("IsChecked"));
+
+    // Checked uses the accent fill, which is the whole point of a toggle: the state is
+    // readable at a glance from a row of buttons. Hover/press only matter unchecked,
+    // because a checked button already looks "down".
+    Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
+    if (!enabled) {
+        fill = palette.colors[static_cast<int>(Token::AppBackground)];
+    } else if (checked) {
+        fill = palette.colors[static_cast<int>(Token::Accent)];
+    } else if (pressed_) {
+        fill = palette.colors[static_cast<int>(Token::ControlFillPressed)];
+    } else if (hovered_) {
+        fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+    }
+    ctx.FillRoundRect(box, 4.0f, fill);
+    ctx.StrokeRect(box, palette.colors[static_cast<int>(checked ? Token::Accent : Token::CardBorder)],
+                   focused_ ? 1.5f : 1.0f, 4.0f);
+
+    Color fg = palette.colors[static_cast<int>(Token::TextPrimary)];
+    if (!enabled) fg = palette.colors[static_cast<int>(Token::TextDisabled)];
+    else if (checked) fg = palette.colors[static_cast<int>(Token::TextOnAccent)];
+    fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    if (!enabled) fg = palette.colors[static_cast<int>(Token::TextDisabled)];
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")), box, fg, Get<float>(SlotOf("FontSize")),
+                 WeightNormal, TextAlign::Center);
+}
+
+Widget* ToggleButton::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr; // disabled = not a hit
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void ToggleButton::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+
+void ToggleButton::OnPointerUp(const Point& local) {
+    const bool wasPressed = pressed_;
+    pressed_ = false;
+    // Only a press that both started and ended inside counts, so dragging off cancels
+    // -- the behaviour every button has and users notice immediately when missing.
+    if (wasPressed && bounds_.Contains(local)) Toggle();
+    Invalidate(AffectsRender);
+}
+
+bool ToggleButton::OnKeyDown(int vk) {
+    if (vk == KeySpace || vk == KeyReturn) {
+        Toggle();
+        return true;
+    }
+    return false;
+}
+
+void ToggleButton::Toggle() {
+    const int slot = SlotOf("IsChecked");
+    if (slot < 0) return;
+    // Published as a user edit (fromBinding=true) so a TwoWay binding pushes it to the
+    // ViewModel: this is the user changing the value, not us echoing it back.
+    SetSlotValue(slot, Value::Bool(!Get<bool>(slot)), true);
+}
+
+// ---------------------------------------------------------------------------
+// ToggleSwitch
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kSwitchTrackW = 40.0f;
+constexpr float kSwitchTrackH = 20.0f;
+constexpr float kSwitchKnobInset = 3.0f;
+} // namespace
+
+Size ToggleSwitch::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = 0.0f;
+    if (!text.empty()) {
+        textW = static_cast<float>(text.size()) * fontSize * 0.55f;
+        if (ITextService* svc = TextSystem::Get()) textW = svc->Measure(text, fontSize, WeightNormal).w;
+        textW += 10.0f; // gap between label and track
+    }
+    desired_ = Size{kSwitchTrackW + textW + margin.H(),
+                    std::max(kSwitchTrackH, fontSize * 1.33f) + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void ToggleSwitch::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool enabled = Get<bool>(SlotOf("IsEnabled"));
+    const bool on = Get<bool>(SlotOf("IsChecked"));
+
+    // Track is vertically centred against the label.
+    const Rect track{box.x, box.y + (box.h - kSwitchTrackH) * 0.5f, kSwitchTrackW, kSwitchTrackH};
+    Color trackColor = palette.colors[static_cast<int>(on ? Token::Accent : Token::ControlFillPressed)];
+    if (!enabled) trackColor = palette.colors[static_cast<int>(Token::ControlFill)];
+    ctx.FillRoundRect(track, kSwitchTrackH * 0.5f, trackColor);
+    ctx.StrokeRect(track, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f,
+                   kSwitchTrackH * 0.5f);
+
+    // The knob's position is the state. Sliding it is what makes a switch read faster
+    // than a checkbox at small sizes.
+    const float knobD = kSwitchTrackH - kSwitchKnobInset * 2;
+    const float knobX = on ? track.x + track.w - knobD - kSwitchKnobInset
+                           : track.x + kSwitchKnobInset;
+    const Color knobColor = enabled ? palette.colors[static_cast<int>(Token::CardBackground)]
+                                    : palette.colors[static_cast<int>(Token::AppBackground)];
+    ctx.FillEllipse(Rect{knobX, track.y + kSwitchKnobInset, knobD, knobD}, knobColor);
+
+    const std::wstring text = Get<std::wstring>(SlotOf("Content"));
+    if (!text.empty()) {
+        Color fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+        if (!enabled) fg = palette.colors[static_cast<int>(Token::TextDisabled)];
+        ctx.DrawText(text, Rect{track.Right() + 10.0f, box.y, box.Right() - track.Right() - 10.0f, box.h},
+                     fg, Get<float>(SlotOf("FontSize")), WeightNormal, TextAlign::Left);
+    }
+    if (focused_) {
+        ctx.StrokeRect(track.Inflate(2.0f), palette.colors[static_cast<int>(Token::Accent)], 1.0f, 12.0f);
+    }
+}
+
+Widget* ToggleSwitch::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void ToggleSwitch::OnPointerUp(const Point& local) {
+    if (bounds_.Contains(local)) Toggle();
+}
+
+bool ToggleSwitch::OnKeyDown(int vk) {
+    if (vk == KeySpace || vk == KeyReturn) {
+        Toggle();
+        return true;
+    }
+    return false;
+}
+
+void ToggleSwitch::Toggle() {
+    const int slot = SlotOf("IsChecked");
+    if (slot < 0) return;
+    SetSlotValue(slot, Value::Bool(!Get<bool>(slot)), true);
+}
+
+// ---------------------------------------------------------------------------
+// HyperlinkButton
+// ---------------------------------------------------------------------------
+Size HyperlinkButton::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = static_cast<float>(text.size()) * fontSize * 0.55f;
+    float lineH = fontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(text, fontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    desired_ = Size{textW + margin.H(), lineH + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void HyperlinkButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool enabled = Get<bool>(SlotOf("IsEnabled"));
+    Color fg = enabled ? palette.colors[static_cast<int>(Token::Accent)]
+                       : palette.colors[static_cast<int>(Token::TextDisabled)];
+    fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    if (!enabled) fg = palette.colors[static_cast<int>(Token::TextDisabled)];
+
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")), box, fg, fontSize, WeightNormal,
+                 TextAlign::Left);
+    // Underline on hover and while focused, not always: a permanent underline makes a
+    // page of links look like a wall of rules, and the accent colour already carries
+    // the affordance.
+    if ((hovered_ || focused_) && enabled) {
+        const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(fontSize)
+                                              : fontSize * 1.33f;
+        float textW = static_cast<float>(Get<std::wstring>(SlotOf("Content")).size()) * fontSize * 0.55f;
+        if (ITextService* svc = TextSystem::Get()) {
+            textW = svc->Measure(Get<std::wstring>(SlotOf("Content")), fontSize, WeightNormal).w;
+        }
+        const float y = box.y + (box.h - lineH) * 0.5f + lineH - 1.0f;
+        ctx.DrawLine(Point{box.x, y}, Point{box.x + std::min(textW, box.w), y}, fg, 1.0f);
+    }
+}
+
+Widget* HyperlinkButton::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void HyperlinkButton::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+
+void HyperlinkButton::OnPointerUp(const Point& local) {
+    const bool wasPressed = pressed_;
+    pressed_ = false;
+    if (wasPressed && bounds_.Contains(local)) Invoke();
+    Invalidate(AffectsRender);
+}
+
+void HyperlinkButton::OnPointerEnter() {
+    hovered_ = true;
+    Invalidate(AffectsRender);
+}
+
+void HyperlinkButton::OnPointerLeave() {
+    hovered_ = false;
+    pressed_ = false;
+    Invalidate(AffectsRender);
+}
+
+void HyperlinkButton::Invoke() {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    // Same contract as Button: the command is optional, and a link with no command is
+    // legal (it still looks and focuses like one).
+    ICommand* cmd = static_cast<ICommand*>(Get<RefPtr>(SlotOf("Command")).get());
+    if (cmd != nullptr && cmd->CanExecute()) cmd->Execute();
+}
+
+// ---------------------------------------------------------------------------
+// Slider
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kSliderHeight = 28.0f;
+constexpr float kSliderTrackH = 4.0f;
+constexpr float kSliderThumbD = 14.0f;
+constexpr float kSliderPadX = 8.0f;
+} // namespace
+
+Rect Slider::Track() const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float w = std::max(0.0f, bounds_.w - margin.H() - kSliderPadX * 2);
+    return Rect{bounds_.x + margin.l + kSliderPadX,
+                bounds_.y + margin.t + (bounds_.h - margin.V()) * 0.5f - kSliderTrackH * 0.5f, w,
+                kSliderTrackH};
+}
+
+float Slider::Fraction() const {
+    const float minV = Get<float>(SlotOf("Minimum"));
+    const float maxV = Get<float>(SlotOf("Maximum"));
+    // A zero-width range is treated as "at minimum" rather than dividing by zero.
+    if (maxV <= minV) return 0.0f;
+    const float v = Get<float>(SlotOf("Value"));
+    return std::clamp((v - minV) / (maxV - minV), 0.0f, 1.0f);
+}
+
+Size Slider::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    // Fills the width it is given, like a progress bar: a slider sized to nothing is
+    // not adjustable.
+    const float w = available.w > 0 && available.w < 1.0e6f ? available.w : 200.0f;
+    desired_ = Size{w, std::max(kSliderHeight, kSliderThumbD + 4.0f) + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void Slider::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Rect track = Track();
+    if (track.w <= 0) return;
+    ctx.FillRoundRect(track, kSliderTrackH * 0.5f,
+                      palette.colors[static_cast<int>(Token::ControlFillPressed)]);
+
+    // The filled portion up to the thumb is what makes the value readable without
+    // doing arithmetic on the thumb position.
+    const float fraction = Fraction();
+    if (fraction > 0.0f) {
+        ctx.FillRoundRect(Rect{track.x, track.y, track.w * fraction, track.h},
+                          kSliderTrackH * 0.5f, palette.colors[static_cast<int>(Token::Accent)]);
+    }
+
+    const float cx = track.x + track.w * fraction;
+    const float cy = track.y + track.h * 0.5f;
+    const Color thumb = Get<bool>(SlotOf("IsEnabled"))
+                            ? palette.colors[static_cast<int>(Token::Accent)]
+                            : palette.colors[static_cast<int>(Token::TextDisabled)];
+    // A ring around the thumb: the accent fill alone disappears against the filled
+    // track it sits on.
+    ctx.FillEllipse(Rect{cx - kSliderThumbD * 0.5f, cy - kSliderThumbD * 0.5f, kSliderThumbD,
+                         kSliderThumbD},
+                    palette.colors[static_cast<int>(Token::CardBackground)]);
+    ctx.FillEllipse(Rect{cx - kSliderThumbD * 0.5f + 2.0f, cy - kSliderThumbD * 0.5f + 2.0f,
+                         kSliderThumbD - 4.0f, kSliderThumbD - 4.0f},
+                    thumb);
+    if (focused_) {
+        ctx.StrokeRect(Rect{cx - kSliderThumbD * 0.5f - 2.0f, cy - kSliderThumbD * 0.5f - 2.0f,
+                            kSliderThumbD + 4.0f, kSliderThumbD + 4.0f},
+                       palette.colors[static_cast<int>(Token::Accent)], 1.0f, 12.0f);
+    }
+}
+
+Widget* Slider::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    // The whole row is grabbable, not just the 4px track: hunting for a 14px thumb with
+    // the mouse is the most common complaint about slider implementations.
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void Slider::SetFromX(float x) {
+    const Rect track = Track();
+    if (track.w <= 0) return;
+    const float fraction = std::clamp((x - track.x) / track.w, 0.0f, 1.0f);
+    const float minV = Get<float>(SlotOf("Minimum"));
+    const float maxV = Get<float>(SlotOf("Maximum"));
+    float value = minV + (maxV - minV) * fraction;
+    // Snap to StepFrequency when one is given, so a slider bound to a frequency list
+    // cannot produce 3.7841.
+    const float step = Get<float>(SlotOf("StepFrequency"));
+    if (step > 0.0f) value = minV + std::round((value - minV) / step) * step;
+    value = std::clamp(value, minV, maxV);
+    // fromBinding=true: this is the user moving the control, so a TwoWay binding must
+    // push it outward rather than have us echo it back.
+    SetSlotValue(SlotOf("Value"), Value::Number(value), true);
+}
+
+void Slider::OnPointerDown(const Point& local) {
+    dragging_ = true;
+    SetFromX(local.x);
+}
+
+void Slider::OnPointerMove(const Point& local) {
+    if (!dragging_) return;
+    SetFromX(local.x);
+}
+
+void Slider::OnPointerUp(const Point& local) {
+    if (dragging_) SetFromX(local.x);
+    dragging_ = false;
+}
+
+bool Slider::OnKeyDown(int vk) {
+    const float step = Get<float>(SlotOf("StepFrequency")) > 0
+                           ? Get<float>(SlotOf("StepFrequency"))
+                           : std::max(1.0f, (Get<float>(SlotOf("Maximum")) - Get<float>(SlotOf("Minimum"))) / 20.0f);
+    if (vk == KeyLeft) {
+        Step(-1);
+        return true;
+    }
+    if (vk == KeyRight) {
+        Step(1);
+        return true;
+    }
+    if (vk == KeyHome) {
+        SetSlotValue(SlotOf("Value"), Value::Number(Get<float>(SlotOf("Minimum"))), true);
+        return true;
+    }
+    if (vk == KeyEnd) {
+        SetSlotValue(SlotOf("Value"), Value::Number(Get<float>(SlotOf("Maximum"))), true);
+        return true;
+    }
+    (void)step;
+    return false;
+}
+
+void Slider::Step(int direction) {
+    const float step = Get<float>(SlotOf("StepFrequency")) > 0
+                           ? Get<float>(SlotOf("StepFrequency"))
+                           : std::max(1.0f, (Get<float>(SlotOf("Maximum")) - Get<float>(SlotOf("Minimum"))) / 20.0f);
+    const float value = Get<float>(SlotOf("Value")) + step * static_cast<float>(direction);
+    SetSlotValue(SlotOf("Value"),
+                 Value::Number(std::clamp(value, Get<float>(SlotOf("Minimum")),
+                                          Get<float>(SlotOf("Maximum")))),
+                 true);
+}
+
+// ---------------------------------------------------------------------------
+// RepeatButton
+// ---------------------------------------------------------------------------
+Size RepeatButton::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = static_cast<float>(text.size()) * fontSize * 0.55f;
+    float lineH = fontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(text, fontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    desired_ = Size{textW + 32.0f + margin.H(), std::max(lineH, 16.0f) + 14.0f + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void RepeatButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool enabled = Get<bool>(SlotOf("IsEnabled"));
+    Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
+    if (!enabled) fill = palette.colors[static_cast<int>(Token::AppBackground)];
+    else if (pressed_) fill = palette.colors[static_cast<int>(Token::ControlFillPressed)];
+    else if (hovered_) fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+    ctx.FillRoundRect(box, 4.0f, fill);
+    ctx.StrokeRect(box, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f, 4.0f);
+    Color fg = palette.colors[static_cast<int>(enabled ? Token::TextPrimary : Token::TextDisabled)];
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")), box, fg, Get<float>(SlotOf("FontSize")),
+                 WeightNormal, TextAlign::Center);
+    if (focused_) {
+        ctx.StrokeRect(box.Inflate(1.0f), palette.colors[static_cast<int>(Token::Accent)], 1.0f, 4.0f);
+    }
+}
+
+Widget* RepeatButton::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void RepeatButton::OnPointerDown(const Point&) {
+    pressed_ = true;
+    // Fires on press, not release: a repeat button is for stepping a value, and waiting
+    // for release makes holding pointless.
+    Invoke();
+    Invalidate(AffectsRender);
+}
+
+void RepeatButton::OnPointerUp(const Point&) {
+    pressed_ = false;
+    Invalidate(AffectsRender);
+}
+
+void RepeatButton::Invoke() {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    ICommand* cmd = static_cast<ICommand*>(Get<RefPtr>(SlotOf("Command")).get());
+    if (cmd != nullptr && cmd->CanExecute()) cmd->Execute();
+}
+
+
+// ---------------------------------------------------------------------------
+// PasswordBox
+// ---------------------------------------------------------------------------
+std::wstring PasswordBox::Mask(size_t count) {
+    // U+2022 BULLET: present in every UI font, and unlike '*' it sits centred on the line
+    // instead of raised, so a masked field does not look like it has a different baseline.
+    return std::wstring(count, L'\u2022');
+}
+
+std::wstring PasswordBox::DisplayText() const {
+    return Mask(Get<std::wstring>(SlotOf("Text")).size());
+}
+
+void PasswordBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    // Everything except the character source is TextBox's: the frame, padding, focus
+    // ring, clipping and caret all stay identical by construction. Only DisplayText
+    // differs, which is why masking is one override rather than a parallel control.
+    TextBox::OnPaint(ctx, palette);
+}
+
+// ---------------------------------------------------------------------------
+// NumberBox
+// ---------------------------------------------------------------------------
+bool NumberBox::ParseNumber(const std::wstring& text, double& out) {
+    if (text.empty()) return false;
+    wchar_t* end = nullptr;
+    const double value = std::wcstod(text.c_str(), &end);
+    // The WHOLE string must be consumed: wcstod happily parses "12abc" as 12, which
+    // would silently accept a typo as a valid number.
+    if (end == nullptr || *end != L'\0') return false;
+    out = value;
+    return true;
+}
+
+void NumberBox::Revalidate() {
+    double parsed = 0;
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    const bool ok = ParseNumber(text, parsed);
+    const int slotValid = SlotOf("IsValid");
+    if (slotValid >= 0) {
+        // Range is checked too, but an out-of-range number is still a NUMBER: the value
+        // is published either way so a ViewModel can clamp it, while IsValid reports that
+        // it needs attention.
+        const bool inRange = ok && parsed >= Get<float>(SlotOf("Minimum")) &&
+                             parsed <= Get<float>(SlotOf("Maximum"));
+        if (Get<bool>(slotValid) != inRange) SetSlotValue(slotValid, Value::Bool(inRange));
+    }
+    const int slotValue = SlotOf("Value");
+    if (slotValue >= 0 && ok) SetSlotValue(slotValue, Value::Number(parsed));
+    Invalidate(AffectsRender);
+}
+
+void NumberBox::OnSlotChanged(int slot, const Value& value) {
+    TextBox::OnSlotChanged(slot, value);
+    // Recompute whenever Text changes, including when a BINDING pushes a value in. Not
+    // only on keystrokes: a ViewModel setting Text="abc" must also mark it invalid.
+    if (slot == SlotOf("Text")) Revalidate();
+}
+
+Size NumberBox::Measure(const Size& available) {
+    // Same frame as a text box; the narrow default comes from MaxWidth in the type table
+    // rather than from a special case here.
+    return TextBox::Measure(available);
+}
+
+void NumberBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    TextBox::OnPaint(ctx, palette);
+    // An invalid entry gets an accent border, because IsValid alone is invisible: the
+    // whole point of reporting validity is that the user can see it.
+    if (Get<bool>(SlotOf("IsValid"))) return;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t, bounds_.w - margin.H(),
+                   bounds_.h - margin.V()};
+    if (box.w <= 0 || box.h <= 0) return;
+    ctx.StrokeRect(box, palette.colors[static_cast<int>(Token::Accent)], 1.5f, 4.0f);
+}
+
+// ---------------------------------------------------------------------------
+// RadioButton
+// ---------------------------------------------------------------------------
+Size RadioButton::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const std::wstring text = Get<std::wstring>(SlotOf("Content"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    float textW = static_cast<float>(text.size()) * fontSize * 0.55f;
+    float lineH = fontSize * 1.33f;
+    if (ITextService* svc = TextSystem::Get()) {
+        const Size m = svc->Measure(text, fontSize, WeightNormal);
+        textW = m.w;
+        lineH = std::max(lineH, m.h);
+    }
+    desired_ = Size{24.0f + textW + margin.H(), std::max(lineH, 20.0f) + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void RadioButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool checked = Get<bool>(SlotOf("IsChecked"));
+    const float size = 16.0f;
+    const Rect ring{box.x + 2.0f, box.y + (box.h - size) * 0.5f, size, size};
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+
+    // A ring plus a filled centre dot: the checked state has to be distinguishable from
+    // a checkbox's tick at a glance, which a rounded square would not be.
+    ctx.FillEllipse(ring, palette.colors[static_cast<int>(Token::ControlFill)]);
+    ctx.StrokeRect(ring, palette.colors[static_cast<int>(checked ? Token::Accent : Token::TextSecondary)],
+                   checked ? 2.0f : 1.0f, size * 0.5f);
+    if (checked) {
+        const float dot = size - 8.0f;
+        ctx.FillEllipse(Rect{ring.x + 4.0f, ring.y + 4.0f, dot, dot}, accent);
+    }
+
+    const Color fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")),
+                 Rect{ring.Right() + 8.0f, box.y, box.Right() - ring.Right() - 8.0f, box.h}, fg,
+                 Get<float>(SlotOf("FontSize")), WeightNormal, TextAlign::Left);
+    if (focused_) {
+        ctx.StrokeRect(box.Inflate(1.0f), accent, 1.0f, 4.0f);
+    }
+}
+
+Widget* RadioButton::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void RadioButton::OnPointerUp(const Point& local) {
+    if (bounds_.Contains(local)) Toggle();
+}
+
+bool RadioButton::OnKeyDown(int vk) {
+    if (vk == KeySpace) {
+        Toggle();
+        return true;
+    }
+    return false;
+}
+
+void RadioButton::Toggle() {
+    // Clicking an already-checked radio does NOT uncheck it: a radio group always has a
+    // selection, which is the whole difference from a checkbox.
+    Select();
+}
+
+void RadioButton::Select() {
+    const int slot = SlotOf("IsChecked");
+    if (slot < 0) return;
+    SetSlotValue(slot, Value::Bool(true), true);
+
+    // Clear the rest of the group. Walking the whole tree rather than the parent is
+    // deliberate: radios in one group are routinely spread across panels.
+    const std::wstring group = Get<std::wstring>(SlotOf("GroupName"));
+    Widget* root = Root();
+    if (root == nullptr) return;
+    std::vector<RadioButton*> peers;
+    std::function<void(Widget*)> collect = [&](Widget* w) {
+        if (w == nullptr) return;
+        if (auto* radio = dynamic_cast<RadioButton*>(w)) {
+            if (radio != this && radio->Get<std::wstring>(radio->SlotOf("GroupName")) == group) {
+                peers.push_back(radio);
+            }
+        }
+        for (auto& c : w->Children()) collect(c.get());
+    };
+    collect(root);
+    for (RadioButton* peer : peers) {
+        const int peerSlot = peer->SlotOf("IsChecked");
+        if (peerSlot >= 0 && peer->Get<bool>(peerSlot)) {
+            peer->SetSlotValue(peerSlot, Value::Bool(false), true);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RelativePanel
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kRelativePad = 12.0f;
+} // namespace
+
+size_t RelativePanel::IndexOfName(const std::string& name) const {
+    if (name.empty()) return static_cast<size_t>(-1);
+    for (size_t i = 0; i < children_.size(); ++i) {
+        if (children_[i] && children_[i]->Name() == name) return i;
+    }
+    return static_cast<size_t>(-1);
+}
+
+Size RelativePanel::MeasureChild(size_t index, const Size& available) {
+    if (index >= children_.size() || !children_[index]) return Size{0, 0};
+    return children_[index]->Measure(available);
+}
+
+Size RelativePanel::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float innerW = std::max(0.0f, available.w - margin.H() - pad.H());
+    measured_.assign(children_.size(), Size{0, 0});
+    placed_.assign(children_.size(), Rect{});
+    done_.assign(children_.size(), false);
+
+    // Measure every child with the available space, then place them to find the extent.
+    // Placement is needed during Measure because a panel's desired size depends on where
+    // its children landed -- RelativePanel is unique in that respect.
+    for (size_t i = 0; i < children_.size(); ++i) {
+        measured_[i] = MeasureChild(i, Size{innerW, available.h});
+    }
+    std::fill(done_.begin(), done_.end(), false);
+    float maxX = 0.0f;
+    float maxY = 0.0f;
+    for (size_t i = 0; i < children_.size(); ++i) {
+        const Rect r = PlaceChild(i, 0);
+        placed_[i] = r;
+        maxX = std::max(maxX, r.Right());
+        maxY = std::max(maxY, r.Bottom());
+    }
+    desired_ = Size{maxX + pad.H() + margin.H(), maxY + pad.V() + margin.V()};
+    // Fill the width it is given: a panel anchored inside a card should span the card.
+    if (available.w > 0 && available.w < 1.0e6f) desired_.w = available.w;
+    ApplySizeConstraints();
+    return desired_;
+}
+
+Rect RelativePanel::PlaceChild(size_t index, int depth) {
+    if (index >= children_.size() || !children_[index]) return Rect{};
+    if (done_[index]) return placed_[index];
+    // A cycle (A right-of B, B right-of A) would recurse forever. Past a small depth the
+    // child is placed at the origin and left there: a wrong position is a bug the author
+    // can see, an infinite loop is one they cannot diagnose.
+    if (depth > 8) {
+        done_[index] = true;
+        placed_[index] = Rect{0, 0, measured_[index].w, measured_[index].h};
+        return placed_[index];
+    }
+    Widget* self = children_[index].get();
+    const Size size = measured_[index];
+    float x = 0.0f;
+    float y = 0.0f;
+    auto slot = [&](const char* name) { return self->SlotOf(name); };
+
+    // LeftOf / RightOf establish x; Above / Below establish y. Align* overrides the other
+    // axis. An unknown anchor name is ignored rather than fatal: the panel keeps a usable
+    // position and the validator has already reported the typo.
+    const std::wstring rightOfW = self->Get<std::wstring>(slot("RelativePanel.RightOf"));
+    const std::string rightOf(rightOfW.begin(), rightOfW.end());
+    const std::wstring leftOfW = self->Get<std::wstring>(slot("RelativePanel.LeftOf"));
+    const std::string leftOf(leftOfW.begin(), leftOfW.end());
+    const std::wstring belowW = self->Get<std::wstring>(slot("RelativePanel.Below"));
+    const std::string below(belowW.begin(), belowW.end());
+    const std::wstring aboveW = self->Get<std::wstring>(slot("RelativePanel.Above"));
+    const std::string above(aboveW.begin(), aboveW.end());
+
+    if (size_t other = IndexOfName(rightOf); other != static_cast<size_t>(-1)) {
+        const Rect r = PlaceChild(other, depth + 1);
+        done_[other] = true;
+        x = r.Right() + kRelativePad;
+        y = r.y;
+    } else if (size_t other = IndexOfName(leftOf); other != static_cast<size_t>(-1)) {
+        const Rect r = PlaceChild(other, depth + 1);
+        done_[other] = true;
+        x = r.x - size.w - kRelativePad;
+        y = r.y;
+    }
+    if (size_t other = IndexOfName(below); other != static_cast<size_t>(-1)) {
+        const Rect r = PlaceChild(other, depth + 1);
+        done_[other] = true;
+        y = r.Bottom() + kRelativePad;
+        if (rightOf.empty() && leftOf.empty()) x = r.x;
+    } else if (size_t other = IndexOfName(above); other != static_cast<size_t>(-1)) {
+        const Rect r = PlaceChild(other, depth + 1);
+        done_[other] = true;
+        y = r.y - size.h - kRelativePad;
+        if (rightOf.empty() && leftOf.empty()) x = r.x;
+    }
+
+    if (self->Get<bool>(slot("RelativePanel.AlignRightWithPanel"))) {
+        x = std::max(0.0f, bounds_.w - size.w);
+    } else if (self->Get<bool>(slot("RelativePanel.AlignHorizontalCenterWithPanel"))) {
+        x = std::max(0.0f, (bounds_.w - size.w) * 0.5f);
+    }
+    if (self->Get<bool>(slot("RelativePanel.AlignBottomWithPanel"))) {
+        y = std::max(0.0f, bounds_.h - size.h);
+    } else if (self->Get<bool>(slot("RelativePanel.AlignVerticalCenterWithPanel"))) {
+        y = std::max(0.0f, (bounds_.h - size.h) * 0.5f);
+    }
+
+    placed_[index] = Rect{x, y, size.w, size.h};
+    done_[index] = true;
+    return placed_[index];
+}
+
+void RelativePanel::Arrange(const Rect& finalRect) {
+    bounds_ = finalRect;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const Rect content{finalRect.x + margin.l + pad.l, finalRect.y + margin.t + pad.t,
+                       std::max(0.0f, finalRect.w - margin.H() - pad.H()),
+                       std::max(0.0f, finalRect.h - margin.V() - pad.V())};
+    // Re-place against the FINAL size: the panel fills its width, so AlignRight anchors
+    // computed during Measure (at a possibly smaller width) would otherwise sit in the
+    // wrong place.
+    bounds_ = content;
+    std::fill(done_.begin(), done_.end(), false);
+    for (size_t i = 0; i < children_.size(); ++i) {
+        const Rect r = PlaceChild(i, 0);
+        if (!children_[i]) continue;
+        children_[i]->Arrange(Rect{content.x + r.x, content.y + r.y, r.w, r.h});
+    }
+}
+
+void RelativePanel::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    (void)ctx;
+    (void)palette;
+    // A panel is transparent: drawing a fill here would hide whatever it is placed on.
+}
+
+// ---------------------------------------------------------------------------
+// Image
+// ---------------------------------------------------------------------------
+namespace {
+// The placeholder is a light grey box with a diagonal: recognisably "no picture" rather
+// than an invisible hole, and it needs no asset.
+constexpr float kImagePlaceholder = 48.0f;
+} // namespace
+
+void Image::EnsureDecoded() {
+    const std::wstring source = Get<std::wstring>(SlotOf("Source"));
+    if (source == decodedSource_ && bitmap_) return;
+    decodedSource_ = source;
+    bitmap_.reset();
+    if (source.empty()) return;
+    IImageService* service = ImageService();
+    if (service == nullptr) return;
+    // Source is a UTF-8 string on the wire; narrow it once here rather than in the
+    // service, which deals only in paths-and-bytes.
+    std::string narrow(source.begin(), source.end());
+    bitmap_ = service->Load(narrow);
+}
+
+void Image::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    if (slot == SlotOf("Source")) {
+        // Drop the cache so the next paint re-decodes. Doing it here rather than in paint
+        // means a ViewModel that swaps the Source gets a fresh picture on the next frame.
+        decodedSource_.clear();
+        bitmap_.reset();
+    }
+}
+
+Size Image::Measure(const Size& available) {
+    (void)available;
+    EnsureDecoded();
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float w = Get<float>(SlotOf("Width"));
+    const float h = Get<float>(SlotOf("Height"));
+    // An explicit Width/Height wins (ApplySizeConstraints also honours it, but the natural
+    // size has to be right first, or a missing image would report the placeholder size).
+    float naturalW = kImagePlaceholder;
+    float naturalH = kImagePlaceholder;
+    if (bitmap_ && bitmap_->Valid()) {
+        naturalW = static_cast<float>(bitmap_->width);
+        naturalH = static_cast<float>(bitmap_->height);
+        // Stretch fills its box; the default keeps the aspect ratio, because a squashed
+        // photo is the most visible layout bug a picture can have.
+        if (Get<int>(SlotOf("Stretch")) == 0 && w > 0) {
+            naturalH = w * naturalH / naturalW;
+            naturalW = w;
+        } else if (Get<int>(SlotOf("Stretch")) == 0 && h > 0) {
+            naturalW = h * naturalW / naturalH;
+            naturalH = h;
+        }
+    }
+    desired_ = Size{(w > 0 ? w : naturalW) + margin.H(), (h > 0 ? h : naturalH) + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void Image::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    EnsureDecoded();
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    if (bitmap_ && bitmap_->Valid()) {
+        ctx.DrawBitmap(bitmap_.get(), box);
+        return;
+    }
+    // Placeholder: a muted fill with a diagonal, so an unloaded image is visible while
+    // being obviously not the picture.
+    const Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
+    ctx.FillRoundRect(box, 4.0f, fill);
+    ctx.StrokeRect(box, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f, 4.0f);
+    ctx.DrawLine(Point{box.x + 4.0f, box.Bottom() - 4.0f},
+                 Point{box.Right() - 4.0f, box.y + 4.0f},
+                 palette.colors[static_cast<int>(Token::TextDisabled)], 1.0f);
+}
+
+// ---------------------------------------------------------------------------
+// PersonPicture
+// ---------------------------------------------------------------------------
+std::wstring PersonPicture::Initials(const std::wstring& displayName) {
+    std::wstring out;
+    size_t i = 0;
+    while (i < displayName.size() && out.size() < 2) {
+        while (i < displayName.size() && displayName[i] == L' ') ++i;
+        if (i >= displayName.size()) break;
+        wchar_t ch = displayName[i];
+        // Upper-case via towupper so a non-ASCII name gets a sensible glyph instead of a
+        // raw byte.
+        out.push_back(static_cast<wchar_t>(std::towupper(ch)));
+        while (i < displayName.size() && displayName[i] != L' ') ++i;
+    }
+    if (out.empty()) out = L"?";
+    return out;
+}
+
+void PersonPicture::EnsureDecoded() {
+    const std::wstring source = Get<std::wstring>(SlotOf("Source"));
+    if (source == decodedSource_ && bitmap_) return;
+    decodedSource_ = source;
+    bitmap_.reset();
+    if (source.empty()) return;
+    IImageService* service = ImageService();
+    if (service == nullptr) return;
+    std::string narrow(source.begin(), source.end());
+    bitmap_ = service->Load(narrow);
+}
+
+void PersonPicture::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    if (slot == SlotOf("Source")) {
+        decodedSource_.clear();
+        bitmap_.reset();
+    }
+}
+
+Size PersonPicture::Measure(const Size& available) {
+    (void)available;
+    EnsureDecoded();
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float d = Get<float>(SlotOf("Diameter"));
+    const float side = d > 0 ? d : 40.0f;
+    desired_ = Size{side + margin.H(), side + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void PersonPicture::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    EnsureDecoded();
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float d = std::min(std::max(0.0f, bounds_.w - margin.H()),
+                             std::max(0.0f, bounds_.h - margin.V()));
+    if (d <= 0) return;
+    const Rect circle{bounds_.x + margin.l, bounds_.y + margin.t, d, d};
+    if (bitmap_ && bitmap_->Valid()) {
+        // The circle IS the control: passing the crop rect tells the backend to mask the
+        // bitmap to an ellipse rather than clip to a square.
+        ctx.DrawBitmap(bitmap_.get(), circle, &circle);
+        return;
+    }
+    ctx.FillEllipse(circle, palette.colors[static_cast<int>(Token::Accent)]);
+    const std::wstring initials = Initials(Get<std::wstring>(SlotOf("DisplayName")));
+    ctx.DrawText(initials, circle, palette.colors[static_cast<int>(Token::TextOnAccent)],
+                 d * 0.4f, WeightSemiBold, TextAlign::Center);
+}
+
 } // namespace wui

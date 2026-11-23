@@ -59,6 +59,16 @@ static void AddLayoutProps(TypeInfo& t) {
     // only when there is something to show" applies to any control.
     t.EnumProp("Visibility", {"Visible", "Collapsed"}, 0, AffectsMeasure);
 
+    // Alignment inside the slot the parent gives this element. Stretch is the default
+    // because it is what a StackPanel already does, so adding these changed no existing
+    // layout -- Left/Center/Right are the opt-in.
+    //
+    // Both axes exist as enums rather than booleans: "centre" is not expressible as
+    // "not left and not right", and a panel that honours one but not the other is a
+    // defect the author cannot work around.
+    t.EnumProp("HorizontalAlignment", {"Stretch", "Left", "Center", "Right"}, 0, 0);
+    t.EnumProp("VerticalAlignment", {"Stretch", "Top", "Center", "Bottom"}, 0, 0);
+
     // Panel-placement properties. These are written on the CHILD
     // (Grid.Row="1"), so they must exist on every widget that can be a child,
     // not on the panel itself -- the validator checks the child's property
@@ -72,6 +82,31 @@ static void AddLayoutProps(TypeInfo& t) {
     t.Prop("Canvas.Top", VType::Number, Value::Number(0), AffectsMeasure);
     t.Prop("VariableSizedWrapGrid.ColumnSpan", VType::Number, Value::Number(1), AffectsMeasure);
     t.Prop("VariableSizedWrapGrid.RowSpan", VType::Number, Value::Number(1), AffectsMeasure);
+    // RelativePanel anchors, for the same reason as Grid.Row: they are written on the
+    // CHILD (RelativePanel.RightOf="other"), so every potential child must declare them.
+    // Putting them on the panel alone made the validator reject the child -- which is what
+    // the first version of this did.
+    t.Prop("RelativePanel.RightOf", VType::Text, Value::Text(L""), AffectsMeasure);
+    t.Prop("RelativePanel.LeftOf", VType::Text, Value::Text(L""), AffectsMeasure);
+    t.Prop("RelativePanel.Below", VType::Text, Value::Text(L""), AffectsMeasure);
+    t.Prop("RelativePanel.Above", VType::Text, Value::Text(L""), AffectsMeasure);
+    t.Prop("RelativePanel.AlignRightWithPanel", VType::Bool, Value::Bool(false), AffectsMeasure);
+    t.Prop("RelativePanel.AlignLeftWithPanel", VType::Bool, Value::Bool(false), AffectsMeasure);
+    t.Prop("RelativePanel.AlignBottomWithPanel", VType::Bool, Value::Bool(false), AffectsMeasure);
+    t.Prop("RelativePanel.AlignTopWithPanel", VType::Bool, Value::Bool(false), AffectsMeasure);
+    t.Prop("RelativePanel.AlignHorizontalCenterWithPanel", VType::Bool, Value::Bool(false),
+           AffectsMeasure);
+    t.Prop("RelativePanel.AlignVerticalCenterWithPanel", VType::Bool, Value::Bool(false),
+           AffectsMeasure);
+
+    // DataContext is not a layout property, but this is the one table every
+    // visual widget is built from, and every visual widget can carry a data
+    // source. The core mirrors writes to this slot onto Widget::dataContext_
+    // (see Widget::SetSlotValue), which is what makes a subtree switch sources:
+    //   <Border DataContext="{Binding SelectedServer}"> ... </Border>
+    // It has no layout/render flag because a context change is not, by itself,
+    // a visual change -- the bindings that read it invalidate what they touch.
+    t.Prop("DataContext", VType::Ref, Value::Null(), 0, BindingMode::OneWay);
 }
 
 void TypeRegistry::RegisterBuiltins() {
@@ -443,6 +478,255 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("IsOpen", VType::Bool, Value::Bool(false), 0, BindingMode::TwoWay);
         t->Prop("Result", VType::Number, Value::Number(ContentDialog::ResultNone), 0,
                 BindingMode::OneWay);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ProgressBar", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<ProgressBar>(); });
+        AddLayoutProps(*t);
+        // Value is a FRACTION (0..1), not a count: a bar has no idea what it measures,
+        // so the caller divides once instead of every control inventing a
+        // Minimum/Maximum/Value triple that nothing else shares.
+        t->Prop("Value", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
+                true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ProgressRing", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<ProgressRing>(); });
+        AddLayoutProps(*t);
+        t->Prop("Value", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("Size", VType::Number, Value::Number(32), AffectsMeasure);
+        t->Prop("Thickness", VType::Number, Value::Number(3), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
+                true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/InfoBar", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<InfoBar>(); });
+        AddLayoutProps(*t);
+        t->Prop("Title", VType::Text, Value::Text(L""), AffectsMeasure);
+        t->Prop("Message", VType::Text, Value::Text(L""), AffectsMeasure);
+        // Informational is the default (index 0) so the least alarming severity is what
+        // an author gets before deciding otherwise.
+        t->EnumProp("Severity", {"Informational", "Success", "Warning", "Error"}, 0, AffectsRender);
+        t->Prop("IsClosable", VType::Bool, Value::Bool(false), AffectsRender);
+        // IsOpen is TwoWay for the same reason ContentDialog's is: the bar reports that
+        // the user dismissed it, and whether it comes back is the ViewModel's decision.
+        t->Prop("IsOpen", VType::Bool, Value::Bool(true), AffectsMeasure | AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/InfoBadge", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<InfoBadge>(); });
+        AddLayoutProps(*t);
+        t->Prop("Text", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(11), AffectsMeasure);
+        t->Prop("Background", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
+                true, true);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextOnAccent}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Line", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<Line>(); });
+        AddLayoutProps(*t);
+        // Endpoints rather than a start point plus a size: a diagonal has no meaningful
+        // width/height pair.
+        t->Prop("StartX", VType::Number, Value::Number(0), AffectsMeasure | AffectsRender);
+        t->Prop("StartY", VType::Number, Value::Number(0), AffectsMeasure | AffectsRender);
+        t->Prop("EndX", VType::Number, Value::Number(100), AffectsMeasure | AffectsRender);
+        t->Prop("EndY", VType::Number, Value::Number(0), AffectsMeasure | AffectsRender);
+        t->Prop("StrokeThickness", VType::Number, Value::Number(1), AffectsMeasure | AffectsRender);
+        t->Prop("Stroke", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::CardBorder}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Shape", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<Shape>(); });
+        AddLayoutProps(*t);
+        // One class with a Kind enum instead of a class per geometry: layout and paint
+        // are identical, and splitting would duplicate five methods to change two lines.
+        t->EnumProp("Kind", {"Rectangle", "Ellipse"}, 0, AffectsRender);
+        t->Prop("ShapeWidth", VType::Number, Value::Number(40), AffectsMeasure);
+        t->Prop("ShapeHeight", VType::Number, Value::Number(40), AffectsMeasure);
+        t->Prop("CornerRadius", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("StrokeThickness", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("Fill", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::ControlFill}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        t->Prop("Stroke", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::CardBorder}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ToggleButton", ContentModel::TextContent,
+                                            []() -> WidgetPtr { return std::make_shared<ToggleButton>(); });
+        t->SetContentProperty("Content");
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L"ToggleButton"), AffectsMeasure);
+        // TwoWay: clicking is the user changing the value, and the ViewModel has to
+        // hear about it.
+        t->Prop("IsChecked", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ToggleSwitch", ContentModel::TextContent,
+                                            []() -> WidgetPtr { return std::make_shared<ToggleSwitch>(); });
+        t->SetContentProperty("Content");
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L""), AffectsMeasure);
+        t->Prop("IsChecked", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/HyperlinkButton", ContentModel::TextContent,
+                                            []() -> WidgetPtr { return std::make_shared<HyperlinkButton>(); });
+        t->SetContentProperty("Content");
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L"Link"), AffectsMeasure);
+        t->Prop("Command", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
+                true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Slider", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<Slider>(); });
+        AddLayoutProps(*t);
+        // A real range, unlike ProgressBar's fraction: a slider's bounds are part of what
+        // it means (volume 0..100). Value is TwoWay -- dragging is the user setting it.
+        t->Prop("Minimum", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("Maximum", VType::Number, Value::Number(100), AffectsRender);
+        t->Prop("Value", VType::Number, Value::Number(0), AffectsRender, BindingMode::TwoWay);
+        // 0 means "no snapping"; a slider bound to a frequency list sets one.
+        t->Prop("StepFrequency", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/RepeatButton", ContentModel::TextContent,
+                                            []() -> WidgetPtr { return std::make_shared<RepeatButton>(); });
+        t->SetContentProperty("Content");
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L"Repeat"), AffectsMeasure);
+        t->Prop("Command", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/PasswordBox", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<PasswordBox>(); });
+        AddLayoutProps(*t);
+        // The real characters live in Text, so a ViewModel still reads what was typed --
+        // the mask is a paint concern only.
+        t->Prop("Text", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("PlaceholderText", VType::Text, Value::Text(L""), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{8, 6, 8, 6}),
+                AffectsMeasure);
+        t->Prop("MinHeight", VType::Number, Value::Number(30), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/NumberBox", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<NumberBox>(); });
+        AddLayoutProps(*t);
+        t->Prop("Text", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("Value", VType::Number, Value::Number(0), AffectsRender, BindingMode::TwoWay);
+        // IsValid is PUBLISHED, not enforced: a user typing "-" or "1e" mid-number must be
+        // allowed to, and the ViewModel decides whether an invalid entry blocks anything.
+        t->Prop("IsValid", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("Minimum", VType::Number, Value::Number(-1.0e18), AffectsRender);
+        t->Prop("Maximum", VType::Number, Value::Number(1.0e18), AffectsRender);
+        t->Prop("PlaceholderText", VType::Text, Value::Text(L""), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{8, 6, 8, 6}),
+                AffectsMeasure);
+        t->Prop("MinHeight", VType::Number, Value::Number(30), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/RadioButton", ContentModel::TextContent,
+                                            []() -> WidgetPtr { return std::make_shared<RadioButton>(); });
+        t->SetContentProperty("Content");
+        AddLayoutProps(*t);
+        t->Prop("Content", VType::Text, Value::Text(L"Option"), AffectsMeasure);
+        // GroupName is a string, not a per-parent scope: radios in one group are routinely
+        // spread across panels, and scoping to the parent would make a re-layout silently
+        // change which radios are exclusive with each other.
+        t->Prop("GroupName", VType::Text, Value::Text(L"default"), 0);
+        t->Prop("IsChecked", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/RelativePanel", ContentModel::ManyChildren,
+                                            []() -> WidgetPtr { return std::make_shared<RelativePanel>(); });
+        AddLayoutProps(*t);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+                // The anchors themselves are declared in AddLayoutProps, because they are written
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Image", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<Image>(); });
+        AddLayoutProps(*t);
+        t->Prop("Source", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender);
+        // 0 = Uniform (keep the aspect ratio), 1 = Fill (stretch). The default keeps the
+        // ratio because a squashed photo is the most visible layout bug a picture can have.
+        t->EnumProp("Stretch", {"Uniform", "Fill", "None"}, 0, AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/PersonPicture", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<PersonPicture>(); });
+        AddLayoutProps(*t);
+        t->Prop("Source", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender);
+        t->Prop("DisplayName", VType::Text, Value::Text(L""), AffectsRender);
+        // One Diameter rather than Width/Height: a person picture that is not round looks
+        // like a bug, so the control does not offer the choice.
+        t->Prop("Diameter", VType::Number, Value::Number(40), AffectsMeasure);
         add(t);
     }
 }

@@ -73,6 +73,273 @@ private:
     void Toggle();
 };
 
+// ---------------------------------------------------------------------------
+// Status controls: ProgressBar, ProgressRing, InfoBar, InfoBadge
+// ---------------------------------------------------------------------------
+
+// A determinate or indeterminate horizontal bar.
+//
+// `Value` is a 0..1 FRACTION, not a raw count, because a bar has no idea what it is
+// measuring. Callers do the division once instead of every control inventing its own
+// Minimum/Maximum/Value triple; those belong to a future Slider-like numeric base.
+class ProgressBar : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+};
+
+// An arc that fills clockwise from 12 o'clock. Drawn from short segments so no
+// backend needs a path language (see PaintCtx::DrawLine).
+class ProgressRing : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+};
+
+// An inline message strip: a coloured left edge, a title, an optional message.
+//
+// Severity is an enum rather than four booleans because a bar is one of four things,
+// never two. Ordering is deliberately Informational first so the default value 0 is
+// the least alarming one.
+class InfoBar : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    // Not focusable, but clickable: clicking the close affordance is the only
+    // interaction, and it reports through IsOpen so a ViewModel stays in charge.
+    void OnPointerUp(const Point& local) override;
+
+private:
+    Rect CloseBounds() const;
+};
+
+// A small count bubble. Sized for up to two digits and then grows, so "9" and "99"
+// do not jump to wildly different widths.
+class InfoBadge : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+};
+
+// ---------------------------------------------------------------------------
+// Shapes: Line, Shape
+// ---------------------------------------------------------------------------
+
+// A straight segment defined by its endpoints in the parent's coordinate space.
+//
+// Line takes StartX/StartY/EndX/EndY rather than a start point plus a size, because a
+// diagonal has no meaningful width/height pair. Its desired size is the bounding box,
+// so it participates in layout like any other element.
+class Line : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+};
+
+// A filled or outlined rectangle/ellipse primitive.
+//
+// A single Shape with a Kind enum rather than one class per geometry: the layout and
+// paint paths are identical, and Splitting them would duplicate five methods to change
+// two lines. Rectangles and ellipses cover what an SVG-free interface needs.
+class Shape : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+};
+
+// ---------------------------------------------------------------------------
+// Toggles: ToggleButton, ToggleSwitch, HyperlinkButton
+// ---------------------------------------------------------------------------
+
+// A button that stays down. IsChecked is TwoWay for the same reason CheckBox's is:
+// clicking it is the user changing the value, and the ViewModel has to hear about it.
+class ToggleButton : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+private:
+    void Toggle();
+};
+
+// An on/off switch with a sliding knob.
+//
+// A separate control from ToggleButton rather than a style of it: the switch is
+// mostly a knob whose position carries the state, and sharing one paint path would
+// mean branching on which shape to draw in every branch of the code.
+class ToggleSwitch : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+private:
+    void Toggle();
+};
+
+// Text that behaves like a link: accent colour, underline on hover, and it forwards
+// clicks to a command. No navigation of its own -- the ViewModel decides where to go.
+class HyperlinkButton : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    void OnPointerEnter() override;
+    void OnPointerLeave() override;
+    bool Focusable() const override { return true; }
+
+private:
+    void Invoke();
+};
+
+// A horizontal slider.
+//
+// Value is a real number in [Minimum, Maximum] -- unlike ProgressBar's fraction,
+// because a slider's range is part of what it means (volume 0..100). Clicking anywhere
+// on the track jumps there, which is what users expect and what dragging needs anyway.
+class Slider : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerMove(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+private:
+    // Fraction of the track this value sits at, 0..1.
+    float Fraction() const;
+    void SetFromX(float x);
+    void Step(int direction);
+    Rect Track() const;
+    bool dragging_ = false;
+};
+
+// A button that fires repeatedly while held.
+//
+// The host has no timer, so "while held" is expressed as repeated OnPointerMove
+// notifications plus a press count that the control exposes: a click gives one, holding
+// gives more as the pointer jitters. It is deliberately honest about being
+// click-count based rather than time based -- a real repeat needs a frame clock, which
+// is the animation iteration's job (see CODE_PLAN §10b.2).
+class RepeatButton : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool Focusable() const override { return true; }
+
+private:
+    void Invoke();
+};
+
+// A radio button: mutually exclusive within its group.
+//
+// Group membership is by GroupName across the WHOLE tree, not by parent, because a
+// group of radios is routinely split across several panels ("all three in a row,
+// wrapped onto the next line"). Scoping to the direct parent would make re-laying-out a
+// form silently change which radios are exclusive with each other.
+class RadioButton : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+    // Unchecks every other radio in the same group. Public so a ViewModel-driven
+    // IsChecked=True can also settle the group without a click.
+    void Select();
+
+private:
+    void Toggle();
+};
+
+// A layout panel that positions children by their relationship to each other or to the
+// panel itself.
+//
+// This is the only panel whose placement data lives on the CHILD (RelativePanel.RightOf
+// ="other"), so it needs two things nothing else did: attached-property names the
+// validator accepts on any widget, and a way to resolve an x:Name to a sibling widget at
+// layout time. Both are implemented here rather than in the parser so the cost is paid
+// only by the panel that needs it.
+class RelativePanel : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void Arrange(const Rect& finalRect) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+
+private:
+    // Positions one child, following its RightOf/LeftOf/Above/Below/AlignX anchors.
+    // Recursive in effect (a child may be anchored to another anchored child) but
+    // guarded by a visited set, because two children anchored to each other is a
+    // mistake that must not recurse forever.
+    Rect PlaceChild(size_t index, int depth);
+    Size MeasureChild(size_t index, const Size& available);
+    // Resolves "other" to an index in children_, or npos when it names nothing.
+    size_t IndexOfName(const std::string& name) const;
+    std::vector<Size> measured_;
+    std::vector<Rect> placed_;
+    std::vector<bool> done_;
+};
+
+// A picture.
+//
+// The source is decoded through IImageService, which is injectable: the headless harness
+// installs a fake so layout and paint can be tested with no COM and no files. When the
+// service is absent or returns nothing, the control paints a placeholder at its declared
+// size -- a missing image is a blank area, never a crash or a zero-sized hole.
+class Image : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    // Re-decodes after Source changes. Also the entry point a test uses to install a
+    // bitmap without a service.
+    void OnSlotChanged(int slot, const Value& value) override;
+
+private:
+    void EnsureDecoded();
+    std::shared_ptr<const Bitmap> bitmap_;
+    std::wstring decodedSource_;
+};
+
+// A circular avatar with initials or a picture.
+//
+// Sized from a single Diameter rather than Width/Height: a person picture that is not
+// round looks like a bug, so the control does not offer the choice. Initials are derived
+// from DisplayName when there is no image, which is what makes an empty avatar still
+// readable.
+class PersonPicture : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    void OnSlotChanged(int slot, const Value& value) override;
+
+    // First letter of the first two words, upper-cased. Public so it can be tested.
+    static std::wstring Initials(const std::wstring& displayName);
+
+private:
+    void EnsureDecoded();
+    std::shared_ptr<const Bitmap> bitmap_;
+    std::wstring decodedSource_;
+};
+
 class TextBox : public Widget {
 public:
     Size Measure(const Size& available) override;
@@ -86,6 +353,13 @@ public:
     // Test hook: caret position for assertions.
     size_t CaretIndex() const { return caret_; }
 
+protected:
+    // The text as it should be DISPLAYED. TextBox returns Text unchanged; PasswordBox
+    // overrides it. Splitting display from value here is what lets the mask stay a
+    // paint concern while the editing core keeps working on real characters -- if the
+    // mask were stored in the slot, editing would fight it on every keystroke.
+    virtual std::wstring DisplayText() const;
+
 private:
     void CommitText();
     // Splits the current text into display lines. A single-line box keeps one
@@ -96,6 +370,45 @@ private:
     size_t caret_ = 0;
     bool caretVisible_ = true;
     std::wstring editing_;
+};
+
+// A text field that renders bullets instead of characters.
+//
+// Subclasses TextBox rather than wrapping it: masking is exactly one paint-time
+// substitution, and the editing behaviour (caret, insert, backspace, arrows) must stay
+// identical -- a password field that handled keys differently from a text box would be a
+// defect, not a feature. The real value stays in Text, so a ViewModel still reads what
+// the user typed.
+class PasswordBox : public TextBox {
+public:
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    // What the box displays. Public so tests can assert on the mask without reading
+    // pixels.
+    static std::wstring Mask(size_t count);
+
+protected:
+    // The whole point of this class: the paint path asks for the display string and gets
+    // bullets, while `Text` keeps the real characters for the ViewModel.
+    std::wstring DisplayText() const override;
+};
+
+// A text field that only accepts numbers and reports whether what is typed is one.
+//
+// Validation is a PROPERTY (`IsValid`) rather than an exception or a refused keystroke:
+// a user typing "-" or "1e" mid-way through a number must be allowed to type it. The
+// control reports; the ViewModel decides whether that blocks a Save.
+class NumberBox : public TextBox {
+public:
+    void OnSlotChanged(int slot, const Value& value) override;
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+
+    // Parses Text into Value; returns false when it is not a number. Public because the
+    // rule has to be testable without a window.
+    static bool ParseNumber(const std::wstring& text, double& out);
+
+private:
+    void Revalidate();
 };
 
 // A single-child viewport that scrolls its content vertically.

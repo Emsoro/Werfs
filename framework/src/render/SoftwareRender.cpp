@@ -57,6 +57,17 @@ void RecordingPaintContext::StrokeRect(const Rect& r, const Color& c, float widt
     ++ops_;
 }
 
+void RecordingPaintContext::FillEllipse(const Rect& r, const Color& c) {
+    text_ += "ellipse " + RectText(r) + " " + ColorText(c) + "\n";
+    ++ops_;
+}
+
+void RecordingPaintContext::DrawLine(const Point& a, const Point& b, const Color& c, float width) {
+    text_ += "line (" + Num(a.x) + "," + Num(a.y) + ")-(" + Num(b.x) + "," + Num(b.y) +
+             ") w=" + Num(width) + " " + ColorText(c) + "\n";
+    ++ops_;
+}
+
 void RecordingPaintContext::DrawText(const std::wstring& text, const Rect& r, const Color& c,
                                      float fontSize, int weight, TextAlign align) {
     text_ += "text \"" + WideToUtf8(text) + "\" " + RectText(r) + " size=" + Num(fontSize) +
@@ -145,6 +156,61 @@ void RasterPaintContext::StrokeRect(const Rect& r, const Color& c, float width, 
     target_.FillRectF(Rect{r.x + r.w - w, r.y, w, r.h}, c);
 }
 
+void RasterPaintContext::FillEllipse(const Rect& r, const Color& c) {
+    // Scanline fill with a squared distance test. Deterministic and cheap: every
+    // pixel is decided by integer offsets from the centre, so two runs agree exactly.
+    const float cx = r.x + r.w * 0.5f;
+    const float cy = r.y + r.h * 0.5f;
+    const float rx = r.w * 0.5f;
+    const float ry = r.h * 0.5f;
+    if (rx <= 0.0f || ry <= 0.0f) return;
+    const int y0 = static_cast<int>(std::floor(cy - ry));
+    const int y1 = static_cast<int>(std::ceil(cy + ry));
+    const int x0 = static_cast<int>(std::floor(cx - rx));
+    const int x1 = static_cast<int>(std::ceil(cx + rx));
+    for (int y = y0; y <= y1; ++y) {
+        const float ny = (static_cast<float>(y) + 0.5f - cy) / ry;
+        const float ny2 = ny * ny;
+        if (ny2 > 1.0f) continue;
+        // Half-chord length at this scanline.
+        const float span = rx * std::sqrt(1.0f - ny2);
+        const int sx = static_cast<int>(std::ceil(cx - span));
+        const int ex = static_cast<int>(std::floor(cx + span));
+        if (ex < sx) continue;
+        target_.FillRectF(Rect{static_cast<float>(sx), static_cast<float>(y),
+                               static_cast<float>(ex - sx + 1), 1.0f},
+                          c);
+    }
+    (void)x0;
+    (void)x1;
+}
+
+void RasterPaintContext::DrawLine(const Point& a, const Point& b, const Color& c, float width) {
+    // Bresenham-ish with a square brush: enough to make a diagonal visibly a line
+    // in the determinism snapshots. Not anti-aliased on purpose -- this raster is a
+    // CI gate, not the production renderer, and a stepped line is deterministic
+    // where coverage blending invites float-order differences.
+    const float w = std::max(1.0f, width);
+    float x0 = a.x;
+    float y0 = a.y;
+    const float x1 = b.x;
+    const float y1 = b.y;
+    const float dx = std::abs(x1 - x0);
+    const float dy = std::abs(y1 - y0);
+    const int steps = static_cast<int>(std::max(dx, dy));
+    if (steps <= 0) {
+        target_.FillRectF(Rect{x0, y0, w, w}, c);
+        return;
+    }
+    const float sx = (x1 - x0) / static_cast<float>(steps);
+    const float sy = (y1 - y0) / static_cast<float>(steps);
+    for (int i = 0; i <= steps; ++i) {
+        target_.FillRectF(Rect{x0, y0, w, w}, c);
+        x0 += sx;
+        y0 += sy;
+    }
+}
+
 void RasterPaintContext::DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
                                   int, TextAlign align) {
     // A glyph-block placeholder: proportional to the deterministic fake metrics.
@@ -176,6 +242,53 @@ Size FakeTextService::Measure(const std::wstring& text, float fontSize, int weig
     for (wchar_t c : text) units += (c >= 0x2E80) ? 2.0f : 1.0f;
     const float weightScale = 1.0f + 0.02f * static_cast<float>(weight);
     return Size{units * fontSize * 0.55f * weightScale, fontSize * 1.33f};
+}
+
+void RecordingPaintContext::DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) {
+    text_ += "bitmap " + RectText(dest) + " " +
+             (bitmap ? std::to_string(bitmap->width) + "x" + std::to_string(bitmap->height) : "none") +
+             (clip ? (" clip " + RectText(*clip)) : std::string()) + "\n";
+    ++ops_;
+}
+
+void RasterPaintContext::DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) {
+    if (bitmap == nullptr || !bitmap->Valid()) return;
+    // Nearest-neighbour scaling, clipped to the destination and (when asked) to an
+    // ellipse. Deterministic by construction: each destination pixel maps to exactly one
+    // source pixel through integer arithmetic, so the snapshot hash cannot drift.
+    const int x0 = std::max(static_cast<int>(std::floor(dest.x)), 0);
+    const int y0 = std::max(static_cast<int>(std::floor(dest.y)), 0);
+    const int x1 = std::min(static_cast<int>(std::ceil(dest.x + dest.w)), target_.Width());
+    const int y1 = std::min(static_cast<int>(std::ceil(dest.y + dest.h)), target_.Height());
+    if (dest.w <= 0 || dest.h <= 0) return;
+    const float cx = dest.x + dest.w * 0.5f;
+    const float cy = dest.y + dest.h * 0.5f;
+    const float rx = dest.w * 0.5f;
+    const float ry = dest.h * 0.5f;
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            if (clip != nullptr) {
+                // Inside the inscribed ellipse only, for the circular avatar crop.
+                const float nx = (static_cast<float>(x) + 0.5f - cx) / rx;
+                const float ny = (static_cast<float>(y) + 0.5f - cy) / ry;
+                if (nx * nx + ny * ny > 1.0f) continue;
+            }
+            const float u = (static_cast<float>(x) + 0.5f - dest.x) / dest.w;
+            const float v = (static_cast<float>(y) + 0.5f - dest.y) / dest.h;
+            const int sx = std::clamp(static_cast<int>(u * static_cast<float>(bitmap->width)), 0,
+                                      bitmap->width - 1);
+            const int sy = std::clamp(static_cast<int>(v * static_cast<float>(bitmap->height)), 0,
+                                      bitmap->height - 1);
+            const uint32_t p = bitmap->pixels[static_cast<size_t>(sy) * bitmap->width +
+                                              static_cast<size_t>(sx)];
+            const float a = static_cast<float>((p >> 24) & 0xFF) / 255.0f;
+            if (a <= 0.0f) continue;
+            const Color c{static_cast<float>((p >> 16) & 0xFF) / 255.0f,
+                          static_cast<float>((p >> 8) & 0xFF) / 255.0f,
+                          static_cast<float>(p & 0xFF) / 255.0f, a, Token::None};
+            target_.FillRectF(Rect{static_cast<float>(x), static_cast<float>(y), 1.0f, 1.0f}, c);
+        }
+    }
 }
 
 } // namespace wui

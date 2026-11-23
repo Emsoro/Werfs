@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT
+// Resource script for the usercontrol sample.
+//
+// Paths resolve against THIS file's directory, so the markup one level up is
+// "../UserControl.waml".
+#include "UserControlResource.h"
+
+IDI_APP  ICON  "app.ico"
+
+// The sample's markup, compiled in as RCDATA under a private type name.
+IDR_WAML_USERCONTROL  WAML_DOC  "../UserControl.waml"
+
+// Manifest: deliberately NOT in the .rc. It goes through the linker's
+// /MANIFESTINPUT: so the linker injects trustInfo itself.
+
+// VERSIONINFO needs the leading numeric id: without it the shell shows no
+// version information at all, while the exe still links and runs.
+1 VERSIONINFO
+ FILEVERSION    WUI_VERSION_COMMA
+ PRODUCTVERSION WUI_VERSION_COMMA
+ FILEFLAGSMASK  0x3fL
+#ifdef _DEBUG
+ FILEFLAGS      0x1L        // VS_FF_DEBUG
+#else
+ FILEFLAGS      0x0L
+#endif
+ FILEOS         0x40004L    // VOS_NT_WINDOWS32
+ FILETYPE       0x1L        // VFT_APP
+ FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "Werfs Project"
+            VALUE "FileDescription",  "Werfs sample: component scope"
+            VALUE "FileVersion",      WUI_VERSION_STR
+            VALUE "InternalName",     "waml_usercontrol"
+            VALUE "LegalCopyright",   "MIT License. Copyright (c) 2026 Werfs Project."
+            VALUE "OriginalFilename", "waml_usercontrol.exe"
+            VALUE "ProductName",      "Werfs Samples"
+            VALUE "ProductVersion",   WUI_VERSION_STR
+            VALUE "Comments",         "One page, two cards, three independent DataContexts."
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END

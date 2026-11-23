@@ -9,6 +9,7 @@
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
 #include "BindingVm.h"  // sample: the four binding modes page's ViewModel
 #include "ThemingVm.h"  // sample: the token/theme page's ViewModel
+#include "UserControlVm.h" // sample: the nested-data-source page's ViewModels
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "FileDialog.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
@@ -61,6 +62,11 @@ bool IsBindingPage(const std::string& origin, const std::string& path) {
 bool IsThemingPage(const std::string& origin, const std::string& path) {
     return origin.find("Theming.waml") != std::string::npos ||
            path.find("Theming.waml") != std::string::npos;
+}
+
+bool IsUserControlPage(const std::string& origin, const std::string& path) {
+    return origin.find("UserControl.waml") != std::string::npos ||
+           path.find("UserControl.waml") != std::string::npos;
 }
 
 // Checks that only make sense on samples/basic/Basic.waml.

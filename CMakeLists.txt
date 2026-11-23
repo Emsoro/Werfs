@@ -40,6 +40,8 @@ set(FRAMEWORK_SRC
     framework/src/render/SoftwareRender.cpp
     framework/src/platform/Resources.cpp
     framework/src/platform/FileDialogWin32.cpp
+    framework/src/platform/Image.cpp
+    framework/src/platform/ImageWin32.cpp
 )
 
 add_library(wui_framework STATIC ${FRAMEWORK_SRC})
@@ -74,6 +76,8 @@ set(SAMPLE_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/binding/resources
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/theming
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/theming/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/usercontrol
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/usercontrol/resources
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/editor
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/editor/resources)
 
@@ -105,6 +109,7 @@ add_sample(basic)
 add_sample(list)
 add_sample(binding)
 add_sample(theming)
+add_sample(usercontrol)
 add_sample(editor)
 
 # ---------------------------------------------------------------------------

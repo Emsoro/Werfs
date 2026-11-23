@@ -7,6 +7,7 @@
 #include "Diagnostics.h"
 #include "Converters.h"
 #include "FileDialog.h"
+#include "Image.h"
 #include "Mvvm.h"
 #include "SoftwareRender.h"
 #include "StyleTriggers.h"
@@ -2949,6 +2950,475 @@ TEST("resource: a dictionary does not count as a child element") {
 }
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// P0 control batch: toggles, sliders, status, shapes, image, layout panel.
+// ---------------------------------------------------------------------------
+namespace {
+
+// A fake image service: proves Image and PersonPicture ASK for a decoder instead of
+// decoding, and lets layout be asserted with no COM, no files and no window.
+class FakeImageService final : public IImageService {
+public:
+    std::shared_ptr<const Bitmap> Load(const std::string& source) override {
+        ++loads;
+        lastSource = source;
+        if (source.empty() || source == "missing.png") return nullptr;
+        auto bmp = std::make_shared<Bitmap>();
+        bmp->width = 20;
+        bmp->height = 10;
+        bmp->pixels.assign(200, 0xFF0000FFu);
+        return bmp;
+    }
+    int loads = 0;
+    std::string lastSource;
+};
+
+// Installs a widget of `typeName` with the given attributes, laid out in a page.
+Widget* MakeWidget(const std::string& typeName, const std::string& attrs, DiagnosticBag& bag,
+                   Size size = Size{400, 200}, const char* name = "t") {
+    InstallText();
+    const std::string src = "<Page><" + typeName + " x:Name=\"" + name + "\" " + attrs + "/></Page>";
+    auto doc = Compile(src, bag);
+    if (!doc) return nullptr;
+    // One retained tree at a time: keeping them all alive lets FindByName hit an earlier
+    // test's widget, which then reads as "this control does not work".
+    static std::vector<WidgetPtr> keep;
+    keep.clear();
+    keep.push_back(doc->Instantiate(&g_fakeText));
+    WidgetPtr root = keep.back();
+    root->ForceLayout(size);
+    return root->FindByName(name);
+}
+
+size_t PaintOpCount(Widget* w) {
+    RecordingPaintContext rec;
+    w->OnPaint(rec, MakePalette(ThemeKind::Light));
+    return rec.OpCount();
+}
+
+// A visible-in-the-tree command counter, for the controls that take a Command.
+std::shared_ptr<RelayCommand> CountingCommand(int* counter) {
+    return std::make_shared<RelayCommand>([counter] { ++(*counter); });
+}
+
+} // namespace
+
+TEST("progressbar: value is a 0..1 fraction and is clamped") {
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("ProgressBar", "Value=\"0.5\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    const size_t half = PaintOpCount(b);
+    b->SetSlotValue(b->SlotOf("Value"), Value::Number(0.0));
+    CHECK(PaintOpCount(b) < half); // track only
+
+    // A ViewModel reporting 1.2 must not paint outside its own track.
+    b->SetSlotValue(b->SlotOf("Value"), Value::Number(1.2));
+    CHECK(PaintOpCount(b) == half);
+}
+
+TEST("progressring: the arc is stepped segments on top of the track") {
+    DiagnosticBag bag;
+    Widget* r = MakeWidget("ProgressRing", "Value=\"0\"", bag, Size{200, 200});
+    CHECK(r != nullptr);
+    if (!r) return;
+    const size_t trackOnly = PaintOpCount(r);
+    CHECK(trackOnly == 64); // one segment per step of a full revolution
+
+    r->SetSlotValue(r->SlotOf("Value"), Value::Number(1.0));
+    // Track plus a full revolution of arc segments.
+    CHECK(PaintOpCount(r) == trackOnly * 2);
+}
+
+TEST("inflobar: a dismissed bar takes no space") {
+    DiagnosticBag bag;
+    Widget* bar = MakeWidget("InfoBar", "Title=\"Heads up\" Message=\"Something happened\"", bag);
+    CHECK(bar != nullptr);
+    if (!bar) return;
+    CHECK(bar->DesiredSize().h > 0.0f);
+    // IsOpen=false must collapse it, or the controls below keep a gap where the bar used
+    // to be -- invisible but still reserving space.
+    bar->SetSlotValue(bar->SlotOf("IsOpen"), Value::Bool(false));
+    bar->Measure(Size{400, 200});
+    CHECK_NEAR(bar->DesiredSize().h, 0.0f, 0.01);
+}
+
+TEST("inflobar: only the close affordance dismisses it") {
+    DiagnosticBag bag;
+    Widget* bar = MakeWidget("InfoBar", "Title=\"Note\" IsClosable=\"True\"", bag);
+    CHECK(bar != nullptr);
+    if (!bar) return;
+    CHECK(bar->Get<bool>(bar->SlotOf("IsOpen")));
+    // A click on the body must not dismiss it: the user may still be reading.
+    bar->OnPointerUp(Point{bar->Bounds().x + 20.0f, bar->Bounds().y + 10.0f});
+    CHECK(bar->Get<bool>(bar->SlotOf("IsOpen")));
+
+    bar->OnPointerUp(Point{bar->Bounds().x + bar->Bounds().w - 14.0f, bar->Bounds().y + 14.0f});
+    CHECK(!bar->Get<bool>(bar->SlotOf("IsOpen")));
+}
+
+TEST("infobadge: a textless badge is a dot, a text badge is a pill") {
+    DiagnosticBag bag;
+    Widget* dot = MakeWidget("InfoBadge", "", bag);
+    CHECK(dot != nullptr);
+    if (!dot) return;
+    const float dotW = dot->DesiredSize().w;
+    Widget* pill = MakeWidget("InfoBadge", "Text=\"12\"", bag);
+    CHECK(pill != nullptr);
+    if (!pill) return;
+    CHECK(pill->DesiredSize().w > dotW);
+    // At least as wide as tall, so a single digit is round and not squashed.
+    CHECK(pill->DesiredSize().w >= pill->DesiredSize().h - 0.01f);
+}
+
+TEST("line: the bounding box covers both endpoints") {
+    DiagnosticBag bag;
+    Widget* horizontal = MakeWidget("Line", "StartX=\"0\" StartY=\"0\" EndX=\"100\" EndY=\"0\"", bag);
+    CHECK(horizontal != nullptr);
+    if (!horizontal) return;
+    CHECK_NEAR(horizontal->DesiredSize().w, 101.0f, 0.5); // 100 + 1 stroke
+    CHECK_NEAR(horizontal->DesiredSize().h, 1.0f, 0.5);
+
+    DiagnosticBag bag2;
+    Widget* diagonal = MakeWidget("Line", "StartX=\"0\" StartY=\"0\" EndX=\"40\" EndY=\"30\"", bag2);
+    CHECK(diagonal != nullptr);
+    if (!diagonal) return;
+    // A diagonal has no meaningful width/height pair, so the box must be its extent.
+    CHECK_NEAR(diagonal->DesiredSize().w, 41.0f, 0.5);
+    CHECK_NEAR(diagonal->DesiredSize().h, 31.0f, 0.5);
+}
+
+TEST("line: paints one segment with the declared stroke") {
+    DiagnosticBag bag;
+    Widget* line = MakeWidget("Line", "EndX=\"50\" StrokeThickness=\"3\"", bag);
+    CHECK(line != nullptr);
+    if (!line) return;
+    RecordingPaintContext rec;
+    line->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.OpCount() == 1);
+    CHECK(rec.Text().find("line") == 0);
+    CHECK(rec.Text().find("w=3") != std::string::npos);
+}
+
+TEST("shape: rectangle and ellipse take different primitives") {
+    DiagnosticBag bag;
+    Widget* rect = MakeWidget("Shape", "Kind=\"Rectangle\" ShapeWidth=\"30\" ShapeHeight=\"20\"", bag);
+    CHECK(rect != nullptr);
+    if (!rect) return;
+    RecordingPaintContext recRect;
+    rect->OnPaint(recRect, MakePalette(ThemeKind::Light));
+    CHECK(recRect.Text().find("fillrr") != std::string::npos);
+
+    DiagnosticBag bag2;
+    Widget* ellipse = MakeWidget("Shape", "Kind=\"Ellipse\" ShapeWidth=\"30\" ShapeHeight=\"20\"", bag2);
+    CHECK(ellipse != nullptr);
+    if (!ellipse) return;
+    RecordingPaintContext recEllipse;
+    ellipse->OnPaint(recEllipse, MakePalette(ThemeKind::Light));
+    CHECK(recEllipse.Text().find("ellipse") != std::string::npos);
+}
+
+TEST("togglebutton: clicking toggles, dragging off cancels") {
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("ToggleButton", "Content=\"Bold\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK(!b->Get<bool>(b->SlotOf("IsChecked")));
+    b->OnPointerDown(Point{b->Bounds().x + 5, b->Bounds().y + 5});
+    b->OnPointerUp(Point{b->Bounds().x + 5, b->Bounds().y + 5});
+    CHECK(b->Get<bool>(b->SlotOf("IsChecked")));
+    // Press inside, release outside: must NOT toggle.
+    b->OnPointerDown(Point{b->Bounds().x + 5, b->Bounds().y + 5});
+    b->OnPointerUp(Point{b->Bounds().x - 50, b->Bounds().y - 50});
+    CHECK(b->Get<bool>(b->SlotOf("IsChecked")));
+}
+
+TEST("toggleswitch: space toggles it and the label is part of its width") {
+    DiagnosticBag bag;
+    Widget* sw = MakeWidget("ToggleSwitch", "Content=\"Wi-Fi\"", bag);
+    CHECK(sw != nullptr);
+    if (!sw) return;
+    CHECK(sw->OnKeyDown(KeySpace));
+    CHECK(sw->Get<bool>(sw->SlotOf("IsChecked")));
+    CHECK(sw->DesiredSize().w > 40.0f); // track plus label
+}
+
+TEST("hyperlinkbutton: underlines only while hovered") {
+    DiagnosticBag bag;
+    Widget* link = MakeWidget("HyperlinkButton", "Content=\"Docs\"", bag);
+    CHECK(link != nullptr);
+    if (!link) return;
+    RecordingPaintContext idle;
+    link->OnPaint(idle, MakePalette(ThemeKind::Light));
+    CHECK(idle.Text().find("line") == std::string::npos);
+    link->OnPointerEnter();
+    RecordingPaintContext hover;
+    link->OnPaint(hover, MakePalette(ThemeKind::Light));
+    CHECK(hover.Text().find("line") != std::string::npos);
+    link->OnPointerLeave();
+    RecordingPaintContext after;
+    link->OnPaint(after, MakePalette(ThemeKind::Light));
+    CHECK(after.Text().find("line") == std::string::npos);
+}
+
+TEST("hyperlinkbutton: invokes its command when clicked") {
+    DiagnosticBag bag;
+    Widget* link = MakeWidget("HyperlinkButton", "Content=\"Docs\"", bag);
+    CHECK(link != nullptr);
+    if (!link) return;
+    int fired = 0;
+    link->SetSlotValue(link->SlotOf("Command"), Value::Ref(CountingCommand(&fired)));
+    link->OnPointerDown(Point{link->Bounds().x + 4, link->Bounds().y + 4});
+    link->OnPointerUp(Point{link->Bounds().x + 4, link->Bounds().y + 4});
+    CHECK(fired == 1);
+}
+
+TEST("slider: clicking jumps, dragging follows, keys step and clamp") {
+    DiagnosticBag bag;
+    Widget* s = MakeWidget("Slider", "Minimum=\"0\" Maximum=\"100\" Value=\"0\"", bag, Size{220, 60});
+    CHECK(s != nullptr);
+    if (!s) return;
+    const Rect b = s->Bounds();
+    s->OnPointerDown(Point{b.x + b.w * 0.5f, b.y + b.h * 0.5f});
+    s->OnPointerUp(Point{b.x + b.w * 0.5f, b.y + b.h * 0.5f});
+    const float mid = s->Get<float>(s->SlotOf("Value"));
+    CHECK(mid > 30.0f);
+    CHECK(mid < 70.0f);
+
+    // Dragging past the right edge pins it at Maximum rather than overshooting.
+    s->OnPointerDown(Point{b.x + b.w - 1.0f, b.y + b.h * 0.5f});
+    s->OnPointerMove(Point{b.x + b.w + 50.0f, b.y + b.h * 0.5f});
+    s->OnPointerUp(Point{b.x + b.w + 50.0f, b.y + b.h * 0.5f});
+    CHECK_NEAR(s->Get<float>(s->SlotOf("Value")), 100.0f, 0.01);
+
+    s->OnKeyDown(KeyRight);
+    CHECK_NEAR(s->Get<float>(s->SlotOf("Value")), 100.0f, 0.01); // already at max
+    s->OnKeyDown(KeyHome);
+    CHECK_NEAR(s->Get<float>(s->SlotOf("Value")), 0.0f, 0.01);
+    s->OnKeyDown(KeyLeft);
+    CHECK_NEAR(s->Get<float>(s->SlotOf("Value")), 0.0f, 0.01); // clamped at min
+}
+
+TEST("slider: StepFrequency snaps the value to a multiple") {
+    DiagnosticBag bag;
+    Widget* s = MakeWidget("Slider", "Minimum=\"0\" Maximum=\"10\" StepFrequency=\"5\"", bag,
+                           Size{220, 60});
+    CHECK(s != nullptr);
+    if (!s) return;
+    const Rect b = s->Bounds();
+    s->OnPointerDown(Point{b.x + b.w * 0.33f, b.y + b.h * 0.5f});
+    // A third of the way is 3.33; a step of 5 must give exactly 0 or 5.
+    const float v = s->Get<float>(s->SlotOf("Value"));
+    CHECK_NEAR(std::fmod(v, 5.0f), 0.0f, 0.01);
+}
+
+TEST("repeatbutton: fires on press, not on release") {
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("RepeatButton", "Content=\"+\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    int fired = 0;
+    b->SetSlotValue(b->SlotOf("Command"), Value::Ref(CountingCommand(&fired)));
+    // A repeat button exists for stepping a value, so waiting for release would make
+    // holding pointless.
+    b->OnPointerDown(Point{b->Bounds().x + 4, b->Bounds().y + 4});
+    CHECK(fired == 1);
+    b->OnPointerUp(Point{b->Bounds().x + 4, b->Bounds().y + 4});
+    CHECK(fired == 1); // release does not double-fire
+}
+
+TEST("passwordbox: masks every character but keeps the real text") {
+    CHECK(PasswordBox::Mask(3) == std::wstring(L"\u2022\u2022\u2022"));
+    DiagnosticBag bag;
+    Widget* pb = MakeWidget("PasswordBox", "Text=\"secret\"", bag);
+    CHECK(pb != nullptr);
+    if (!pb) return;
+    // The value stays readable to a ViewModel; only the paint is masked.
+    CHECK(pb->Get<std::wstring>(pb->SlotOf("Text")) == L"secret");
+    RecordingPaintContext rec;
+    pb->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("secret") == std::string::npos);
+}
+
+TEST("numberbox: parses only whole strings as numbers") {
+    double out = 0;
+    CHECK(NumberBox::ParseNumber(L"12", out));
+    CHECK_NEAR(out, 12.0, 0.001);
+    CHECK(NumberBox::ParseNumber(L"-3.5", out));
+    CHECK_NEAR(out, -3.5, 0.001);
+    // wcstod accepts a prefix; the whole string must be consumed or "12abc" would be 12.
+    CHECK(!NumberBox::ParseNumber(L"12abc", out));
+    CHECK(!NumberBox::ParseNumber(L"", out));
+    CHECK(!NumberBox::ParseNumber(L"abc", out));
+}
+
+TEST("numberbox: publishes IsValid when the text changes, including from a binding") {
+    DiagnosticBag bag;
+    Widget* nb = MakeWidget("NumberBox", "Text=\"42\"", bag);
+    CHECK(nb != nullptr);
+    if (!nb) return;
+    CHECK(nb->Get<bool>(nb->SlotOf("IsValid")));
+    // fromBinding=true is what a binding write looks like, and it must ALSO revalidate --
+    // not only a keystroke.
+    nb->SetSlotValue(nb->SlotOf("Text"), Value::Text(L"nope"), true);
+    CHECK(!nb->Get<bool>(nb->SlotOf("IsValid")));
+    nb->SetSlotValue(nb->SlotOf("Text"), Value::Text(L"7"), true);
+    CHECK(nb->Get<bool>(nb->SlotOf("IsValid")));
+    CHECK_NEAR(nb->Get<float>(nb->SlotOf("Value")), 7.0f, 0.01);
+}
+
+TEST("radiobutton: selecting one clears the rest of its group, across panels") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <StackPanel>
+    <RadioButton x:Name="a" Content="A" GroupName="g1" IsChecked="True"/>
+    <RadioButton x:Name="b" Content="B" GroupName="g1"/>
+  </StackPanel>
+  <StackPanel>
+    <RadioButton x:Name="c" Content="C" GroupName="g1"/>
+    <RadioButton x:Name="d" Content="D" GroupName="g2" IsChecked="True"/>
+  </StackPanel>
+</Page>)WAML",
+                       bag);
+    if (!doc) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 300});
+    auto* a = dynamic_cast<RadioButton*>(root->FindByName("a"));
+    auto* c = dynamic_cast<RadioButton*>(root->FindByName("c"));
+    auto* d = dynamic_cast<RadioButton*>(root->FindByName("d"));
+    CHECK(a && c && d);
+    if (!a || !c || !d) return;
+    CHECK(a->Get<bool>(a->SlotOf("IsChecked")));
+
+    c->OnPointerUp(Point{c->Bounds().x + 4, c->Bounds().y + 4});
+    CHECK(c->Get<bool>(c->SlotOf("IsChecked")));
+    // `a` is in a DIFFERENT panel but the same group, so it must be cleared.
+    CHECK(!a->Get<bool>(a->SlotOf("IsChecked")));
+    // `d` is in another group and must be untouched.
+    CHECK(d->Get<bool>(d->SlotOf("IsChecked")));
+}
+
+TEST("radiobutton: clicking the selected one keeps it selected") {
+    DiagnosticBag bag;
+    Widget* r = MakeWidget("RadioButton", "Content=\"A\" IsChecked=\"True\"", bag);
+    CHECK(r != nullptr);
+    if (!r) return;
+    r->OnPointerUp(Point{r->Bounds().x + 4, r->Bounds().y + 4});
+    // A radio group always has a selection: that is the whole difference from a checkbox.
+    CHECK(r->Get<bool>(r->SlotOf("IsChecked")));
+}
+
+TEST("relativepanel: RightOf and Below place children against their anchor") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <RelativePanel>
+    <Shape x:Name="pivot" ShapeWidth="50" ShapeHeight="20"/>
+    <Shape x:Name="right" RelativePanel.RightOf="pivot" ShapeWidth="30" ShapeHeight="20"/>
+    <Shape x:Name="under" RelativePanel.Below="pivot" ShapeWidth="30" ShapeHeight="20"/>
+  </RelativePanel>
+</Page>)WAML",
+                       bag);
+    if (!doc) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* pivot = root->FindByName("pivot");
+    Widget* right = root->FindByName("right");
+    Widget* under = root->FindByName("under");
+    CHECK(pivot && right && under);
+    if (!pivot || !right || !under) return;
+    CHECK(right->Bounds().x >= pivot->Bounds().x + pivot->Bounds().w);
+    CHECK_NEAR(right->Bounds().y, pivot->Bounds().y, 0.5f);
+    CHECK(under->Bounds().y >= pivot->Bounds().y + pivot->Bounds().h);
+}
+
+TEST("relativepanel: a cycle is bounded, not an infinite recursion") {
+    InstallText();
+    DiagnosticBag bag;
+    // Two children anchored to each other: wrong markup, but it must produce a wrong
+    // position rather than a hang -- an infinite loop is undiagnosable from a stack dump.
+    auto doc = Compile(R"WAML(
+<Page>
+  <RelativePanel>
+    <Shape x:Name="a" RelativePanel.RightOf="b" ShapeWidth="20" ShapeHeight="10"/>
+    <Shape x:Name="b" RelativePanel.RightOf="a" ShapeWidth="20" ShapeHeight="10"/>
+  </RelativePanel>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    CHECK(root->FindByName("a") != nullptr);
+    CHECK(root->FindByName("b") != nullptr);
+}
+
+TEST("image: paints a placeholder when no decoder is installed") {
+    DiagnosticBag bag;
+    Widget* img = MakeWidget("Image", "Source=\"photo.png\" Width=\"80\" Height=\"40\"", bag);
+    CHECK(img != nullptr);
+    if (!img) return;
+    // No service: a blank rectangle, never a crash or a zero-sized hole.
+    CHECK(PaintOpCount(img) > 0);
+    CHECK_NEAR(img->DesiredSize().w, 80.0f, 0.01);
+}
+
+TEST("image: a fake service supplies a bitmap with no COM") {
+    FakeImageService fake;
+    SetImageService(&fake);
+    DiagnosticBag bag;
+    Widget* img = MakeWidget("Image", "Source=\"photo.png\" Width=\"40\" Height=\"20\"", bag);
+    SetImageService(nullptr);
+    CHECK(img != nullptr);
+    if (!img) return;
+    CHECK(fake.loads >= 1);
+    CHECK(fake.lastSource == "photo.png");
+    RecordingPaintContext rec;
+    img->OnPaint(rec, MakePalette(ThemeKind::Light));
+    // The decoded dimensions are reported by the recording: 20x10.
+    CHECK(rec.Text().find("20x10") != std::string::npos);
+}
+
+TEST("image: a failed decode falls back to the placeholder") {
+    FakeImageService fake;
+    SetImageService(&fake);
+    DiagnosticBag bag;
+    Widget* img = MakeWidget("Image", "Source=\"missing.png\" Width=\"40\" Height=\"20\"", bag);
+    SetImageService(nullptr);
+    CHECK(img != nullptr);
+    if (!img) return;
+    RecordingPaintContext rec;
+    img->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("bitmap") == std::string::npos); // placeholder, not a blit
+}
+
+TEST("personpicture: initials come from the first two words") {
+    CHECK(PersonPicture::Initials(L"Ada Lovelace") == L"AL");
+    CHECK(PersonPicture::Initials(L"grace") == L"G");
+    CHECK(PersonPicture::Initials(L"  ") == L"?");
+    CHECK(PersonPicture::Initials(L"") == L"?");
+}
+
+TEST("personpicture: is square and paints a circle") {
+    DiagnosticBag bag;
+    Widget* p = MakeWidget("PersonPicture", "DisplayName=\"Ada Lovelace\" Diameter=\"64\"", bag);
+    CHECK(p != nullptr);
+    if (!p) return;
+    CHECK_NEAR(p->DesiredSize().w, 64.0f, 0.01);
+    CHECK_NEAR(p->DesiredSize().h, 64.0f, 0.01);
+    RecordingPaintContext rec;
+    p->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("ellipse") != std::string::npos);
+    CHECK(rec.Text().find("AL") != std::string::npos);
+}
 
 // A widget plus the categories the shell tests need.
 struct ShellFixture {

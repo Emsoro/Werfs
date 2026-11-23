@@ -28,6 +28,7 @@
       list      collections + layout   (waml_list.exe)
       binding   the four binding modes (waml_binding.exe)
       theming   tokens + Light/Dark    (waml_theming.exe)
+      usercontrol  nested data sources (waml_usercontrol.exe)
       editor    the multi-tab editor   (waml_editor.exe)
       all       samples plus every tool and test binary
       debug     one sample with symbols and WAML read from disk at runtime, so
@@ -71,7 +72,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'basic', 'list', 'binding', 'theming', 'editor')]
+                 'basic', 'list', 'binding', 'theming', 'usercontrol', 'editor')]
     [string]$Target = 'samples',
 
     [switch]$Clean,
@@ -243,6 +244,8 @@ $CoreSources = @(
     'src\render\SoftwareRender.cpp'
     'src\platform\Resources.cpp'
     'src\platform\FileDialogWin32.cpp'
+    'src\platform\Image.cpp'
+    'src\platform\ImageWin32.cpp'
 ) | ForEach-Object { Join-Path $Framework $_ }
 
 $RenderSources = @(Join-Path $Framework 'src\render\D2DRender.cpp')
@@ -404,12 +407,14 @@ $ListSampleDir = Join-Path $SamplesRoot 'list'
 $BasicSampleDir = Join-Path $SamplesRoot 'basic'
 $BindingSampleDir = Join-Path $SamplesRoot 'binding'
 $ThemingSampleDir = Join-Path $SamplesRoot 'theming'
+$UserControlSampleDir = Join-Path $SamplesRoot 'usercontrol'
 $EditorSampleDir = Join-Path $SamplesRoot 'editor'
 # Tools that touch several samples need every sample's headers.
 $AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
                        $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'),
                        $BindingSampleDir, (Join-Path $BindingSampleDir 'resources'),
                        $ThemingSampleDir, (Join-Path $ThemingSampleDir 'resources'),
+                       $UserControlSampleDir, (Join-Path $UserControlSampleDir 'resources'),
                        $EditorSampleDir, (Join-Path $EditorSampleDir 'resources'))
 
 # A sample's ViewModel implementation has to be compiled into the tools that drive
@@ -486,6 +491,10 @@ $SampleRegistry = @(
     # The theming page is the only sample that asks the host for a runtime theme
     # switch (HostOptions::themeProperty); everything else stays on Light.
     @{ Name = 'theming'; Exe = 'waml_theming'; Res = 'theming' }
+    # The component-scope page: two cards, each with its own DataContext bound
+    # from the page, and a badge one level deeper. It exists to prove that a
+    # subtree can switch data sources without copying the page's ViewModel.
+    @{ Name = 'usercontrol'; Exe = 'waml_usercontrol'; Res = 'usercontrol' }
     # The integration sample: menu bar, command bar, tabs, unsaved prompt and the
     # file dialogs, all on one page. It absorbed the planned `files` sample, whose
     # four blocks (open / save as / folder pick / read preview) were a subset of

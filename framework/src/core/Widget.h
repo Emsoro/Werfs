@@ -70,6 +70,12 @@ public:
     Widget* FindByName(std::string_view name) const; // depth-first by x:Name
 
     // --- data context -------------------------------------------------------
+    // Sets this widget's local data context. `own` means "this widget chose the
+    // object" (a WAML DataContext binding, or a host/list assigning a row model);
+    // an owned context wins over inherited values and is not overwritten when an
+    // ancestor changes. Passing an owned null context deliberately BLOCKS
+    // inheritance -- a card whose selected server became null shows nothing
+    // rather than quietly falling back to the page's ViewModel.
     void SetDataContext(RefPtr dc, bool own = true);
     RefPtr DataContext() const { return dataContext_; }
     RefPtr EffectiveDataContext() const;
@@ -208,6 +214,11 @@ public:
 protected:
     void SetDirtyUpwards(uint32_t flags);
     Widget* Root();
+    // Re-resolves bindings that target DataContext. Their source is the PARENT's
+    // effective context, not this widget's: after the binding assigns an object,
+    // binding it again against that object would replace the answer with a
+    // lookup on its own result (the "self-overwrite" failure mode).
+    void RebindDataContextBindings();
     // How far this widget has scrolled its content, vertically. Only a
     // ScrollViewer returns anything but zero; ToLocal walks the ancestor chain
     // summing these to undo the scroll for pointer dispatch.
@@ -223,6 +234,10 @@ protected:
     virtual void PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift);
 
     const TypeInfo* type_ = nullptr;
+    // Slot of the WAML-visible "DataContext" property, or -1 for types that do
+    // not carry it (the non-visual flyout types). Cached once BindType runs so
+    // the hot path (every SetSlotValue) is an integer compare.
+    int dataContextSlot_ = -1;
     std::vector<Value> values_;
     std::vector<WidgetPtr> children_;
     Widget* parent_ = nullptr;

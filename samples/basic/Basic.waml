@@ -114,6 +114,93 @@
         </StackPanel>
       </Border>
 
+      <!-- ================= Inputs that hold a value ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel>
+          <TextBlock Text="Toggles and values" FontSize="15" FontWeight="SemiBold"
+                     Padding="0,0,0,10"/>
+
+          <!-- A toggle button keeps its state visible; the ViewModel owns it. -->
+          <ToggleButton Content="Bold" IsChecked="{Binding IsBold, Mode=TwoWay}"
+                        HorizontalAlignment="Left"/>
+          <TextBlock Text="{Binding BoldStatus}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,6,0,12"/>
+
+          <!-- A switch reads faster than a checkbox at small sizes. -->
+          <ToggleSwitch Content="Notifications" IsChecked="{Binding IsNotifying, Mode=TwoWay}"
+                        HorizontalAlignment="Left"/>
+          <TextBlock Text="{Binding NotifyStatus}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,6,0,12"/>
+
+          <!-- Slider: a real range, snapped to whole steps. -->
+          <TextBlock Text="Volume" FontSize="12" Foreground="TextSecondary"/>
+          <Slider Minimum="0" Maximum="10" StepFrequency="1"
+                  Value="{Binding Volume, Mode=TwoWay}" Height="36"/>
+          <TextBlock Text="{Binding VolumeText}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,2,0,12"/>
+
+          <!-- Radio group: exclusive across the whole page, not per panel. -->
+          <TextBlock Text="Density" FontSize="12" Foreground="TextSecondary" Padding="0,0,0,4"/>
+          <RadioButton Content="Comfortable" GroupName="density"
+                       IsChecked="{Binding IsComfortable, Mode=TwoWay}"/>
+          <RadioButton Content="Compact" GroupName="density"
+                       IsChecked="{Binding IsCompact, Mode=TwoWay}"/>
+
+          <!-- Number and masked text fields. -->
+          <TextBlock Text="Quantity" FontSize="12" Foreground="TextSecondary" Padding="0,12,0,4"/>
+          <NumberBox Text="{Binding Quantity, Mode=TwoWay}" IsValid="{Binding IsQuantityValid}"
+                     Width="120" HorizontalAlignment="Left"/>
+          <TextBlock Text="{Binding QuantityStatus}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,4,0,12"/>
+
+          <TextBlock Text="Passphrase" FontSize="12" Foreground="TextSecondary" Padding="0,0,0,4"/>
+          <PasswordBox Text="{Binding Passphrase, Mode=TwoWay}" Width="200"
+                       HorizontalAlignment="Left"/>
+          <TextBlock Text="{Binding PassphraseStatus}" FontSize="12" Foreground="TextSecondary"
+                     Padding="0,4,0,0"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= Status and shapes ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel>
+          <TextBlock Text="Status and shapes" FontSize="15" FontWeight="SemiBold"
+                     Padding="0,0,0,10"/>
+
+          <TextBlock Text="Progress" FontSize="12" Foreground="TextSecondary"/>
+          <ProgressBar Value="{Binding Progress}" Height="6" Margin="0,6,0,10"/>
+
+          <!-- A ring animates the same value as an arc; both read the same property. -->
+          <StackPanel Orientation="Horizontal">
+            <ProgressRing Value="{Binding Progress}" Size="36" Margin="0,0,12,0"/>
+            <InfoBadge Text="{Binding BadgeCount}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <PersonPicture DisplayName="{Binding UserName}" Diameter="36"
+                           VerticalAlignment="Center"/>
+          </StackPanel>
+
+          <!-- InfoBar collapses entirely when dismissed: no reserved gap. -->
+          <InfoBar Title="{Binding BarTitle}" Message="{Binding BarMessage}"
+                   Severity="Informational" IsClosable="True"
+                   IsOpen="{Binding IsBarOpen, Mode=TwoWay}" Margin="0,12,0,0"/>
+
+          <!-- Line and Shape take the drawing primitives added for them. -->
+          <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <Shape Kind="Rectangle" ShapeWidth="48" ShapeHeight="24" CornerRadius="4"
+                   Fill="Accent"/>
+            <Shape Kind="Ellipse" ShapeWidth="24" ShapeHeight="24" Fill="CardBorder"
+                   Margin="12,0,0,0"/>
+            <Line StartX="0" StartY="12" EndX="60" EndY="12" StrokeThickness="2"
+                  Stroke="TextSecondary" Margin="12,0,0,0"/>
+          </StackPanel>
+
+          <!-- A link that styles and behaves like one, without navigating on its own. -->
+          <HyperlinkButton Content="{Binding LinkText}" Command="{Binding OpenLinkCommand}"
+                           HorizontalAlignment="Left" Margin="0,12,0,0"/>
+        </StackPanel>
+      </Border>
+
       <!-- ================= Footer ================= -->
       <TextBlock Text="That is every basic control. See samples/list for collections and layout panels."
                  FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"

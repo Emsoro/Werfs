@@ -208,12 +208,40 @@ int FontWeightToDWrite(int w);
 // ---------------------------------------------------------------------------
 // Painting abstraction: D2D/WIC in the app and snapshot tool, recording in tests.
 // ---------------------------------------------------------------------------
+// An 8-bit RGBA bitmap, row-major, top-left origin. Declared here rather than in the
+// platform layer because PaintCtx must be able to draw one: the renderer is part of the
+// core contract, the DECODER is not.
+struct Bitmap {
+    int width = 0;
+    int height = 0;
+    std::vector<uint32_t> pixels; // 0xAARRGGBB
+
+    bool Valid() const { return width > 0 && height > 0; }
+};
+
 class PaintCtx {
 public:
     virtual ~PaintCtx() = default;
     virtual void FillRect(const Rect& r, const Color& c) = 0;
     virtual void FillRoundRect(const Rect& r, float radius, const Color& c) = 0;
     virtual void StrokeRect(const Rect& r, const Color& c, float width, float radius) = 0;
+    // A filled ellipse inscribed in `r`. Needed by Shape, PersonPicture and the ring's
+    // centre, and not expressible as a rounded rectangle: CornerRadius="50%" is not a
+    // thing here, and a circle drawn as a square with huge corners shows a seam on
+    // every straight edge.
+    virtual void FillEllipse(const Rect& r, const Color& c) = 0;
+    // A straight segment with a stroke width. Added for Line/Shape/ProgressRing,
+    // none of which a rectangle fill can express. Deliberately the minimum: the
+    // ring is built by stepping short segments around an arc, which keeps every
+    // backend (D2D, software raster, recording) to one more primitive instead of
+    // a path language.
+    virtual void DrawLine(const Point& a, const Point& b, const Color& c, float width = 1.0f) = 0;
+    // Blits a decoded bitmap into `dest`, scaling it. `clip` optionally restricts the
+    // destination to a rounded region (PersonPicture needs a circular crop); nullptr means
+    // the whole rect. A null bitmap draws nothing -- a missing image is a blank area, not
+    // a crash.
+    virtual void DrawBitmap(const Bitmap* bitmap, const Rect& dest,
+                            const Rect* clip = nullptr) = 0;
     virtual void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
                           int weight, TextAlign align) = 0;
     virtual void PushClip(const Rect& r) = 0;

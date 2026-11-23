@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.7.3.0
+> 版本：0.8.0.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.7.3.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**26 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板，以及 MenuBar/CommandBar/TabView/ContentDialog）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**150 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.8.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**42 个控件**（含六个布局面板、十个外壳控件，以及 P0 补齐的 17 个：开关/滑块/单选/数值框/进度/信息条/角标/图形/图片/头像等）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**177 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 150 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 177 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -84,7 +84,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 150 个单元/集成用例 |
+| `waml_tests.exe` | 177 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.7.3.0         [ ok ]
+file version: 0.8.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -643,6 +643,32 @@ WidgetPtr root = doc->Instantiate(...); // 树建立
 - 写功能时应当顺手写一条**效果断言**（值变了没有），而不是只断言「解析出了字段」。`FallbackValue` 的测试此前不存在，`LostFocus` 的测试只验证了「延迟」，没有验证「最终会写」。
 - 延迟写回这类机制必须绑定到**一个真实事件**上。`Flush()` 本身没有错，错在它没有主人。
 
+## 7.23 显式尺寸吃掉自己的 margin，控件在布局里存在但在屏幕上消失
+
+**现象**：`<ProgressBar Value="0.45" Height="6" Margin="0,6,0,10"/>` 在页面上**完全看不见**，但布局里确实占着一行 6 像素的位置（下面的元素被正常推开）。
+
+**根因**：`desired_` 的约定是「内容尺寸 + margin」，所有 `Measure()` 都按这个写。但 `ApplySizeConstraints` 在**显式尺寸**路径上直接覆盖 `desired_`：
+
+```cpp
+if (explicitSize > 0) v = explicitSize;   // margin 被一起覆盖掉了
+```
+
+于是期望高度变成 6，而控件绘制时又用 `bounds_.h - margin.V()` 算内容区：`6 - 16 = -10`。绘制矩形高度为负，`OnPaint` 里 `if (box.h <= 0) return;` 直接返回——**一个像素都不画，也不报错**。
+
+**为什么难发现**：
+
+- 布局是正确的：`DesiredSize` 报 400x6，`Arrange` 给的也是 400x6，任何布局断言都会通过；
+- 没有崩溃、没有越界、没有诊断码，症状就是「什么都没画」；
+- 单元测试如果只断言 `DesiredSize`，会一路绿灯。真正抓到它的是**快照截图**——人眼一看就问「进度条呢」。
+
+**修复**：显式尺寸按「内容尺寸」处理，把 margin 加回去，与所有 `Measure()` 的约定一致。
+
+**教训**：
+
+- **两条代码路径必须用同一个约定**。`Measure()` 说「含 margin」，`ApplySizeConstraints` 说「不含」，两者都"对"，合起来就产生负数。
+- **负尺寸要钳制，但钳制会把 bug 变成静默**。`std::max(0.0f, ...)` 让绘制安全返回，同时抹掉了"这里算错了"的信号。如果当时断言 `box.h > 0`，问题会在第一帧就暴露。
+- **快照是布局单测覆盖不到的**。`DesiredSize` 对、`Bounds` 对、`OpCount` 甚至是 0（而不是错），只有像素能说明问题。
+
 ---
 
 # 第四部分：目标架构
@@ -842,11 +868,11 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 | 档位 | 数量 | 范围 | 何时做 |
 |---|---|---|---|
-| **P0 必做** | **23**（已完成 7） | 日常界面几乎必用、且**不需要新子系统** | 进行中 |
+| **P0 必做** | **23**（✅ 全部完成） | 日常界面几乎必用、且**不需要新子系统** | ✅ |
 | P1 常用增强 | 16 | 共同卡在「浮层/弹出」这一层 | 浮层完成后顺带解锁 |
 | P2 长尾 | 51 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
 
-**P0 清单**（已完成 7 个标 ✅；原始 23 个 + 已有 9 个 = 32 个控件）：
+**P0 清单**（23 个全部 ✅ 完成）：
 
 | 分组 | 控件 | 新增框架能力 |
 |---|---|---|
@@ -856,37 +882,40 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 布局 | ✅ `VariableSizedWrapGrid` | 换行 + 单项跨行跨列 |
 | 布局 | ✅ `Viewbox` | 缩放子内容 |
 | 布局 | ✅ `Expander` | 折叠展开 + 高度变化重排 |
-| 布局 | `RelativePanel` | **元素间相对关系**（需附加属性，见下） |
-| 基础输入 | `ToggleButton` | 布尔 + 视觉状态 |
-| 基础输入 | `RepeatButton` | 按住连续触发 |
-| 基础输入 | `HyperlinkButton` | 链接样式 |
-| 基础输入 | `RadioButton` | **组互斥**（需 GroupName 作用域） |
-| 基础输入 | `Slider` | 拖动 + 数值范围 |
-| 基础输入 | `ToggleSwitch` | 布尔 + 滑块位置 |
-| 文本 | `PasswordBox` | 掩码显示 |
-| 文本 | `NumberBox` | 数值输入 + 校验 |
-| 状态 | `ProgressBar` | 纯渲染 |
-| 状态 | `ProgressRing` | 弧形绘制 |
-| 状态 | `InfoBar` | 内联提示条 |
-| 状态 | `InfoBadge` | 数字角标 |
-| 媒体 | `Image` | **WIC 解码 + 缩放** |
-| 媒体 | `PersonPicture` | 圆形头像（Image + 裁剪） |
-| 图形 | `Line` | `PaintCtx` 需加画线 |
-| 图形 | `Shape` | 基础几何绘制 |
+| 布局 | ✅ `RelativePanel` | **元素间相对关系**（附加属性 + 按名查兄弟） |
+| 基础输入 | ✅ `ToggleButton` | 布尔 + 视觉状态 |
+| 基础输入 | ✅ `RepeatButton` | 按住连续触发 |
+| 基础输入 | ✅ `HyperlinkButton` | 链接样式 |
+| 基础输入 | ✅ `RadioButton` | **组互斥**（GroupName 全树作用域） |
+| 基础输入 | ✅ `Slider` | 拖动 + 数值范围 + 步进吸附 |
+| 基础输入 | ✅ `ToggleSwitch` | 布尔 + 滑块位置 |
+| 文本 | ✅ `PasswordBox` | 掩码显示（继承 TextBox，仅换显示串） |
+| 文本 | ✅ `NumberBox` | 数值输入 + `IsValid` 上报 |
+| 状态 | ✅ `ProgressBar` | 纯渲染（Value 为 0..1 比例） |
+| 状态 | ✅ `ProgressRing` | 弧形绘制（分段线段） |
+| 状态 | ✅ `InfoBar` | 内联提示条（关闭即塌陷） |
+| 状态 | ✅ `InfoBadge` | 数字角标 |
+| 媒体 | ✅ `Image` | **WIC 解码（可注入服务）+ 缩放** |
+| 媒体 | ✅ `PersonPicture` | 圆形头像（椭圆遮罩 + 首字母） |
+| 图形 | ✅ `Line` | `PaintCtx::DrawLine` |
+| 图形 | ✅ `Shape` | `PaintCtx::FillEllipse` |
 
 **布局这一组已覆盖 WinUI-Gallery 的 Layout 分类**：`Border`、`StackPanel`、`ScrollViewer` 已有；本轮补齐 6 个。`SplitView` 归 P1（需浮层式面板），`LayoutPanel` 是自定义布局基类，不作为示例条目。
 
-**P0 里剩下的框架改造有五项**，其余是「注册类型 + 实现 Measure/Arrange/OnPaint」的重复劳动：
+**P0 里的五项框架改造全部完成**：
 
-1. `RelativePanel` 的**附加属性机制**（`RelativePanel.RightOf="name"` 这类写法，当前解析器不支持带点号的属性名，也没有「按名字引用兄弟元素」的能力）
-2. `Image` 的 WIC 解码与缓存
-3. `PaintCtx` 增加 `DrawLine` / 路径绘制（支撑 `Line`、`Shape`、`ProgressRing`）
-4. `RadioButton` 的组作用域
-5. `TextBlock` 的 `FontFamily`（等宽字体，代码片段需要）
+1. ✅ **`RelativePanel` 的附加属性与按名查兄弟** —— 锚点属性写在**子元素**上，所以和 `Grid.Row` 一样注册进 `AddLayoutProps`（放到 panel 上会被 validator 拒绝，第一版就是这么错的）。解析靠 `Widget::Name()` 线性查兄弟，加 8 层深度上限：两个元素互指会给出错误位置而不是无限递归。
+2. ✅ **`Image` 的 WIC 解码** —— 放在可注入的 `IImageService` 后面，理由与文件对话框相同：测试/快照/交互工具绝不能碰 COM 和文件系统。WIC 而非自带解码器，因为它在 Windows 上白送 PNG/JPEG/BMP/GIF/TIFF/ICO，自带解码器则是更多代码、更少格式。解码结果按源缓存，失败**不**缓存（文件可能稍后才出现）。
+3. ✅ **`PaintCtx` 增加 `DrawLine` / `FillEllipse` / `DrawBitmap`** —— 只有三个原语，没有路径语言。`ProgressRing` 用 64 段折线绕圆，`PersonPicture` 用椭圆遮罩裁剪位图；这让三个后端各只多三个方法，而不是各自实现一套几何。
+4. ✅ **`RadioButton` 的组作用域** —— 按 `GroupName` 在**整棵树**里查同组，而不是「同一父节点」。一组单选按钮经常被拆在多个面板里（换行、分列），按父作用域会让一次重排悄悄改变互斥关系。
+5. ⬜ `TextBlock` 的 `FontFamily`（等宽字体，代码片段需要）—— 唯一未做的一项，它不影响任何 P0 控件。
+
+**本轮顺带修掉的两个框架缺陷**：
+
+- **显式 `Height` 吃掉了自己的 `Margin`**。`desired_` 的约定一直是「内容 + margin」，但 `ApplySizeConstraints` 在显式尺寸路径上直接覆盖了它。于是 `Height="6" Margin="0,6,0,10"` 得到一个高 6 的槽位，控件自己的绘制矩形算出来是 **-10**：在布局里占着位置，屏幕上一个像素都没有，也没有任何诊断。`ProgressBar` 就是这样在页面上消失了。修复是让显式尺寸也走「内容尺寸」语义，把 margin 加回去。
+- **缺 `HorizontalAlignment` / `VerticalAlignment`**。写一个左对齐的按钮是不可能的，只能塞进额外容器。两轴都做成枚举（`Stretch`/`Left`/`Center`/`Right`），而不是「非左即右」的布尔——「居中」用布尔表达不出来。由**父面板**应用，因为只有父面板知道剩多少空间；`Stretch` 保持原行为，所以加上它没有移动任何已有布局。
 
 **已完成的三项**：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列、`TextBlock` 自动换行。
-
-**关于 `RelativePanel` 的额外成本**：它需要两样框架目前都没有的东西——**附加属性**和**按 `x:Name` 查找兄弟元素**。`x:Name` 已经记录在 `NodeDesc::name` 里，但布局期没有「从名字解析到 Widget」的索引。若成本评估偏高，可降到 P1，用 `Grid` 的固定行列达成相近效果。
 
 **P1 — 之后做（16 个）**：`ComboBox`、`Popup`、`Flyout`、`MenuFlyout`、`ToolTip`、`ContentDialog`、`TeachingTip`、`AutoSuggestBox`、`CommandBar`、`AppBarButton`、`AppBarToggleButton`、`AppBarSeparator`、`BreadcrumbBar`、`MenuBar`、`SplitView`、`RatingControl`
 
@@ -1716,7 +1745,7 @@ public:
 3. ~~**系统集成可用**：`files` 示例里三种对话框~~ → **已达成**：`editor` 的 File ▸ Open / Save as 走真实 `IFileDialogService`；无窗口环境下注册 nullptr 并安全返回（10b.1）。
 4. **编辑器界面可用**（§10c）：**✅ 已达成** —— `editor` 能开多个标签、切换、关闭；改过内容后关标签会弹出「保存/不保存/取消」，**选取消则标签保留**（`interact` 第 6–8 项断言）。
 5. **动效可用且不破坏确定性**：`animation` 示例的过渡肉眼连贯，同时双主题快照哈希仍确定（10b.2 + R16）。
-6. **控件覆盖 P0 清单**：当前 26 个 + P0 余 16 个 = 42 个控件都有示例，每页 ≥3 个可交互示例。
+6. **控件覆盖 P0 清单**：42 个控件都有示例，每页 ≥3 个可交互示例。
 7. **每个示例可读代码**：页面上能看到对应 WAML 片段，且与真实文件一致（文件级引用，非手抄）。
 8. **主题可切换**：Light/Dark 即时生效，无需重启。
 9. **构建零警告**（`/W4`），测试全绿，probe 门禁通过。
@@ -1747,7 +1776,7 @@ public:
 
 # 附录
 
-## A. 测试清单（150 用例）
+## A. 测试清单（177 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1778,6 +1807,7 @@ public:
 | **style** | **19** | 样式生效、本地覆盖样式、`BasedOn` 继承与覆盖、裸 key 与 StaticResource 等价、后置声明可解析、单子元素容器内放 Style、以及错误路径：未定义 key（带建议）、未知属性（带建议）、非法值、类型不匹配、`BasedOn` 环、`BasedOn` 类型不一致、重复 key、缺 `TargetType`、Setter 内禁止绑定；另含模板内生效、样式计数 |
 | **resource** | **9** | 颜色/尺寸/Thickness 命名、在 Setter 内使用、资源嵌套引用、环检测、未定义 key（带建议）、重复 key、字典不计入子元素、普通属性引用 |
 | **trigger** | **13** | 激活/恢复两态、不覆盖本地值、首帧即生效、多触发器独立、`BasedOn` 继承、无触发器不分配宿主；错误路径：未知被监视属性（带建议）、空触发器、缺 `Value`、`Ref` 属性不可触发、非法值；与资源组合 |
+| **p0-controls** | **24** | 进度条值域与钳制、圆环分段、信息条关闭即塌陷且仅 ✕ 可关、角标圆点/胶囊、Line 包围盒与描边、Shape 矩形/椭圆分原语、开关点击与拖出取消、开关空格键、超链接悬停下划线、超链接命令、滑块点击跳转/拖动钳制/键盘步进、滑块步进吸附、RepeatButton 按下即发、密码框掩码但值可读、数值解析（整串消费）、`IsValid` 上报、单选跨面板互斥、单选不可取消、`RelativePanel` RightOf/Below、环指不递归、Image 占位符、Image 注入服务、Image 解码失败回退、头像首字母、头像圆形 |
 | *（无前缀）* | 2 | 页面级集成：basic 页滚动、滚动后按钮仍可点 |
 
 **另有 `waml_interact.exe` 的页面级验收**（不是单元测试，是真实输入驱动）：

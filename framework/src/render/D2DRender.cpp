@@ -200,6 +200,84 @@ public:
         impl_.target->DrawRoundedRectangle(D2D1::RoundedRect(RectF(r), radius, radius), brush, width);
     }
 
+    void FillEllipse(const Rect& r, const Color& c) override {
+        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        if (!brush) return;
+        impl_.target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(r.x + r.w * 0.5f, r.y + r.h * 0.5f),
+                                                r.w * 0.5f, r.h * 0.5f),
+                                  brush);
+    }
+
+    void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override {
+        if (bitmap == nullptr || !bitmap->Valid()) return;
+        ID2D1RenderTarget* target = impl_.target.Get();
+        if (target == nullptr) return;
+        // Built per call: images are painted rarely compared to text, and caching
+        // D2D bitmaps per source would need a lifetime story the service already owns.
+        ComPtr<ID2D1Bitmap> d2dBitmap;
+        const D2D1_BITMAP_PROPERTIES props =
+            D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                                                     D2D1_ALPHA_MODE_PREMULTIPLIED));
+        // The decoder hands out straight (non-premultiplied) alpha; D2D wants
+        // premultiplied, so convert on the way in. Getting this wrong shows up as bright
+        // fringes around transparent edges.
+        std::vector<uint32_t> premul(bitmap->pixels.size());
+        for (size_t i = 0; i < bitmap->pixels.size(); ++i) {
+            const uint32_t p = bitmap->pixels[i];
+            const uint32_t a = (p >> 24) & 0xFF;
+            const uint32_t r = ((p >> 16) & 0xFF) * a / 255;
+            const uint32_t g = ((p >> 8) & 0xFF) * a / 255;
+            const uint32_t b = (p & 0xFF) * a / 255;
+            premul[i] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+        if (FAILED(target->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(bitmap->width),
+                                                    static_cast<UINT32>(bitmap->height)),
+                                        premul.data(),
+                                        static_cast<UINT32>(bitmap->width) * 4, props,
+                                        d2dBitmap.GetAddressOf()))) {
+            return;
+        }
+        const D2D1_RECT_F dst = RectF(dest);
+        // A circular avatar needs the bitmap masked to an ellipse. D2D does that with a
+        // layer + geometry mask rather than a clip, because an elliptical clip is not the
+        // same thing as an axis-aligned one -- clipping to the bounding box would leave
+        // the corners of the picture visible.
+        if (clip != nullptr) {
+            ComPtr<ID2D1Factory> factory;
+            target->GetFactory(factory.GetAddressOf());
+            if (factory) {
+                ComPtr<ID2D1EllipseGeometry> ellipse;
+                const D2D1_ELLIPSE e =
+                    D2D1::Ellipse(D2D1::Point2F(dst.left + (dst.right - dst.left) * 0.5f,
+                                                dst.top + (dst.bottom - dst.top) * 0.5f),
+                                  (dst.right - dst.left) * 0.5f,
+                                  (dst.bottom - dst.top) * 0.5f);
+                if (SUCCEEDED(factory->CreateEllipseGeometry(e, ellipse.GetAddressOf()))) {
+                    ComPtr<ID2D1Layer> layer;
+                    D2D1_LAYER_PARAMETERS params = D2D1::LayerParameters();
+                    params.geometricMask = ellipse.Get();
+                    params.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
+                    params.contentBounds = dst;
+                    if (SUCCEEDED(target->CreateLayer(nullptr, layer.GetAddressOf()))) {
+                        target->PushLayer(params, layer.Get());
+                        target->DrawBitmap(d2dBitmap.Get(), dst, 1.0f,
+                                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                        target->PopLayer();
+                        return;
+                    }
+                }
+            }
+        }
+        target->DrawBitmap(d2dBitmap.Get(), dst, 1.0f,
+                           D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+
+    void DrawLine(const Point& a, const Point& b, const Color& c, float width) override {
+        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        if (!brush) return;
+        impl_.target->DrawLine(D2D1::Point2F(a.x, a.y), D2D1::Point2F(b.x, b.y), brush, width);
+    }
+
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
                   TextAlign align) override {
         auto* brush = impl_.Brush(ResolveColor(c, palette_));

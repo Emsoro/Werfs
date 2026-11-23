@@ -18,6 +18,9 @@ public:
     void FillRect(const Rect& r, const Color& c) override;
     void FillRoundRect(const Rect& r, float radius, const Color& c) override;
     void StrokeRect(const Rect& r, const Color& c, float width, float radius) override;
+    void DrawLine(const Point& a, const Point& b, const Color& c, float width) override;
+    void FillEllipse(const Rect& r, const Color& c) override;
+    void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override;
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
                   TextAlign align) override;
     void PushClip(const Rect& r) override;
@@ -61,6 +64,9 @@ public:
     void FillRect(const Rect& r, const Color& c) override;
     void FillRoundRect(const Rect& r, float radius, const Color& c) override;
     void StrokeRect(const Rect& r, const Color& c, float width, float radius) override;
+    void DrawLine(const Point& a, const Point& b, const Color& c, float width) override;
+    void FillEllipse(const Rect& r, const Color& c) override;
+    void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override;
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize, int weight,
                   TextAlign align) override;
     void PushClip(const Rect& r) override;

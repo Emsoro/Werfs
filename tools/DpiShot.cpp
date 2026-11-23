@@ -81,6 +81,26 @@ struct Ctx final : PaintCtx {
     void StrokeRect(const Rect& r, const Color& c, float w, float rad) override {
         if (auto* b = Brush(ResolveColor(c, pal))) rt->DrawRoundedRectangle(D2D1::RoundedRect(R(r), rad, rad), b, w);
     }
+    void FillEllipse(const Rect& r, const Color& c) override {
+        if (auto* b = Brush(ResolveColor(c, pal))) {
+            rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(r.x + r.w * 0.5f, r.y + r.h * 0.5f),
+                                          r.w * 0.5f, r.h * 0.5f),
+                            b);
+        }
+    }
+    void DrawLine(const Point& a, const Point& b, const Color& c, float w) override {
+        if (auto* brush = Brush(ResolveColor(c, pal))) {
+            rt->DrawLine(D2D1::Point2F(a.x, a.y), D2D1::Point2F(b.x, b.y), brush, w);
+        }
+    }
+    void DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) override {
+        // This tool renders the page at a chosen DPI for inspection; a picture failing to
+        // draw here is acceptable (it never declares one), so this is intentionally a
+        // no-op rather than a second copy of the premultiply-and-blit path.
+        (void)bitmap;
+        (void)dest;
+        (void)clip;
+    }
     void DrawText(const std::wstring& t, const Rect& r, const Color& c, float size, int weight,
                   TextAlign a) override {
         auto* b = Brush(ResolveColor(c, pal));

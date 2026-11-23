@@ -1546,6 +1546,16 @@ private:
             }
         }
         if (!modeSet) out.mode = desc.defaultMode;
+        // A DataContext binding hands an object DOWN to a subtree. The child has
+        // no way to write a meaningful value back (nothing but the binding ever
+        // changes the local context), so promising TwoWay here would be a silent
+        // no-op. Reject it at load time with an explanation instead.
+        if (desc.name == "DataContext" &&
+            (out.mode == BindingMode::TwoWay || out.mode == BindingMode::OneWayToSource)) {
+            error = "DataContext bindings are OneWay/OneTime: they assign a child's data source"
+                    " and cannot write back through it";
+            return false;
+        }
         if (path.empty()) {
             error = "binding path is empty (v0.5 does not support '{Binding}' on the data context itself)";
             return false;

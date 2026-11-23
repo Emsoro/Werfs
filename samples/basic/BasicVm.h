@@ -27,6 +27,12 @@ public:
     BasicViewVm() {
         clickCommand_.Set(std::make_shared<wui::RelayCommand>([this] { OnClick(); }));
         resetCommand_.Set(std::make_shared<wui::RelayCommand>([this] { OnReset(); }));
+        // A link with a command that does nothing visible would be indistinguishable from
+        // a broken one, so this one changes its own caption.
+        openLinkCommand_.Set(std::make_shared<wui::RelayCommand>([this] {
+            LinkText.Set(LinkText.Get() == L"Open the docs" ? L"Opened — the command ran"
+                                                           : L"Open the docs");
+        }));
 
         Make("Heading", Heading);
         Make("Blurb", Blurb);
@@ -38,6 +44,41 @@ public:
         Make("ClickCommand", clickCommand_);
         Make("ResetCommand", resetCommand_);
 
+        // The value-holding controls. Each pair is a control plus the caption that
+        // reports it: a control bound to nothing looks the same as a working one, and
+        // a caption is what proves the write actually reached the ViewModel.
+        Make("IsBold", IsBold);
+        Make("BoldStatus", BoldStatus);
+        Make("IsNotifying", IsNotifying);
+        Make("NotifyStatus", NotifyStatus);
+        Make("Volume", Volume);
+        Make("VolumeText", VolumeText);
+        Make("IsComfortable", IsComfortable);
+        Make("IsCompact", IsCompact);
+        Make("Quantity", Quantity);
+        Make("IsQuantityValid", IsQuantityValid);
+        Make("QuantityStatus", QuantityStatus);
+        Make("Passphrase", Passphrase);
+        Make("PassphraseStatus", PassphraseStatus);
+        Make("Progress", Progress);
+        Make("BadgeCount", BadgeCount);
+        Make("UserName", UserName);
+        Make("BarTitle", BarTitle);
+        Make("BarMessage", BarMessage);
+        Make("IsBarOpen", IsBarOpen);
+        Make("LinkText", LinkText);
+        Make("OpenLinkCommand", openLinkCommand_);
+
+        // Each control that holds state gets its own observer, so the caption is derived
+        // in one place instead of every control writing a caption as a side effect.
+        IsBold.Subscribe(this);
+        IsNotifying.Subscribe(this);
+        Volume.Subscribe(this);
+        IsComfortable.Subscribe(this);
+        IsCompact.Subscribe(this);
+        Quantity.Subscribe(this);
+        Passphrase.Subscribe(this);
+
         // Watch IsAgreed so the caption question tracks the box. An observer
         // (rather than the page calling back) keeps the derivation inside the
         // ViewModel, where it belongs -- the markup stays declarative.
@@ -48,17 +89,68 @@ public:
         // binding, which makes a broken sample look like a working one.
         Greeting.Set(L"Hello, WAML");
         AgreementText.Set(L"Not agreed yet.");
+
+        BoldStatus.Set(L"Off — click it and this line follows.");
+        NotifyStatus.Set(L"Off.");
+        VolumeText.Set(L"Volume 4 of 10.");
+        QuantityStatus.Set(L"12 items is a valid number.");
+        PassphraseStatus.Set(L"5 characters, masked above.");
+        Progress.Set(0.45);
+        BadgeCount.Set(L"3");
+        UserName.Set(L"Ada Lovelace");
+        BarTitle.Set(L"A bar collapses when dismissed");
+        BarMessage.Set(L"Press the ✕ above; the controls below move up rather than "
+                       L"leaving a gap.");
+        LinkText.Set(L"Open the docs");
+        Quantity.Set(L"12");
+        Volume.Set(4);
+        IsComfortable.Set(true);
+        Passphrase.Set(L"secret");
     }
 
-    ~BasicViewVm() override { IsAgreed.Unsubscribe(this); }
+    ~BasicViewVm() override {
+        IsAgreed.Unsubscribe(this);
+        IsBold.Unsubscribe(this);
+        IsNotifying.Unsubscribe(this);
+        Volume.Unsubscribe(this);
+        IsComfortable.Unsubscribe(this);
+        IsCompact.Unsubscribe(this);
+        Quantity.Unsubscribe(this);
+        Passphrase.Unsubscribe(this);
+    }
 
 private:
-    // Only IsAgreed is observed; any other source reaching here is a bug.
+    // One observer for many sources: the caption is chosen by which property arrived,
+    // so adding a control does not mean adding another observer type.
     void OnSourceChanged(const wui::Value& value) override {
         bool agreed = false;
         if (wui::ValueCodec<bool>::From(value, agreed)) {
             AgreementText.Set(agreed ? L"Thanks — agreed." : L"Not agreed yet.");
         }
+        BoldStatus.Set(IsBold.Get() ? L"On — the button stays down while the value is true."
+                                    : L"Off — click it and this line follows.");
+        NotifyStatus.Set(IsNotifying.Get() ? L"On — the ViewModel was written by the switch."
+                                           : L"Off.");
+        VolumeText.Set(L"Volume " + std::to_wstring(static_cast<int>(Volume.Get())) +
+                       L" of 10 — one decimal step per notch.");
+        // The radio pair is exclusive, so ONE of them is always true; deriving both
+        // captions from a single source keeps them from disagreeing.
+        if (IsCompact.Get()) IsComfortable.Set(false);
+        // NumberBox's rule lives in the control; the sample only needs "is this a
+        // number", so it asks the control rather than duplicating the parse.
+        const std::wstring qtyText = Quantity.Get();
+        double parsed = 0;
+        // wcstod must consume the whole string or "12abc" would read as 12.
+        wchar_t* end = nullptr;
+        const double numeric = qtyText.empty() ? 0.0 : std::wcstod(qtyText.c_str(), &end);
+        const bool valid = !qtyText.empty() && end != nullptr && *end == L'\0';
+        parsed = numeric;
+        IsQuantityValid.Set(valid);
+        QuantityStatus.Set(valid ? qtyText + L" is a valid number."
+                                 : L"\"" + qtyText + L"\" is not a number — the box shows a red edge.");
+        PassphraseStatus.Set(std::to_wstring(Passphrase.Get().size()) +
+                             L" characters, masked above. The text is readable here because "
+                             L"the mask is a paint concern.");
     }
 
 public:
@@ -97,9 +189,36 @@ public:
     wui::ObservableProperty<bool> IsAgreed{"IsAgreed", false};
     wui::ObservableProperty<std::wstring> AgreementText{"AgreementText", L""};
 
+    // Toggles and value-holding controls.
+    wui::ObservableProperty<bool> IsBold{"IsBold", false};
+    wui::ObservableProperty<std::wstring> BoldStatus{"BoldStatus", L""};
+    wui::ObservableProperty<bool> IsNotifying{"IsNotifying", false};
+    wui::ObservableProperty<std::wstring> NotifyStatus{"NotifyStatus", L""};
+    wui::ObservableProperty<double> Volume{"Volume", 0.0};
+    wui::ObservableProperty<std::wstring> VolumeText{"VolumeText", L""};
+    wui::ObservableProperty<bool> IsComfortable{"IsComfortable", true};
+    wui::ObservableProperty<bool> IsCompact{"IsCompact", false};
+    // Text, not a number: the point of NumberBox is that the FIELD may hold something
+    // that is not a number, and the ViewModel has to be able to see that.
+    wui::ObservableProperty<std::wstring> Quantity{"Quantity", L""};
+    wui::ObservableProperty<bool> IsQuantityValid{"IsQuantityValid", true};
+    wui::ObservableProperty<std::wstring> QuantityStatus{"QuantityStatus", L""};
+    wui::ObservableProperty<std::wstring> Passphrase{"Passphrase", L""};
+    wui::ObservableProperty<std::wstring> PassphraseStatus{"PassphraseStatus", L""};
+
+    // Status and decoration.
+    wui::ObservableProperty<double> Progress{"Progress", 0.0};
+    wui::ObservableProperty<std::wstring> BadgeCount{"BadgeCount", L"0"};
+    wui::ObservableProperty<std::wstring> UserName{"UserName", L""};
+    wui::ObservableProperty<std::wstring> BarTitle{"BarTitle", L""};
+    wui::ObservableProperty<std::wstring> BarMessage{"BarMessage", L""};
+    wui::ObservableProperty<bool> IsBarOpen{"IsBarOpen", true};
+    wui::ObservableProperty<std::wstring> LinkText{"LinkText", L"Link"};
+
 private:
     wui::ObservableProperty<wui::RefPtr> clickCommand_{"ClickCommand"};
     wui::ObservableProperty<wui::RefPtr> resetCommand_{"ResetCommand"};
+    wui::ObservableProperty<wui::RefPtr> openLinkCommand_{"OpenLinkCommand"};
 };
 
 } // namespace sample
