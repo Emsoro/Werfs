@@ -594,11 +594,11 @@ Widget* Button::HitTest(const Point& p) {
     return bounds_.Contains(p) ? this : nullptr;
 }
 
-void Button::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+void Button::OnPointerDown(const Point&) { SetPressed(true); Invalidate(AffectsRender); }
 
 void Button::OnPointerUp(const Point& local) {
     const bool wasPressed = pressed_;
-    pressed_ = false;
+    SetPressed(false);
     Invalidate(AffectsRender);
     if (wasPressed && bounds_.Contains(local)) Invoke();
 }
@@ -3284,11 +3284,11 @@ Widget* ToggleButton::HitTest(const Point& p) {
     return bounds_.Contains(p) ? this : nullptr;
 }
 
-void ToggleButton::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+void ToggleButton::OnPointerDown(const Point&) { SetPressed(true); Invalidate(AffectsRender); }
 
 void ToggleButton::OnPointerUp(const Point& local) {
     const bool wasPressed = pressed_;
-    pressed_ = false;
+    SetPressed(false);
     // Only a press that both started and ended inside counts, so dragging off cancels
     // -- the behaviour every button has and users notice immediately when missing.
     if (wasPressed && bounds_.Contains(local)) Toggle();
@@ -3455,11 +3455,11 @@ Widget* HyperlinkButton::HitTest(const Point& p) {
     return bounds_.Contains(p) ? this : nullptr;
 }
 
-void HyperlinkButton::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+void HyperlinkButton::OnPointerDown(const Point&) { SetPressed(true); Invalidate(AffectsRender); }
 
 void HyperlinkButton::OnPointerUp(const Point& local) {
     const bool wasPressed = pressed_;
-    pressed_ = false;
+    SetPressed(false);
     if (wasPressed && bounds_.Contains(local)) Invoke();
     Invalidate(AffectsRender);
 }
@@ -3471,7 +3471,7 @@ void HyperlinkButton::OnPointerEnter() {
 
 void HyperlinkButton::OnPointerLeave() {
     hovered_ = false;
-    pressed_ = false;
+    SetPressed(false);
     Invalidate(AffectsRender);
 }
 
@@ -3677,7 +3677,7 @@ Widget* RepeatButton::HitTest(const Point& p) {
 }
 
 void RepeatButton::OnPointerDown(const Point&) {
-    pressed_ = true;
+    SetPressed(true);
     // Fires on press, not release: a repeat button is for stepping a value, and waiting
     // for release makes holding pointless.
     Invoke();
@@ -3685,7 +3685,7 @@ void RepeatButton::OnPointerDown(const Point&) {
 }
 
 void RepeatButton::OnPointerUp(const Point&) {
-    pressed_ = false;
+    SetPressed(false);
     Invalidate(AffectsRender);
 }
 
@@ -4236,10 +4236,10 @@ Widget* Flyout::HitTest(const Point& p) {
     return bounds_.Contains(p) ? this : nullptr;
 }
 
-void Flyout::OnPointerDown(const Point&) { pressed_ = true; Invalidate(AffectsRender); }
+void Flyout::OnPointerDown(const Point&) { SetPressed(true); Invalidate(AffectsRender); }
 
 void Flyout::OnPointerUp(const Point& local) {
-    pressed_ = false;
+    SetPressed(false);
     // Toggling needs only a release inside: unlike Button, a flyout is a toggle, so a
     // release without a matching press (synthetic click, keyboard activation, a test) must
     // still work. Requiring the press made the control look dead everywhere except the one
@@ -4258,7 +4258,7 @@ void Flyout::OnPointerEnter() {
 
 void Flyout::OnPointerLeave() {
     hovered_ = false;
-    pressed_ = false;
+    SetPressed(false);
     Invalidate(AffectsRender);
 }
 

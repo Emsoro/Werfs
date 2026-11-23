@@ -2,6 +2,7 @@
 // WAML + MVVM spike test suite.
 #include "TestHarness.h"
 
+#include "Animation.h"
 #include "Controls.h"
 #include "Core.h"
 #include "Diagnostics.h"
@@ -3702,6 +3703,345 @@ TEST("tooltip: shows on hover and passes clicks through") {
     RecordingPaintContext after;
     t->OnPaint(after, MakePalette(ThemeKind::Light));
     CHECK(after.Text().find("helpful") == std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Animation and visual states.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Advances every animation by exactly `seconds`, in fixed 60 Hz steps. Time is injected
+// rather than read from the system, so these assertions are exact instead of flaky.
+void AdvanceAnimations(float seconds) {
+    const float step = 1.0f / 60.0f;
+    float elapsed = 0.0f;
+    while (elapsed < seconds - 1e-6f) {
+        AnimationHost::AdvanceAll(step);
+        elapsed += step;
+    }
+}
+
+} // namespace
+
+TEST("easing: the four curves agree at the endpoints and differ in the middle") {
+    // Every curve must map 0 to 0 and 1 to 1, or a transition would visibly jump at one
+    // end. The middle is where they earn their names.
+    for (Easing e : {Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut}) {
+        CHECK_NEAR(Ease(e, 0.0f), 0.0f, 1e-5);
+        CHECK_NEAR(Ease(e, 1.0f), 1.0f, 1e-5);
+    }
+    // EaseIn starts slow, so at the midpoint it is behind linear.
+    CHECK(Ease(Easing::EaseIn, 0.5f) < 0.5f);
+    // EaseOut is its mirror.
+    CHECK(Ease(Easing::EaseOut, 0.5f) > 0.5f);
+    CHECK_NEAR(Ease(Easing::EaseIn, 0.5f) + Ease(Easing::EaseOut, 0.5f), 1.0f, 1e-5);
+    CHECK_NEAR(Ease(Easing::EaseInOut, 0.5f), 0.5f, 1e-5);
+}
+
+TEST("animation: a number eases to its destination and lands exactly") {
+    AnimationHost::ResetAll();
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("Button", "Content=\"Go\" FontSize=\"10\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    const int slot = b->SlotOf("FontSize");
+
+    SlotAnimation anim;
+    anim.slot = slot;
+    anim.to = Value::Number(20.0);
+    anim.duration = 0.5f;
+    anim.easing = Easing::Linear;
+    auto host = AnimationHost::Attach(b);
+    host->Start({anim});
+    CHECK(host->Busy());
+
+    AdvanceAnimations(0.25f);
+    const float mid = b->Get<float>(slot);
+    // Halfway through a linear 10->20 is 15, within one 60 Hz step of it.
+    CHECK_NEAR(mid, 15.0f, 0.5f);
+    CHECK(mid > 10.0f);
+    CHECK(mid < 20.0f);
+
+    AdvanceAnimations(0.4f);
+    // Landed EXACTLY on the destination, not at 19.98-something.
+    CHECK_NEAR(b->Get<float>(slot), 20.0f, 1e-4);
+    CHECK(!host->Busy());
+}
+
+TEST("animation: a zero duration applies the value immediately") {
+    AnimationHost::ResetAll();
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("Button", "Content=\"Go\" FontSize=\"10\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    const int slot = b->SlotOf("FontSize");
+    SlotAnimation anim;
+    anim.slot = slot;
+    anim.to = Value::Number(30.0);
+    anim.duration = 0.0f;
+    auto host = AnimationHost::Attach(b);
+    host->Start({anim});
+    // A duration of zero means "set it", not "animate forever".
+    AdvanceAnimations(0.05f);
+    CHECK_NEAR(b->Get<float>(slot), 30.0f, 1e-4);
+    CHECK(!host->Busy());
+}
+
+TEST("animation: a delay holds the value until it elapses") {
+    AnimationHost::ResetAll();
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("Button", "Content=\"Go\" FontSize=\"10\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    const int slot = b->SlotOf("FontSize");
+    SlotAnimation anim;
+    anim.slot = slot;
+    anim.to = Value::Number(20.0);
+    anim.duration = 0.2f;
+    anim.delay = 0.3f;
+    auto host = AnimationHost::Attach(b);
+    host->Start({anim});
+    AdvanceAnimations(0.2f); // inside the delay
+    CHECK_NEAR(b->Get<float>(slot), 10.0f, 1e-4);
+    CHECK(host->Busy());
+    AdvanceAnimations(0.4f); // delay plus duration
+    CHECK_NEAR(b->Get<float>(slot), 20.0f, 1e-4);
+}
+
+TEST("animation: starting a new timeline on a busy slot continues from where it is") {
+    AnimationHost::ResetAll();
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("Button", "Content=\"Go\" FontSize=\"0\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    const int slot = b->SlotOf("FontSize");
+    auto host = AnimationHost::Attach(b);
+
+    SlotAnimation up;
+    up.slot = slot;
+    up.to = Value::Number(100.0);
+    up.duration = 1.0f;
+    host->Start({up});
+    AdvanceAnimations(0.5f);
+    const float halfway = b->Get<float>(slot);
+    CHECK(halfway > 20.0f);
+
+    // Reverse mid-flight. The new timeline must start from the CURRENT value, not from 0:
+    // restarting would make the control visibly jump back before moving again.
+    SlotAnimation down;
+    down.slot = slot;
+    down.to = Value::Number(0.0);
+    down.duration = 1.0f;
+    host->Start({down});
+    const float justAfter = b->Get<float>(slot);
+    CHECK_NEAR(justAfter, halfway, 2.0f);
+    CHECK(host->Count() == 1); // replaced, not stacked
+}
+
+TEST("visualstate: entering a state applies its setters, leaving restores the style value") {
+    AnimationHost::ResetAll();
+    InstallText();
+    DiagnosticBag bag;
+    // Transition="0" so the assertions are about the state mechanism, not about timing.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="14"/>
+    <VisualState Name="PointerOver" Transition="0">
+      <Setter Property="FontSize" Value="20"/>
+    </VisualState>
+  </Style>
+  <Button x:Name="b" Content="Go" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    if (!doc) std::printf("    diag: %s\n", bag.ToText().c_str());
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* b = root->FindByName("b");
+    CHECK(b != nullptr);
+    if (!b) return;
+    CHECK(b->VisualStates() != nullptr);
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 14.0f, 0.01);
+
+    b->OnPointerEnter();
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 20.0f, 0.01);
+
+    // Leaving must restore the STYLE's value, not a default and not the state's value.
+    b->OnPointerLeave();
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 14.0f, 0.01);
+}
+
+TEST("visualstate: pressed outranks hover, and Disabled outranks both") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="10"/>
+    <VisualState Name="PointerOver" Transition="0"><Setter Property="FontSize" Value="20"/></VisualState>
+    <VisualState Name="Pressed" Transition="0"><Setter Property="FontSize" Value="30"/></VisualState>
+    <VisualState Name="Disabled" Transition="0"><Setter Property="FontSize" Value="40"/></VisualState>
+  </Style>
+  <Button x:Name="b" Content="Go" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* b = root->FindByName("b");
+    CHECK(b != nullptr);
+    if (!b) return;
+    const int slot = b->SlotOf("FontSize");
+
+    b->SetHovered(true);
+    CHECK_NEAR(b->Get<float>(slot), 20.0f, 0.01);
+    b->SetPressed(true);
+    // Pressed wins: a press implies the pointer is over it, so hover must not mask it.
+    CHECK_NEAR(b->Get<float>(slot), 30.0f, 0.01);
+    b->SetPressed(false);
+    CHECK_NEAR(b->Get<float>(slot), 20.0f, 0.01);
+
+    b->SetSlotValue(b->SlotOf("IsEnabled"), Value::Bool(false));
+    b->UpdateVisualState(false);
+    // Disabled outranks everything: a disabled control must not advertise interactivity.
+    CHECK_NEAR(b->Get<float>(slot), 40.0f, 0.01);
+}
+
+TEST("visualstate: leaving also clears press, so a drag-off cannot stick") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="10"/>
+    <VisualState Name="Pressed" Transition="0"><Setter Property="FontSize" Value="30"/></VisualState>
+  </Style>
+  <Button x:Name="b" Content="Go" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* b = root->FindByName("b");
+    CHECK(b != nullptr);
+    if (!b) return;
+    b->SetHovered(true);
+    b->SetPressed(true);
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 30.0f, 0.01);
+    // Drag off a pressed button: the pointer-up goes elsewhere, so leaving must clear the
+    // press flag or the control stays "pressed" forever.
+    b->OnPointerLeave();
+    CHECK(!b->Pressed());
+    CHECK_NEAR(b->Get<float>(b->SlotOf("FontSize")), 10.0f, 0.01);
+}
+
+TEST("visualstate: a transition animates instead of snapping") {
+    AnimationHost::ResetAll();
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <Setter Property="FontSize" Value="10"/>
+    <VisualState Name="PointerOver" Transition="0.5">
+      <Setter Property="FontSize" Value="20"/>
+    </VisualState>
+  </Style>
+  <Button x:Name="b" Content="Go" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* b = root->FindByName("b");
+    CHECK(b != nullptr);
+    if (!b) return;
+    const int slot = b->SlotOf("FontSize");
+
+    b->OnPointerEnter();
+    // Immediately after entering, it is still near the old value: this is a transition.
+    CHECK_NEAR(b->Get<float>(slot), 10.0f, 1.0f);
+    AdvanceAnimations(0.25f);
+    const float mid = b->Get<float>(slot);
+    CHECK(mid > 11.0f);
+    CHECK(mid < 20.0f);
+    AdvanceAnimations(0.4f);
+    CHECK_NEAR(b->Get<float>(slot), 20.0f, 1e-3);
+}
+
+TEST("visualstate: an unknown state name is refused at load time with the valid list") {
+    DiagnosticBag bag;
+    // A typo here is otherwise invisible: the state is simply never entered, and the hover
+    // looks broken with no explanation.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <VisualState Name="Pointerover" Transition="0">
+      <Setter Property="FontSize" Value="20"/>
+    </VisualState>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    const std::string text = bag.ToText();
+    CHECK(text.find("WAML0104") != std::string::npos);
+    CHECK(text.find("PointerOver") != std::string::npos); // the valid list
+}
+
+TEST("visualstate: an empty state is a load error") {
+    DiagnosticBag bag;
+    // "When hovered, do this" with nothing to do is a mistake worth reporting.
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <VisualState Name="PointerOver"><Setter Property="FontSize" Value="20"/></VisualState>
+    <VisualState Name="Pressed"/>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0106") != std::string::npos);
+}
+
+TEST("visualstate: a bad Transition value is a load error") {
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button">
+    <VisualState Name="Pressed" Transition="fast">
+      <Setter Property="FontSize" Value="20"/>
+    </VisualState>
+  </Style>
+</Page>)WAML",
+                       bag);
+    CHECK(doc == nullptr);
+    CHECK(bag.ToText().find("WAML0104") != std::string::npos);
+}
+
+TEST("visualstate: an element with no states pays nothing") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <Style x:Key="S" TargetType="Button"><Setter Property="FontSize" Value="10"/></Style>
+  <Button x:Name="b" Content="Go" Style="{StaticResource S}"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* b = root->FindByName("b");
+    CHECK(b != nullptr);
+    if (!b) return;
+    // No state host allocated, so hover costs nothing on the controls that do not define
+    // states -- which is most of them.
+    CHECK(b->VisualStates() == nullptr);
 }
 
 // A widget plus the categories the shell tests need.

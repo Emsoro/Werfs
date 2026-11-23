@@ -5,6 +5,7 @@
 
 // Needed for the complete StyleTriggerHost type: ~Widget resets a shared_ptr to it,
 // and shared_ptr's deleter must see the full definition.
+#include "VisualStates.h"
 #include "../waml/StyleTriggers.h"
 
 namespace wui {
@@ -407,10 +408,37 @@ Widget* Widget::HitTest(const Point& p) {
     return bounds_.Contains(local) ? this : nullptr;
 }
 
-void Widget::OnPointerEnter() { hovered_ = true; SetDirtyUpwards(AffectsRender); }
+void Widget::OnPointerEnter() {
+    hovered_ = true;
+    UpdateVisualState();
+    SetDirtyUpwards(AffectsRender);
+}
 void Widget::OnPointerLeave() {
     hovered_ = false;
+    // Leaving also clears press: the pointer-up that would have cleared it went somewhere
+    // else, and a control stuck in "Pressed" after a drag-off is the classic bug here.
+    pressed_ = false;
+    UpdateVisualState();
     SetDirtyUpwards(AffectsRender);
+}
+
+void Widget::UpdateVisualState(bool animate) {
+    if (!visualStateHost_) return;
+    // Escalation order, decided in ONE place so every control agrees:
+    //   Disabled > Pressed > PointerOver > Focused > Normal
+    //
+    // Pressed outranks hover because a press implies the pointer is over it. Focus ranks
+    // below hover because a focused control not being pointed at should not look identical
+    // to one that is.
+    const int slotEnabled = SlotOf("IsEnabled");
+    const bool enabled = slotEnabled < 0 || Get<bool>(slotEnabled);
+    const char* target = "Normal";
+    if (!enabled) target = "Disabled";
+    else if (pressed_) target = "Pressed";
+    else if (hovered_) target = "PointerOver";
+    else if (focused_) target = "Focused";
+    if (animate) visualStateHost_->GoTo(target);
+    else visualStateHost_->SnapTo(target);
 }
 void Widget::OnPointerDown(const Point&) {}
 void Widget::OnPointerUp(const Point&) {}
@@ -425,9 +453,24 @@ bool Widget::OnPointerWheel(float deltaLines) {
     return false;
 }
 
+void Widget::SetPressed(bool pressed) {
+    if (pressed_ == pressed) return;
+    pressed_ = pressed;
+    UpdateVisualState();
+    SetDirtyUpwards(AffectsRender);
+}
+
+void Widget::SetHovered(bool hovered) {
+    if (hovered_ == hovered) return;
+    hovered_ = hovered;
+    UpdateVisualState();
+    SetDirtyUpwards(AffectsRender);
+}
+
 void Widget::SetFocused(bool focused) {
     if (focused_ == focused) return;
     focused_ = focused;
+    UpdateVisualState();
     // Losing focus is what UpdateSourceTrigger=LostFocus names. Flushing here
     // (rather than in the host) keeps the rule true for every focus owner,
     // including keyboard focus moved by a control itself.

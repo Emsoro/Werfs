@@ -20,6 +20,7 @@
 // including it after them leaves SoftwareRender.h unable to override.
 #undef DrawText
 
+#include "Animation.h"
 #include "Controls.h"
 #include "D2DRender.h"
 #include "Diagnostics.h"
@@ -372,6 +373,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_TIMER:
+        // Advance animations with REAL elapsed time, measured rather than assumed: the
+        // timer fires every 16 ms but Windows does not guarantee it, and easing against a
+        // drifting clock makes a 200 ms fade take 300 ms under load.
+        if (g.root) {
+            static LARGE_INTEGER last{};
+            static LARGE_INTEGER freq{};
+            if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+            LARGE_INTEGER now;
+            QueryPerformanceCounter(&now);
+            float dt = 1.0f / 60.0f;
+            if (last.QuadPart != 0 && freq.QuadPart != 0) {
+                dt = static_cast<float>(static_cast<double>(now.QuadPart - last.QuadPart) /
+                                        static_cast<double>(freq.QuadPart));
+                // Clamp: a window that was dragged or resumed can report a seconds-long
+                // delta, which would jump every animation straight to its end.
+                dt = std::clamp(dt, 0.0f, 0.1f);
+            }
+            last = now;
+            AnimationHost::AdvanceAll(dt);
+        }
         // Repaint only when something is actually dirty; a free-running repaint
         // wastes a core and hides invalidation bugs.
         if (g.root && (g.root->LayoutDirty() || g.root->PaintDirty()))

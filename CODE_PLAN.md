@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.8.1.0
+> 版本：0.9.0.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.8.1.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**45 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**192 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.9.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**45 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**205 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 192 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 205 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -84,7 +84,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 192 个单元/集成用例 |
+| `waml_tests.exe` | 205 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.8.1.0         [ ok ]
+file version: 0.9.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -692,6 +692,22 @@ if (explicitSize > 0) v = explicitSize;   // margin 被一起覆盖掉了
 - 修法不是补第三个 `ownLayer_ = false`，而是把它挪到唯一必经的位置——补丁式修复会让第四条路径重复同样的错误。
 
 ---
+
+## 7.26 【重要】加了动画之后，快照不再是确定性的
+
+**现象**：给按钮加了悬停过渡后，`waml_snapshot` 的 light pass 报 `deterministic=NO`，而 dark pass 正常。测试全绿、交互全绿，只有快照门禁变红。
+
+**根因**：快照工具为了防回归，会用**两个独立的渲染器把同一页面各渲一遍**，要求两次像素哈希完全一致。动画一引入，这个前提就被打破了：两次渲染之间动画仍在推进，第二遍拍到的是过渡中的另一帧。
+
+更隐蔽的是"哪个 pass 会红"看起来随机：它取决于该主题下哪些控件恰好有在跑的过渡。
+
+**修复**：快照是**静止帧**，所以渲染前必须让画面稳定下来——`AnimationHost::ResetAll()` 清掉上一轮的残留，然后用固定步长把当前过渡跑完，再排版、渲染。
+
+**教训**：
+
+- **动画与"可重复"天然冲突**，任何快照/截图/像素测试都会第一时间撞上它。这不是"以后再说"的问题，而是引入动画那一轮就必须解决的配套项。
+- **修复要选固定步长而不是"一次跳到底"**。一次大 `dt` 也能到终点，但那是靠钳制侥幸；固定步长让"稳定下来"这件事本身也是确定性的。
+- **测试的绿不代表门禁的绿**。205 个单元测试和 18 组交互全过，只有快照这一个环节能发现"同一个页面渲染两次不一样"。三道门禁各管一类风险，缺一道就会漏。
 
 # 第四部分：目标架构
 ## 8. 分层
@@ -1632,6 +1648,49 @@ headless 文本服务让等宽族名用 **0.6 em** 而不是 0.55 em 的字宽�
 
 
 
+
+### 13.5 `VisualState` 与动画
+
+**为什么 `VisualState` 不能用 `Trigger` 实现**
+
+这是这一层存在的唯一理由，值得写清楚。`Trigger` 监听"属性等于某值"——元素自己就知道条件是否成立。但**"指针正按在它上面"不是属性**：没有任何绑定能观察到它，也没有槽位可以比较。悬停和按下完全由输入层决定，所以必须有一套"由外部选择状态"的机制。
+
+于是两者分工明确，且都能在加载期校验：
+
+| | 谁决定 | 典型用途 |
+|---|---|---|
+| `Trigger` | 元素自己，看属性 | 勾选后变色、无文档时变灰 |
+| `VisualState` | 输入层 | `PointerOver` / `Pressed` / `Focused` / `Disabled` |
+
+**状态优先级与恢复**
+
+「本地 > 视觉状态 > 样式 > 默认」。状态赢样式，因为它是更具体更晚的决定；输给本地值，理由与触发器相同。
+
+离开状态必须**恢复**。做法是进入时把被改动的槽位原值存进 `saves_`，离开时写回。这样 `Normal` 不必把其它状态的每个属性再声明一遍——那会让每加一个状态就要在 `Normal` 里补一行，是最容易漏的形状。
+
+**`Normal` 必须隐式存在**。它是"没有任何状态修饰"。若当成"未知状态名"忽略掉，上一个状态的值会永久留在控件上——§7.26 就是这个。
+
+**时间注入，不读系统时钟**
+
+`AnimationHost::AdvanceAll(dt)` 由调用方给秒数。宿主从 `QueryPerformanceCounter` 算真实 `dt`（并钳制到 0.1 s，否则窗口拖动或休眠恢复后一个巨大的 `dt` 会把所有动画一次跳到终点）；测试给精确的 `1/60` 并断言中间值。
+
+内部读时钟会让每个动画测试天生不稳定——这是不可接受的取舍，因为动画的价值恰恰在于"中间过程正确"，而中间过程只有靠精确时间才能断言。
+
+**动画插值什么、不插值什么**
+
+只插值 `Number`、`Color`（字面量）、`Thickness`。`Text`/`Ref`/`Bool` 在终点一次性切换：插值字符串没有意义，假装能做到只会在前 0.2 秒产生垃圾。
+
+token 颜色（`Accent`、`CardBackground` 等）**不插值**，直接切换。token 由绘制器按主题解析，两个 token 之间的数值混合会得到一个既不属于亮色也不属于暗色的颜色。
+
+**中断时从当前值续接**
+
+新时间线在已有动画的槽位上接管时，`from` 取**当前值**而不是声明的起点。否则快速悬停再移开会让控件先跳回起点再往前走，肉眼可见的抖动。
+
+**布局属性不做动画**
+
+改 `Width`/`FontSize` 会触发重排，一帧里反复重排的代价与收益不成比例。目前的状态过渡只动绘制属性。
+
+
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
 **这是 `samples/usercontrol/` 的前置条件，也是 MVVM 价值兑现的关键一步**（详见 10a.6）。
@@ -1835,7 +1894,7 @@ headless 文本服务让等宽族名用 **0.6 em** 而不是 0.55 em 的字宽�
 
 # 附录
 
-## A. 测试清单（192 用例）
+## A. 测试清单（205 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1862,6 +1921,7 @@ headless 文本服务让等宽族名用 **0.6 em** 而不是 0.55 em 的字宽�
 | filedialog | 2 | 无宿主时安全返回、假实现往返路径 |
 | selector | 3 | 点击选中、双向往返、键盘移动并钳制 |
 | tabview | 5 | 切换标签换内容、点×不选中、+调命令、增删后选中有效、标题来自模型 |
+| **animation** | **13** | 四条缓动曲线端点一致/中点各异、数值插值并精确落点、零时长立即生效、延迟期间不动、被中断时从当前值续接（不跳回起点）；视觉状态进入生效/离开恢复、按下优先于悬停/禁用优先于两者、离开清除按下（拖出不会卡住）、过渡是动画而非瞬变、未知状态名报错并列出合法值、空状态报错、非法 Transition 报错、无状态不分配宿主 | 已实现 |
 | **p1-popups** | **11** | ComboBox 分隔符/派生 `SelectedText`/方向键直选/打开浮层/点外关闭不改值/选中回写模型；Flyout 承载子控件/绑定驱动 IsOpen/点外关闭同步回槽/逃生键/卡内点击不关闭；ToolTip 悬停显隐且不拦截点击；FontFamily 改变测量宽度/传递到绘制/缺省不记录字体/等宽族名识别 | 已实现 |
 | **shell** | **10** | 菜单打开/执行/关闭、点外关闭且吞掉点击、禁用命令不执行且菜单不关、子菜单两级 Esc、工具栏溢出与边界、溢出菜单携带隐藏命令、对话框模态性（吞点外）、Esc 映射取消、Enter 映射默认、快捷键解析与格式化一致 |
 | **style** | **19** | 样式生效、本地覆盖样式、`BasedOn` 继承与覆盖、裸 key 与 StaticResource 等价、后置声明可解析、单子元素容器内放 Style、以及错误路径：未定义 key（带建议）、未知属性（带建议）、非法值、类型不匹配、`BasedOn` 环、`BasedOn` 类型不一致、重复 key、缺 `TargetType`、Setter 内禁止绑定；另含模板内生效、样式计数 |

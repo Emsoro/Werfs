@@ -95,6 +95,21 @@ struct StyleTrigger {
     size_t offset = 0;
 };
 
+// One visual state: the setters that apply while it is the active one.
+//
+// Unlike a Trigger, a state is not evaluated from a property -- something has to CHOOSE
+// it. That is what makes hover/press states possible: the input layer knows the pointer
+// is down, and a property may not.
+struct VisualStateDesc {
+    std::string name;
+    std::vector<StyleSetter> setters;
+    // Seconds each setter takes to reach its value. One duration for the whole state
+    // rather than per-setter: a state that faded its background in 0.2 s but its border in
+    // 0.4 s looks broken, not sophisticated.
+    float transition = 0.15f;
+    size_t offset = 0;
+};
+
 struct StyleDesc {
     std::string key;         // x:Key
     std::string targetType;  // qualified, e.g. "wui/TextBlock"
@@ -103,6 +118,10 @@ struct StyleDesc {
     const StyleDesc* basedOn = nullptr; // resolved after the whole document is read
     std::vector<StyleSetter> setters;
     std::vector<StyleTrigger> triggers;
+    // Named visual states, e.g. "Normal", "PointerOver", "Pressed". Declared in the same
+    // <Style> so they inherit through BasedOn for free, and so an element reaches them
+    // with the Style it already has instead of a second reference to maintain.
+    std::vector<VisualStateDesc> states;
     size_t offset = 0;
 
     // True when this style, or anything it derives from, targets `t`.

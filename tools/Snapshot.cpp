@@ -2,6 +2,7 @@
 // Real D2D/DWrite snapshot tool: compiles a WAML file, instantiates it against a
 // sample ViewModel, renders through Direct2D into a WIC bitmap, and verifies
 // that the PNG round-trips. Also checks cross-run determinism.
+#include "Animation.h"
 #include "Controls.h"
 #include "Core.h"
 #include "D2DRender.h"
@@ -146,6 +147,14 @@ int main(int argc, char** argv) {
     const float scroll = argc > 5 ? static_cast<float>(std::atof(argv[5])) : 0.0f;
 
     auto build = [&]() {
+        // Settle animations BEFORE rendering. A snapshot is a still frame, and two passes
+        // over the same document must agree pixel for pixel -- but a transition left
+        // mid-flight would be captured at whatever fraction the frame happened to reach,
+        // which differs between passes and made the light pass non-deterministic the moment
+        // the page gained hover states.
+        //
+        // Resetting first also stops one pass from inheriting the previous pass's motion.
+        wui::AnimationHost::ResetAll();
         WidgetPtr root = doc->Instantiate(&text);
         root->SetDataContext(vmRef);
         root->ForceLayout(Size{static_cast<float>(width), static_cast<float>(height)});
@@ -159,6 +168,13 @@ int main(int argc, char** argv) {
             apply(root.get());
             root->ForceLayout(Size{static_cast<float>(width), static_cast<float>(height)});
         }
+        // Run any pending transitions to completion in fixed steps. Fixed rather than
+        // wall-clock so the settling is itself deterministic; a single huge step would also
+        // work but would land on the end value only by luck of the clamp.
+        for (int frame = 0; frame < 60 && wui::AnimationHost::AnyBusy(); ++frame) {
+            wui::AnimationHost::AdvanceAll(1.0f / 60.0f);
+        }
+        root->ForceLayout(Size{static_cast<float>(width), static_cast<float>(height)});
         return root;
     };
 

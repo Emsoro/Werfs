@@ -10,12 +10,14 @@
 
 #include "Controls.h"
 #include "Converters.h"
+#include "VisualStates.h"
 #include "StyleTriggers.h"
 #include "Widget.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace wui {
@@ -1164,8 +1166,8 @@ private:
         style->targetType = qualified;
         style->type = target;
 
-        // Setters, then triggers. Each is validated against the target type
-        // immediately: a Setter naming a property the type does not have is a load
+        // Setters, triggers, then visual states. Each is validated against the target
+        // type immediately: a Setter naming a property the type does not have is a load
         // error, not a silent no-op. That is the whole reason resolution happens now
         // rather than at paint time.
         for (const auto& child : raw.children) {
@@ -1173,9 +1175,12 @@ private:
                 CollectSetter(*child, *style, *target);
             } else if (child->tag == "Trigger") {
                 CollectTrigger(*child, *style, *target);
+            } else if (child->tag == "VisualState") {
+                CollectVisualState(*child, *style, *target);
             } else {
                 Error(DiagCode::BadContent, *child,
-                      "'Style' accepts only <Setter> and <Trigger> children (found '" +
+                      "'Style' accepts only <Setter>, <Trigger> and <VisualState> children "
+                      "(found '" +
                           child->tag + "')");
             }
         }
@@ -1286,7 +1291,98 @@ private:
     // Setter's, because a trigger watching a property that does not exist would
     // otherwise be permanently inactive with no explanation -- the same silent
     // failure a mistyped Setter would have.
-    void CollectTrigger(const RawNode& raw, StyleDesc& style, const TypeInfo& target) {
+    // One <VisualState Name="PointerOver" Transition="0.15"> with <Setter> children.
+//
+// A state that declares no setter is a load error rather than a silent no-op: the author
+// wrote "when hovered, do this", and a state that does nothing would make a hover appear
+// broken with no diagnostic to explain it.
+void CollectVisualState(const RawNode& raw, StyleDesc& style, const TypeInfo& target) {
+    VisualStateDesc state;
+    state.offset = raw.nameOffset;
+    std::string transitionText;
+
+    for (const auto& attr : raw.attrs) {
+        if (attr.name == "Name") {
+            state.name = attr.value;
+        } else if (attr.name == "Transition") {
+            transitionText = attr.value;
+        } else if (attr.name == "xmlns" || attr.name.rfind("xmlns:", 0) == 0) {
+            continue;
+        } else {
+            Error(DiagCode::BadAttribute, attr,
+                  "'VisualState' has no attribute '" + attr.name +
+                      "' (expected Name, Transition)");
+        }
+    }
+
+    if (state.name.empty()) {
+        Error(DiagCode::MissingProperty, raw, "'VisualState' requires Name");
+        return;
+    }
+    // Reject a name the host will never ask for, with the list of ones it will. A typo
+    // here ("Pointerover") is otherwise invisible: the state is simply never entered.
+    static const char* kKnown[] = {"Normal", "PointerOver", "Pressed", "Focused", "Disabled"};
+    bool known = false;
+    for (const char* name : kKnown) {
+        if (state.name == name) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) {
+        std::string list;
+        for (const char* name : kKnown) {
+            if (!list.empty()) list += ", ";
+            list += name;
+        }
+        Error(DiagCode::BadValue, raw,
+              "'" + state.name + "' is not a state the input layer enters (expected " + list +
+                  ")");
+        return;
+    }
+    if (!transitionText.empty()) {
+        double seconds = 0.0;
+        const char* begin = transitionText.c_str();
+        char* end = nullptr;
+        seconds = std::strtod(begin, &end);
+        if (end == begin || (end && *end != '\0') || seconds < 0.0) {
+            Error(DiagCode::BadValue, raw,
+                  "Transition must be a non-negative number of seconds (found '" +
+                      transitionText + "')");
+            return;
+        }
+        state.transition = static_cast<float>(seconds);
+    }
+
+    for (const auto& child : raw.children) {
+        if (child->tag != "Setter") {
+            Error(DiagCode::BadContent, *child,
+                  "'VisualState' accepts only <Setter> children (found '" + child->tag + "')");
+            continue;
+        }
+        CollectSetterInto(*child, state.setters, target);
+    }
+    if (state.setters.empty()) {
+        // Same code the equivalent Trigger case reports: a condition with nothing to do is
+        // a missing-property problem, not a malformed-content one, and one message for both
+        // keeps the diagnostic table honest.
+        Error(DiagCode::MissingProperty, raw,
+              "visual state '" + state.name + "' has no <Setter> children and can never "
+              "change anything");
+        return;
+    }
+
+    // Last declaration of a name wins, so a derived style can redefine a state the base
+    // already declared without both applying.
+    for (auto& existing : style.states) {
+        if (existing.name == state.name) {
+            existing = std::move(state);
+            return;
+        }
+    }
+    style.states.push_back(std::move(state));
+}
+void CollectTrigger(const RawNode& raw, StyleDesc& style, const TypeInfo& target) {
         StyleTrigger trigger;
         trigger.offset = raw.nameOffset;
         std::string propertyName;
@@ -1918,6 +2014,11 @@ WidgetPtr InstantiateNode(const NodeDesc& node, ITextService* text) {
         }
         widget->SetTriggerHost(
             StyleTriggerHost::Attach(widget.get(), chain, localSlots, node.styleOwner));
+        // Visual states ride on the same chain. Snap rather than fade on attach: the first
+        // paint must show the state the control is actually in, not a fade from nothing.
+        widget->SetVisualStateHost(
+            VisualStateHost::Attach(widget.get(), chain, node.styleOwner));
+        if (widget->VisualStates() != nullptr) widget->UpdateVisualState(false);
     }
     return widget;
 }

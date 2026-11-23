@@ -14,6 +14,8 @@
 #include "FileDialog.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "Mvvm.h"
+#include "Animation.h"
+#include "VisualStates.h"
 #include "Overlay.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (this tool defaults to the basic page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
@@ -134,6 +136,17 @@ Widget* TextBlockStartingWith(Widget* root, const std::wstring& prefix) {
 
 } // namespace
 
+namespace {
+
+// Advances every animation by `seconds` in fixed 60 Hz steps. The host feeds real elapsed
+// time from its timer; the harness feeds exact steps so the assertions can name values
+// rather than ranges.
+void AdvanceFrames(float seconds) {
+    const float step = 1.0f / 60.0f;
+    for (float t = 0.0f; t < seconds - 1e-6f; t += step) AnimationHost::AdvanceAll(step);
+}
+
+} // namespace
 int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm) {
     std::printf("\n[1] TextBlock bound from ViewModel\n");
     Widget* heading = nullptr;
@@ -330,11 +343,76 @@ int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm)
         }
     }
 
+    std::printf("\n[17] Visual states: hover animates and leaving restores\n");
+    {
+        AnimationHost::ResetAll();
+        Widget* chilled = nullptr;
+        std::function<void(Widget*)> findLively = [&](Widget* w) {
+            if (!w || chilled) return;
+            if (w->VisualStates() != nullptr &&
+                w->Get<std::wstring>(w->SlotOf("Content")) == L"Hover me") {
+                chilled = w;
+                return;
+            }
+            for (auto& c : w->Children()) findLively(c.get());
+        };
+        findLively(root);
+        Expect(chilled != nullptr, "the page has a styled button");
+        if (chilled != nullptr) {
+            const int slot = chilled->SlotOf("FontSize");
+            const float rest = chilled->Get<float>(slot);
+            chilled->OnPointerEnter();
+            // A transition, not a snap: the very first frame is still near the old size.
+            AdvanceFrames(0.05f);
+            const float early = chilled->Get<float>(slot);
+            Expect(early > rest, "hovering started growing it");
+            Expect(early < rest + 2.0f, "and did not jump straight to the target");
+            AdvanceFrames(0.4f);
+            const float full = chilled->Get<float>(slot);
+            Expect(full > rest, "after the transition it is larger");
+
+            // Release outside: leaving must return to the rest size, which is the part
+            // that breaks when a state forgets to restore.
+            chilled->OnPointerLeave();
+            AdvanceFrames(0.4f);
+            Expect(std::abs(chilled->Get<float>(slot) - rest) < 0.05f,
+                   "leaving restored the style's value");
+            Expect(chilled->VisualStates()->Current() == "Normal", "and the state is Normal");
+        }
+    }
+
+    std::printf("\n[18] Visual states: Disabled outranks hover\n");
+    {
+        AnimationHost::ResetAll();
+        Widget* disabled = nullptr;
+        std::function<void(Widget*)> findDisabled = [&](Widget* w) {
+            if (!w || disabled) return;
+            if (w->VisualStates() != nullptr &&
+                w->Get<std::wstring>(w->SlotOf("Content")) == L"Disabled wins") {
+                disabled = w;
+                return;
+            }
+            for (auto& c : w->Children()) findDisabled(c.get());
+        };
+        findDisabled(root);
+        Expect(disabled != nullptr, "the page has a disabled styled button");
+        if (disabled != nullptr) {
+            Expect(disabled->VisualStates()->Current() == "Disabled", "it starts Disabled");
+            const float disabledSize = disabled->Get<float>(disabled->SlotOf("FontSize"));
+            // Even with the pointer over it, a disabled control must not advertise
+            // interactivity.
+            disabled->SetHovered(true);
+            AnimationHost::AdvanceAll(0.3f);
+            Expect(std::abs(disabled->Get<float>(disabled->SlotOf("FontSize")) - disabledSize) <
+                       0.05f,
+                   "hovering does not change a disabled control");
+            disabled->SetHovered(false);
+        }
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }
-
-// Checks for samples/editor/Editor.waml. This is the integration page, so the
 // checks walk the whole story rather than a single control:
 //   a tab strip drives the ViewModel, the toolbar and menu reach the same
 //   commands, editing marks the document dirty, and closing a dirty tab asks.

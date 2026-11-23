@@ -16,6 +16,8 @@ class ITextService;
 // Forward-declared at namespace scope so Widget can hold a shared_ptr to it without
 // core depending on the WAML layer.
 class StyleTriggerHost;
+class AnimationHost;
+class VisualStateHost;
 
 // Process-wide text measurement service. Controls that need to measure text
 // read it here; tests can install a deterministic implementation.
@@ -157,6 +159,11 @@ public:
     bool Pressed() const { return pressed_; }
     bool Focused() const { return focused_; }
     void SetFocused(bool focused);
+    // Setting press through a helper (rather than touching pressed_ directly) is what
+    // keeps the visual state honest for every control: a control that toggles the flag
+    // itself would silently skip the Pressed state.
+    void SetPressed(bool pressed);
+    void SetHovered(bool hovered);
     void SetName(std::string name) { name_ = std::move(name); }
     const std::string& Name() const { return name_; }
 
@@ -216,6 +223,23 @@ public:
     void SetTriggerHost(std::shared_ptr<StyleTriggerHost> host);
     StyleTriggerHost* TriggerHost() const { return triggerHost_.get(); }
 
+    // Animation state, attached lazily: a widget that never animates pays one null
+    // pointer, and the frame loop never has to walk the whole tree looking for motion.
+    // Accessed through free functions in Animation.h so this header does not need to know
+    // the class; the member is private and friended there.
+    std::shared_ptr<AnimationHost> AnimState() const { return animationHost_; }
+    void SetAnimState(std::shared_ptr<AnimationHost> host) { animationHost_ = std::move(host); }
+
+    // Visual states. The host decides WHICH state applies from the input flags, so a
+    // control never has to write the pointer-over/pressed escalation itself -- and so all
+    // controls escalate in the same order instead of each remembering its own rules.
+    void SetVisualStateHost(std::shared_ptr<VisualStateHost> host) {
+        visualStateHost_ = std::move(host);
+    }
+    VisualStateHost* VisualStates() const { return visualStateHost_.get(); }
+    // Recomputes the visual state from Hovered/Pressed/Focused/IsEnabled.
+    void UpdateVisualState(bool animate = true);
+
 protected:
     void SetDirtyUpwards(uint32_t flags);
     Widget* Root();
@@ -255,6 +279,8 @@ protected:
     // overwhelming majority of widgets, which is why it is a pointer: paying for
     // trigger bookkeeping on every element would tax a feature most do not use.
     std::shared_ptr<StyleTriggerHost> triggerHost_;
+    std::shared_ptr<AnimationHost> animationHost_;
+    std::shared_ptr<VisualStateHost> visualStateHost_;
     Rect bounds_;
     Point paintOffset_{0, 0};
     // Owned by the root only; see SetOverlay.

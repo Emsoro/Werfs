@@ -241,6 +241,8 @@ $CoreSources = @(
     'src\waml\Diagnostics.cpp'
     'src\waml\Parser.cpp'
     'src\waml\StyleTriggers.cpp'
+    'src\core\Animation.cpp'
+    'src\core\VisualStates.cpp'
     'src\render\SoftwareRender.cpp'
     'src\platform\Resources.cpp'
     'src\platform\FileDialogWin32.cpp'
