@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.7.2.0
+> 版本：0.7.3.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.7.2.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式、**浮层子系统（菜单/工具栏溢出/模态）**、**26 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板，以及 MenuBar/CommandBar/TabView/ContentDialog）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**148 个测试**全绿，并交付 **3 个可独立运行的示例**（`basic` / `list` / `editor`）共用一套宿主。
+当前 0.7.3.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**26 个控件**（含 Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander 六个布局面板，以及 MenuBar/CommandBar/TabView/ContentDialog）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**150 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 148 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 150 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -66,7 +66,7 @@ build.ps1  CMakeLists.txt
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 3 个示例（basic / list / editor）共用同一 Win32+D2D 宿主 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 5 个示例（basic / list / editor / binding / theming）共用同一 Win32+D2D 宿主 |
 | **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
 | **文件选择器**（打开 / 保存 / 选文件夹） | ✅ **已接入示例** | `IFileDialogService` + Win32 实现；`editor` 的 File ▸ Open / Save as 真实可弹（§10b.1） |
 | **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
@@ -83,8 +83,8 @@ build.ps1  CMakeLists.txt
 
 | 产物 | 作用 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 148 个单元/集成用例 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
+| `waml_tests.exe` | 150 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.6.0.0         [ ok ]
+file version: 0.7.3.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -623,6 +623,26 @@ WidgetPtr root = doc->Instantiate(...); // 树建立
 - **自省接口会骗人**。`ActiveCount()` 这种「我是否激活」的断言让人以为逻辑没问题，因为它测的是宿主自己的状态。断言要落在**效果**上：属性值变了没有。
 - **这个 bug 只能被真实使用模式抓到**。它需要「文档释放、树存活」——而这正是 `waml_interact` 和所有示例的做法。纯单元测试如果一直持有 `doc`，会永远看不见它。
 
+## 7.23 【中】`FallbackValue` 与 `LostFocus` 都是「解析了但没人用」
+
+**现象**：写 `samples/binding` 时，两条本该演示框架能力的语句都毫无反应：`{Binding Missing, FallbackValue='…'}` 仍然显示旧值并计一次绑定错误；`UpdateSourceTrigger=LostFocus` 的输入框在失焦后**永远不回写**。
+
+**根因**（两处各自独立，但形状相同）：
+
+1. `FallbackValue` 被解析进 `BindingExpr::fallback`，但 `Parser::InstantiateNode` 拷贝 `BindingDesc` 时漏掉了这两个字段，`Binding` 也从未读过它们。语法合法、诊断为零、效果为零。
+2. `Binding::Flush()` 早就实现了延迟回写，但全仓库**没有任何调用者**。`TextBox` 失焦走 `Widget::SetFocused(false)`，那里只改焦点标记、发重绘，不碰绑定。
+
+**修复**：
+
+- `BindingDesc` 增加 `hasFallback`/`fallback`，实例化时拷贝；`Binding::ResolveChain` 的所有失败分支（空 context、空路径、属性缺失、中间对象为空、转换失败）先尝试 `ApplyFallback`。**声明了 fallback 就不再计入 `BindingErrorCount`**——作者已经明确说了「路径可能不存在」，一个故意演示 fallback 的页面不应因此过不了宿主的零错误自检；日志仍然打印。
+- `Widget::FlushBindings()` 遍历自己的绑定调用 `Flush()`，由 `Widget::SetFocused(false)` 触发。放在控件层而不是宿主层，是因为「失焦」对键盘焦点、点击切换、`Enter` 提交都是同一件事，宿主不该逐个补。
+
+**教训**：
+
+- **「解析成功」不等于「接通」**。两个功能都有字段、有 API、有注释，唯一缺的是一条赋值和一个调用点。这类断链不会被语法测试发现，只能由**使用它的页面**发现——所以示例不是文档，是验收。
+- 写功能时应当顺手写一条**效果断言**（值变了没有），而不是只断言「解析出了字段」。`FallbackValue` 的测试此前不存在，`LostFocus` 的测试只验证了「延迟」，没有验证「最终会写」。
+- 延迟写回这类机制必须绑定到**一个真实事件**上。`Flush()` 本身没有错，错在它没有主人。
+
 ---
 
 # 第四部分：目标架构
@@ -632,8 +652,8 @@ WidgetPtr root = doc->Instantiate(...); // 树建立
 ```
 ┌─────────────────────────────────────────────────┐
 │ samples/   每个示例自带 WAML + ViewModel + 资源      │
-│   basic/ list/ binding/ theming/ usercontrol/    │
-│   files/ animation/                              │
+│   basic/ list/ editor/ binding/ theming/        │
+│   usercontrol/ animation/                        │
 │   ← 只写 WAML + ViewModel，不含渲染代码            │
 │   shared/SampleHost  窗口/D2D/DPI/输入分发         │
 ├─────────────────────────────────────────────────┤
@@ -641,7 +661,7 @@ WidgetPtr root = doc->Instantiate(...); // 树建立
 │   waml     解析/校验/实例化                        │
 │   mvvm     绑定/命令/集合                          │
 │   core     控件/布局/输入/主题                      │
-│   platform 资源/版本/路径/文件对话框(规划)           │
+│   platform 资源/版本/路径/文件对话框                │
 │   render   D2D / 软件光栅                          │
 └─────────────────────────────────────────────────┘
 ```
@@ -680,8 +700,8 @@ samples/
   1. basic/        基础：单个组件、单一数据源            ✅
   2. list/         集合：DataTemplate 与布局面板         ✅
   3. editor/       集成：菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框  ✅
-  4. binding/      绑定：四种模式的完整对照              可立即开始
-  5. theming/      主题：Light/Dark 与 token             可立即开始
+  4. binding/      绑定：四种模式的完整对照              ✅
+  5. theming/      主题：Light/Dark 与 token             ✅
   6. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
   7. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
 ```
@@ -747,7 +767,7 @@ samples/
 | 示例 | 内容 | 教什么 |
 |---|---|---|
 | 主题切换 | 按钮在 Light/Dark 间切换，整页即时重绘 | token 解析与重绘边界 |
-| token 面板 | 13 个 token 各显示一块色卡与其名字 | 语义化颜色的含义 |
+| token 面板 | 12 个 token 各显示一块色卡与其名字 | 语义化颜色的含义 |
 | 硬编码 vs token | 左边 `#FF0000`，右边 `Accent`，切换主题 | token 跟随主题，字面量不变 |
 | 自定义颜色 | `Foreground="#6B6B6B"` | 字面量与 token 混用 |
 
@@ -885,8 +905,8 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 1 | `basic` | 无 | **✅ 已完成** |
 | 2 | `list` | 无 | **✅ 已完成** |
 | 3 | `editor` | **Visibility → Selector → 浮层 → 模态**（10c.3）+ **`IFileDialogService`**（10b.1） | **✅ 已完成**（四批全落地） |
-| 4 | `binding` | 无 | 可立即开始 |
-| 5 | `theming` | 无（主题已支持） | 可立即开始 |
+| 4 | `binding` | 无 | **✅ 已完成**（含 `FallbackValue`/`LostFocus` 两处框架修复，§7.23） |
+| 5 | `theming` | 无（主题已支持） | **✅ 已完成**（宿主新增 `HostOptions::themeProperty` 实时切换） |
 | 6 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
 | 7 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
 | ~~—~~ | ~~`files`~~ | — | **已并入 `editor`**（§10b.1 说明理由） |
@@ -1712,7 +1732,7 @@ public:
 4. ~~浮层 + 菜单/工具栏~~ ✅
 5. ~~模态 + 未保存提示~~ ✅
 6. ~~`editor` 示例~~ ✅
-7. **`binding` / `theming` 示例**：不依赖任何新框架能力，可立即开工。`theming` 尤其便宜——双主题快照已经在跑，缺的只是一个能点的切换按钮。
+7. ~~`binding` / `theming` 示例~~ ✅（同时补上 `FallbackValue` 与 `LostFocus` 的接线，§7.23）
 8. **`DataContext` 可绑定**（迭代 2b.1）：`usercontrol` 被它卡住；底层已支持本地值优先，只缺标记层入口。这是**唯一还卡着示例的能力缺口**。
 9. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：`editor` 的 WAML 里每个 `AppBarButton` 都在重复 `Icon`/`Label`/`Command` 三个属性，样式系统能显著缩短——现在有真实页面做参照，比凭空设计更有依据。
 10. **关窗口守卫**（§10c.5 未做项）：`WM_CLOSE` 拦截 + 逐个询问脏文档 + 「全部保存」。机制全都有了，只差一层循环；但它是真实使用中最容易丢数据的地方，优先级不低。
@@ -1727,7 +1747,7 @@ public:
 
 # 附录
 
-## A. 测试清单（148 用例）
+## A. 测试清单（150 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -1737,7 +1757,7 @@ public:
 | diag | 11 | 15 类诊断码矩阵 + 建议质量 + 码点列号 + 转义 + 索引器拒绝 |
 | value | 2 | 颜色（token/hex/非法）、Thickness（1/2/4 值） |
 | instantiate | 3 | 树结构、默认值、绑定附加、DataContext 继承 |
-| binding | 18 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、LostFocus、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
+| binding | 20 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、**`FallbackValue` 应用与恢复**、LostFocus 延迟与**失焦提交**、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
 | list | 3 | 模板实例化、数据上下文隔离（回归）、订阅泄漏 |
 | layout | 6 | 垂直/水平排列、**Border padding（含边框占位）**、**边框单边厚度**、**Page 多子节点堆叠与弹性填充**、失效冒泡、显式尺寸 |
 | grid | 5 | 星号分配、固定+星号混合、跨列、间距、auto 列自适应 |
@@ -1766,6 +1786,8 @@ public:
 |---|---|---|
 | Basic.waml | 6 组 | 绑定、命令、TextBox 回写、CheckBox、Visibility 链路 |
 | List.waml | 4 组 | 每行独立数据、增删、标签切换与 `+` |
+| Binding.waml | 6 组 | 四模式初始值、VM 变化只到 OneWay/TwoWay、StringFormat、FallbackValue、输入只从 TwoWay/OneWayToSource 回写、LostFocus 失焦提交 |
+| Theming.waml | 4 组 | 初始 Light、按钮翻转 bool、再翻回、页面同时含 token 与字面量 |
 | Editor.waml | **12 组** | 标签切换、`+`、打字变脏、**删字变干净**、干净标签直接关、**脏标签询问**、**取消保留标签**、**放弃移除标签**、菜单命令、工具栏溢出、空文档回落、关闭后重开布局 |
 
 ## B. 复现方式
@@ -1776,12 +1798,16 @@ pwsh -File build.ps1 all
 build\release\waml_tests.exe
 build\release\waml_interact.exe samples\basic\Basic.waml
 build\release\waml_interact.exe samples\list\List.waml
+build\release\waml_interact.exe samples\binding\Binding.waml
+build\release\waml_interact.exe samples\theming\Theming.waml
 build\release\waml_interact.exe samples\editor\Editor.waml
 build\release\waml_snapshot.exe samples\editor\Editor.waml editor-light.png editor-dark.png 660
 build\release\waml_probe.exe
 
 build\release\waml_basic.exe           :: 交互窗口（基础控件示例）
 build\release\waml_list.exe            :: 集合与布局
+build\release\waml_binding.exe         :: 四种绑定模式并排
+build\release\waml_theming.exe         :: Light/Dark 实时切换
 build\release\waml_editor.exe          :: 菜单 + 工具栏 + 多标签 + 未保存提示
 build\release\waml_editor.exe --selftest :: 写 selftest.log 并返回退出码
 ```

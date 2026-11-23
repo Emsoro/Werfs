@@ -158,6 +158,12 @@ void Widget::DetachBindings() {
     for (auto& b : bindings_) b->Detach();
 }
 
+void Widget::FlushBindings() {
+    // Only bindings with UpdateSourceTrigger=LostFocus have anything pending;
+    // Flush is a no-op for the rest, so this can run on every focus loss.
+    for (auto& b : bindings_) b->Flush();
+}
+
 void Widget::RebindAll() {
     const RefPtr dc = EffectiveDataContext();
     for (auto& b : bindings_) {
@@ -344,6 +350,10 @@ bool Widget::OnPointerWheel(float deltaLines) {
 void Widget::SetFocused(bool focused) {
     if (focused_ == focused) return;
     focused_ = focused;
+    // Losing focus is what UpdateSourceTrigger=LostFocus names. Flushing here
+    // (rather than in the host) keeps the rule true for every focus owner,
+    // including keyboard focus moved by a control itself.
+    if (!focused_) FlushBindings();
     SetDirtyUpwards(AffectsRender);
 }
 

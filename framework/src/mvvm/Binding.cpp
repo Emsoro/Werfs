@@ -63,6 +63,20 @@ void Binding::RecordError(const std::string& message) {
     if (g_sink) g_sink->OnBindingError(scope, path, message);
 }
 
+bool Binding::ApplyFallback(const std::string& reason) {
+    if (!desc_.hasFallback || !target_ || slot_ < 0) return false;
+    const std::string path = desc_.path.empty() ? std::string() : JoinPath(desc_.path);
+    const std::string scope = target_ ? target_->TypeName() : "?";
+    const std::string line = "[wui] binding '" + path + "' on " + scope + ": " + reason +
+                             " (using FallbackValue)";
+    OutputDebugStringW((Utf8ToWide(line) + L"\n").c_str());
+    lastError_.clear();
+    applying_ = true;
+    target_->SetSlotValue(slot_, desc_.fallback, true);
+    applying_ = false;
+    return true;
+}
+
 void Binding::Attach(ITextService* text) {
     text_ = text;
     if (attached_) return;
@@ -103,10 +117,12 @@ void Binding::SetSource(RefPtr source) {
 void Binding::ResolveChain() {
     ClearChain();
     if (!source_) {
+        if (ApplyFallback("data context is null")) return;
         RecordError("data context is null");
         return;
     }
     if (desc_.path.empty()) {
+        if (ApplyFallback("empty binding path")) return;
         RecordError("empty binding path");
         return;
     }
@@ -115,7 +131,9 @@ void Binding::ResolveChain() {
     for (size_t i = 0; i < desc_.path.size(); ++i) {
         PropertyTable* table = current->GetPropertyTable();
         if (!table) {
-            RecordError("path segment '" + desc_.path[i] + "' is not on an observable object");
+            const std::string reason = "path segment '" + desc_.path[i] + "' is not on an observable object";
+            if (ApplyFallback(reason)) return;
+            RecordError(reason);
             return;
         }
         const PropertyTable::Entry* entry = table->Find(desc_.path[i]);
@@ -123,6 +141,7 @@ void Binding::ResolveChain() {
             std::string msg = "'" + desc_.path[i] + "' not found";
             auto suggestions = SuggestNames(desc_.path[i], table->Names());
             if (!suggestions.empty()) msg += " (did you mean '" + suggestions.front() + "'?)";
+            if (ApplyFallback(msg)) return;
             RecordError(msg);
             return;
         }
@@ -141,7 +160,8 @@ void Binding::ResolveChain() {
             Value intermediate;
             if (!src->Read(intermediate) || intermediate.type != VType::Ref || !intermediate.ref) {
                 // The intermediate object is null: stop here, the chain will be
-                // rebuilt when it is assigned.
+                // rebuilt when it is assigned. A fallback applies while it waits.
+                ApplyFallback("path segment '" + desc_.path[i] + "' is null");
                 return;
             }
             current = intermediate.ref;
@@ -206,6 +226,8 @@ void Binding::ApplyToTarget(const Value& value) {
         }
         Value converted;
         if (!(*fn)(tmp, converted)) {
+            if (ApplyFallback("converter '" + desc_.converter + "' cannot convert " + VTypeName(tmp.type)))
+                return;
             RecordError("converter '" + desc_.converter + "' cannot convert " + VTypeName(tmp.type));
             applying_ = false;
             return;
@@ -216,6 +238,9 @@ void Binding::ApplyToTarget(const Value& value) {
     if (tmp.type != targetType) {
         Value converted;
         if (!ConvertValue(tmp, targetType, converted)) {
+            if (ApplyFallback(std::string("cannot convert ") + VTypeName(tmp.type) + " to " +
+                              VTypeName(targetType)))
+                return;
             RecordError(std::string("cannot convert ") + VTypeName(tmp.type) + " to " + VTypeName(targetType));
             applying_ = false;
             return;

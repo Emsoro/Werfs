@@ -8,6 +8,8 @@
 #include "Diagnostics.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
+#include "BindingVm.h"  // sample: the four binding modes page's ViewModel
+#include "ThemingVm.h"  // sample: the token/theme page's ViewModel
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "Mvvm.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (default page)
@@ -90,6 +92,8 @@ int main(int argc, char** argv) {
     const std::string source = loaded.origin + " " + wamlPath;
     const bool isListPage = source.find("List.waml") != std::string::npos;
     const bool isBasicPage = source.find("Basic.waml") != std::string::npos;
+    const bool isBindingPage = source.find("Binding.waml") != std::string::npos;
+    const bool isThemingPage = source.find("Theming.waml") != std::string::npos;
     const bool isEditorPage = source.find("Editor.waml") != std::string::npos;
 
     std::shared_ptr<RefObject> vmRef;
@@ -101,6 +105,14 @@ int main(int argc, char** argv) {
         auto listVm = std::make_shared<sample::ListViewVm>();
         std::printf("vm: ListViewVm (%zu rows)\n", static_cast<size_t>(listVm->ItemCount.Get()));
         vmRef = std::static_pointer_cast<RefObject>(listVm);
+    } else if (isBindingPage) {
+        auto bindingVm = std::make_shared<sample::BindingVm>();
+        std::printf("vm: BindingVm\n");
+        vmRef = std::static_pointer_cast<RefObject>(bindingVm);
+    } else if (isThemingPage) {
+        auto themingVm = std::make_shared<sample::ThemingVm>();
+        std::printf("vm: ThemingVm (%s)\n", themingVm->IsDarkTheme.Get() ? "dark" : "light");
+        vmRef = std::static_pointer_cast<RefObject>(themingVm);
     } else if (isEditorPage) {
         auto editorVm = std::make_shared<sample::EditorVm>();
         std::printf("vm: EditorVm (%zu documents)\n", editorVm->DocumentCount());
@@ -147,6 +159,11 @@ int main(int argc, char** argv) {
     for (int pass = 0; pass < 2; ++pass) {
         const ThemeKind theme = pass == 0 ? ThemeKind::Light : ThemeKind::Dark;
         const std::string& outPath = pass == 0 ? outLight : outDark;
+        // The theming page derives its labels from IsDarkTheme. The renderer picks
+        // the palette, so keep the page's own state in step with it -- otherwise
+        // the dark screenshot shows dark colours under a "Light theme" label.
+        if (auto* theming = dynamic_cast<sample::ThemingVm*>(vmRef.get()))
+            theming->IsDarkTheme.Set(theme == ThemeKind::Dark);
         WidgetPtr root = build();
         D2DSnapshotRenderer renderer(width, height, theme);
         if (!renderer.Valid()) {

@@ -641,6 +641,41 @@ TEST("binding: missing path reports error, keeps old value") {
     CHECK(root->Get<std::wstring>(root->SlotOf("Text")) == L"keep");
 }
 
+TEST("binding: FallbackValue covers a missing path without counting as an error") {
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<TextBlock Text=\"{Binding Missing, FallbackValue='(not set)'}\"/>", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    const size_t errorsBefore = BindingErrorCount();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    auto vm = std::make_shared<CounterVm>();
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    // The author declared what an absent path means, so the target shows it...
+    CHECK(root->Get<std::wstring>(root->SlotOf("Text")) == L"(not set)");
+    // ...and the binding is not reported as broken. A page that demonstrates a
+    // fallback on purpose must still pass the host's zero-error self test.
+    CHECK_EQ(BindingErrorCount(), errorsBefore);
+}
+
+TEST("binding: FallbackValue is replaced once the path resolves") {
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<TextBlock Text=\"{Binding Child.Value, FallbackValue='waiting'}\"/>", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    auto vm = std::make_shared<ParentVm>();
+    vm->ChildProp.Set(nullptr);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    const int slot = root->SlotOf("Text");
+    CHECK(root->Get<std::wstring>(slot) == L"waiting");
+    auto child = std::make_shared<ChildVm>();
+    child->Value.Set(L"arrived");
+    vm->ChildProp.Set(std::static_pointer_cast<RefObject>(child));
+    CHECK(root->Get<std::wstring>(slot) == L"arrived");
+}
+
 TEST("binding: unresolved path is reported, not silent") {
     // A typo in a binding path cannot be caught at load time (the DataContext is
     // only known at runtime). It must at least be observable.
@@ -723,6 +758,14 @@ TEST("binding: lost focus trigger defers writeback") {
     root->AttachBindings(&g_fakeText);
     // Re-attaching does not flush; the value is pushed only via the trigger.
     CHECK(vm->Name.Get() == L"");
+
+    // Focus is the trigger: taking focus and then losing it pushes the value.
+    // This is the part that used to be missing entirely -- Flush existed but
+    // nothing ever called it, so a LostFocus binding never wrote back at all.
+    root->SetFocused(true);
+    CHECK(vm->Name.Get() == L"");
+    root->SetFocused(false);
+    CHECK(vm->Name.Get() == L"deferred");
 }
 
 TEST("binding: no infinite loop on self writing source") {

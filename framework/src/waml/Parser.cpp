@@ -1874,6 +1874,8 @@ WidgetPtr InstantiateNode(const NodeDesc& node, ITextService* text) {
         bd.trigger = entry.binding.trigger;
         bd.stringFormat = entry.binding.stringFormat;
         bd.converter = entry.binding.converter;
+        bd.hasFallback = entry.binding.hasFallback;
+        bd.fallback = entry.binding.fallback;
         auto binding = std::make_unique<Binding>(widget.get(), entry.slot, desc, std::move(bd));
         widget->AddBinding(std::move(binding));
     }

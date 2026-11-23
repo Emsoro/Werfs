@@ -73,6 +73,13 @@ struct HostOptions {
     // two controls declaring the same chord would otherwise both fire, and the
     // one that fired would depend on tree order.
     std::vector<std::pair<std::wstring, wui::RefPtr>> accelerators;
+
+    // Name of a bool ViewModel property that drives the theme: true = dark.
+    // The host subscribes to it, so a page can switch themes with an ordinary
+    // binding/command and never has to know that a host (or Win32) exists. Empty
+    // means "stay on the initial theme". A missing property is a startup error,
+    // not a silently ignored setting.
+    std::wstring themeProperty;
 };
 
 // Runs the sample until the window closes. `makeVm` returns the root

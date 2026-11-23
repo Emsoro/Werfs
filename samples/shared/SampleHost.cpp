@@ -50,6 +50,7 @@ struct AppState {
     Widget* hovered = nullptr;
     Widget* pressed = nullptr;
     Widget* focused = nullptr;
+    HWND hwnd = nullptr;
     ThemeKind theme = ThemeKind::Light;
     bool mouseTracking = false;
     // An overlay (a menu, a dialog) owns the pointer between these two events.
@@ -67,6 +68,29 @@ struct AppState {
 
 AppState g;
 HostOptions g_options;
+
+// The page's theme property, when it has one. A bool in the ViewModel is the
+// whole contract: the host does not care which control flipped it or why.
+void ApplyTheme(bool dark);
+
+class ThemeObserver final : public IPropertyObserver {
+public:
+    void OnSourceChanged(const Value& value) override {
+        bool dark = false;
+        if (ValueCodec<bool>::From(value, dark)) ApplyTheme(dark);
+    }
+};
+ThemeObserver g_themeObserver;
+
+void ApplyTheme(bool dark) {
+    const ThemeKind next = dark ? ThemeKind::Dark : ThemeKind::Light;
+    if (g.theme == next) return;
+    g.theme = next;
+    // Brushes are keyed by resolved colour, so a different palette naturally
+    // misses the cache; no brush table needs clearing.
+    if (g.root) g.root->Invalidate(AffectsRender);
+    if (g.hwnd) InvalidateRect(g.hwnd, nullptr, FALSE);
+}
 
 // Physical pixels -> logical units for layout / hit testing.
 float ToDip(int pixels) { return static_cast<float>(pixels) / g.scale; }
@@ -385,15 +409,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
         }
 
-        SetFocus(nullptr);
         Widget* target = Hit(g.root.get(), x, y);
-        // Focus the nearest focusable ancestor.
+        // Focus the nearest focusable ancestor. Resolve the new focus before
+        // touching the current one: clicking inside the box that already has
+        // focus must not read as a focus loss, or a LostFocus binding would
+        // commit while the caret is merely being moved.
+        Widget* focusTarget = nullptr;
         for (Widget* w = target; w != nullptr; w = w->Parent()) {
             if (w->Focusable()) {
-                SetFocus(w);
+                focusTarget = w;
                 break;
             }
         }
+        SetFocus(focusTarget);
         g.pressed = target;
         // Convert to the target's own space. Pointer coordinates are window
         // space, but every control tests bounds_, which are unscrolled -- inside
@@ -558,6 +586,28 @@ int RunInternal(HINSTANCE instance, const HostOptions& options, std::shared_ptr<
     g.root = doc->Instantiate(&text);
     if (g.vm) g.root->SetDataContext(std::static_pointer_cast<RefObject>(g.vm));
 
+    // A page that can switch themes names the bool property that decides it.
+    // Resolving it here (rather than at first paint) turns a typo into a startup
+    // error instead of a button that does nothing.
+    if (!options.themeProperty.empty()) {
+        PropertyTable* table = g.vm ? g.vm->GetPropertyTable() : nullptr;
+        const auto* entry = table ? table->Find(WideToUtf8(options.themeProperty)) : nullptr;
+        if (!entry || entry->source->Type() != VType::Bool) {
+            const std::wstring message = L"themeProperty '" + options.themeProperty +
+                                         L"' is not a bool ViewModel property";
+            if (selfTest) std::printf("SELFTEST FAIL: %ls\n", message.c_str());
+            else MessageBoxW(nullptr, message.c_str(), L"Werfs sample", MB_ICONERROR);
+            return 1;
+        }
+        entry->source->Subscribe(&g_themeObserver);
+        Value initial;
+        bool dark = false;
+        if (entry->source->Read(initial) && ValueCodec<bool>::From(initial, dark)) {
+            g.theme = dark ? ThemeKind::Dark : ThemeKind::Light;
+        }
+        if (selfTest) std::printf("theme property: %ls\n", options.themeProperty.c_str());
+    }
+
     HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, g.d2d.GetAddressOf());
     if (FAILED(hr)) {
         if (selfTest) std::printf("SELFTEST FAIL: D2D1CreateFactory 0x%08lx\n", hr);
@@ -595,6 +645,7 @@ int RunInternal(HINSTANCE instance, const HostOptions& options, std::shared_ptr<
         if (selfTest) std::printf("SELFTEST FAIL: CreateWindowExW %lu\n", GetLastError());
         return 1;
     }
+    g.hwnd = hwnd;
 
     if (selfTest) {
         // Build the real HWND + D2D target and paint one frame: this proves the

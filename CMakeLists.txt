@@ -33,11 +33,13 @@ set(FRAMEWORK_SRC
     framework/src/core/Controls.cpp
     framework/src/core/Overlay.cpp
     framework/src/mvvm/Binding.cpp
+    framework/src/mvvm/Converters.cpp
     framework/src/waml/Diagnostics.cpp
     framework/src/waml/Parser.cpp
     framework/src/waml/StyleTriggers.cpp
     framework/src/render/SoftwareRender.cpp
     framework/src/platform/Resources.cpp
+    framework/src/platform/FileDialogWin32.cpp
 )
 
 add_library(wui_framework STATIC ${FRAMEWORK_SRC})
@@ -67,7 +69,13 @@ set(SAMPLE_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/basic
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/basic/resources
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/list
-    ${CMAKE_CURRENT_SOURCE_DIR}/samples/list/resources)
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/list/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/binding
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/binding/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/theming
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/theming/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/editor
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/editor/resources)
 
 # One function so adding a sample stays a single call.
 function(add_sample NAME)
@@ -76,14 +84,17 @@ function(add_sample NAME)
     add_custom_command(
         OUTPUT ${res}
         COMMAND rc /nologo /fo${res}
-                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=6
-                /dWUI_VERSION_PATCH=0 /dWUI_VERSION_BUILD=0
+                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=7
+                /dWUI_VERSION_PATCH=3 /dWUI_VERSION_BUILD=0
                 ${dir}/resources/app.rc
         DEPENDS ${dir}/resources/app.rc
         COMMENT "Compiling ${NAME} resources"
     )
+    # Every .cpp beside App.cpp belongs to the sample: a ViewModel with real
+    # logic (the editor's close flow) lives in its own translation unit.
+    file(GLOB SAMPLE_SOURCES CONFIGURE_DEPENDS ${dir}/*.cpp)
     add_executable(waml_${NAME} WIN32
-        ${dir}/App.cpp
+        ${SAMPLE_SOURCES}
         ${SAMPLE_SHARED_DIR}/SampleHost.cpp
         ${res})
     target_include_directories(waml_${NAME} PRIVATE ${dir} ${dir}/resources ${SAMPLE_SHARED_DIR})
@@ -92,6 +103,9 @@ endfunction()
 
 add_sample(basic)
 add_sample(list)
+add_sample(binding)
+add_sample(theming)
+add_sample(editor)
 
 # ---------------------------------------------------------------------------
 # Framework harnesses. These read sample markup and ViewModels, so they carry

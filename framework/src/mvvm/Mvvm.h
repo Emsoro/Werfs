@@ -404,6 +404,13 @@ struct BindingDesc {
     BindingMode mode = BindingMode::OneWay;
     UpdateSourceTrigger trigger = UpdateSourceTrigger::PropertyChanged;
     std::wstring stringFormat;
+    // FallbackValue: what the target shows when the path cannot be resolved at
+    // all (a missing property, or no DataContext yet). Declaring a fallback is an
+    // explicit "this may be absent", so it is logged but not counted as a binding
+    // error -- otherwise a page that deliberately demonstrates a fallback would
+    // fail the host's zero-error self test.
+    bool hasFallback = false;
+    Value fallback;
     bool hasSource = false;
     RefPtr explicitSource;
     // Name of a registered converter applied before the implicit type conversion.
@@ -447,6 +454,9 @@ private:
     void ApplyToTarget(const Value& value);
     bool PushToSource();
     void RecordError(const std::string& message);
+    // Returns true when a fallback was applied. Logs, but does not count, the
+    // failure: the author already said what should happen when the path is absent.
+    bool ApplyFallback(const std::string& reason);
 
     Widget* target_;
     int slot_;

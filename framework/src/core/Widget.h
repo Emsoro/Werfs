@@ -78,6 +78,9 @@ public:
     void AddBinding(std::unique_ptr<Binding> binding);
     void AttachBindings(ITextService* text);
     void DetachBindings();
+    // Pushes deferred TwoWay values (UpdateSourceTrigger=LostFocus). Called when
+    // this widget loses focus, which is the event the trigger is named after.
+    void FlushBindings();
     void RebindAll();
     size_t BindingCount() const { return bindings_.size(); }
 

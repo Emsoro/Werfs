@@ -7,6 +7,8 @@
 #include "Core.h"
 #include "Diagnostics.h"
 #include "BasicVm.h"    // sample: the basic controls page's ViewModel
+#include "BindingVm.h"  // sample: the four binding modes page's ViewModel
+#include "ThemingVm.h"  // sample: the token/theme page's ViewModel
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "FileDialog.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
@@ -51,6 +53,16 @@ bool IsEditorPage(const std::string& origin, const std::string& path) {
            path.find("Editor.waml") != std::string::npos;
 }
 
+bool IsBindingPage(const std::string& origin, const std::string& path) {
+    return origin.find("Binding.waml") != std::string::npos ||
+           path.find("Binding.waml") != std::string::npos;
+}
+
+bool IsThemingPage(const std::string& origin, const std::string& path) {
+    return origin.find("Theming.waml") != std::string::npos ||
+           path.find("Theming.waml") != std::string::npos;
+}
+
 // Checks that only make sense on samples/basic/Basic.waml.
 
 Widget* FindFirst(Widget* w, const char* typeName) {
@@ -80,6 +92,36 @@ Widget* ButtonWithText(Widget* root, const std::wstring& content) {
             if (c->Get<std::wstring>(c->SlotOf("Content")) == content) return c.get();
         }
         if (Widget* found = ButtonWithText(c.get(), content)) return found;
+    }
+    return nullptr;
+}
+
+// A page can carry several TextBoxes bound to the same property; the placeholder
+// is what tells them apart in these checks (and is visible to the reader too).
+Widget* TextBoxWithPlaceholder(Widget* root, const std::wstring& placeholder) {
+    for (auto& c : root->Children()) {
+        if (std::string(c->TypeName()) == "wui/TextBox") {
+            const int slot = c->SlotOf("PlaceholderText");
+            if (slot >= 0 && c->Get<std::wstring>(slot) == placeholder) return c.get();
+        }
+        if (Widget* found = TextBoxWithPlaceholder(c.get(), placeholder)) return found;
+    }
+    return nullptr;
+}
+
+std::wstring TextOf(Widget* w) {
+    if (!w) return L"";
+    const int slot = w->SlotOf("Text");
+    return slot >= 0 ? w->Get<std::wstring>(slot) : std::wstring();
+}
+
+// Finds a TextBlock whose text starts with `prefix`.
+Widget* TextBlockStartingWith(Widget* root, const std::wstring& prefix) {
+    for (auto& c : root->Children()) {
+        if (std::string(c->TypeName()) == "wui/TextBlock") {
+            if (TextOf(c.get()).rfind(prefix, 0) == 0) return c.get();
+        }
+        if (Widget* found = TextBlockStartingWith(c.get(), prefix)) return found;
     }
     return nullptr;
 }
@@ -503,6 +545,169 @@ int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
     return g_failures == 0 ? 0 : 1;
 }
 
+// Checks for samples/binding/Binding.waml. One property, four modes: the point
+// is that the columns disagree, so every assertion compares them.
+int RunBindingChecks(Widget* root, const std::shared_ptr<sample::BindingVm>& vm) {
+    root->ForceLayout(Size{840, 1200});
+
+    Widget* oneTime = TextBoxWithPlaceholder(root, L"OneTime");
+    Widget* oneWay = TextBoxWithPlaceholder(root, L"OneWay");
+    Widget* twoWay = TextBoxWithPlaceholder(root, L"TwoWay");
+    Widget* toSource = TextBoxWithPlaceholder(root, L"OneWayToSource");
+    Widget* lostFocus = TextBoxWithPlaceholder(root, L"Type, then click outside");
+
+    std::printf("\n[1] all four columns start from the same value\n");
+    Expect(oneTime && oneWay && twoWay && toSource && lostFocus, "found all five TextBoxes");
+    if (!oneTime || !oneWay || !twoWay || !toSource || !lostFocus) {
+        std::printf("\n%s\n", "INTERACTION FAILED");
+        return 1;
+    }
+    Expect(TextOf(oneTime) == L"Ada Lovelace", "OneTime seeded");
+    Expect(TextOf(oneWay) == L"Ada Lovelace", "OneWay seeded");
+    Expect(TextOf(twoWay) == L"Ada Lovelace", "TwoWay seeded");
+    // OneWayToSource must NOT be seeded: only the target may write.
+    Expect(TextOf(toSource).empty(), "OneWayToSource starts empty");
+
+    std::printf("\n[2] a ViewModel change reaches every mode except OneTime and OneWayToSource\n");
+    Widget* rename = ButtonWithText(root, L"Rename the source");
+    Expect(rename != nullptr, "found the rename button");
+    if (rename) {
+        root->ForceLayout(Size{840, 1200});
+        ClickAt(root, rename);
+    }
+    Expect(vm->Name.Get() == L"Grace Hopper", "the command changed the VM");
+    Expect(vm->Count.Get() == 1, "and bumped the rename count");
+    Expect(TextOf(oneTime) == L"Ada Lovelace", "OneTime ignored the change");
+    Expect(TextOf(oneWay) == L"Grace Hopper", "OneWay followed the VM");
+    Expect(TextOf(twoWay) == L"Grace Hopper", "TwoWay followed the VM");
+    Expect(TextOf(toSource).empty(), "OneWayToSource still does not receive");
+
+    std::printf("\n[3] StringFormat and FallbackValue\n");
+    Widget* countLine = TextBlockStartingWith(root, L"Rename count:");
+    Expect(countLine != nullptr, "found the formatted count");
+    if (countLine) Expect(TextOf(countLine) == L"Rename count: 1", "StringFormat applied");
+    Widget* fallbackLine = TextBlockStartingWith(root, L"(no such property");
+    Expect(fallbackLine != nullptr, "the missing-path line shows its fallback");
+    if (fallbackLine) {
+        Expect(TextOf(fallbackLine).find(L"fallback is what you see") != std::wstring::npos,
+               "the fallback text is the one from the markup");
+    }
+
+    std::printf("\n[4] typing writes back only in TwoWay and OneWayToSource\n");
+    auto typeInto = [](Widget* box, wchar_t ch) {
+        if (auto* tb = dynamic_cast<TextBox*>(box)) {
+            tb->SetCaretToEnd();
+            tb->OnChar(ch);
+        }
+    };
+    typeInto(twoWay, L'?');
+    Expect(vm->Name.Get() == L"Grace Hopper?", "TwoWay wrote back");
+    Expect(TextOf(oneWay) == L"Grace Hopper?", "the OneWay column followed the new value");
+    Expect(TextOf(oneTime) == L"Ada Lovelace", "OneTime still did not move");
+
+    typeInto(oneWay, L'!');
+    Expect(vm->Name.Get() == L"Grace Hopper?", "OneWay typing did NOT write back");
+    Expect(TextOf(oneWay) == L"Grace Hopper?!", "the OneWay box kept its local edit");
+
+    typeInto(toSource, L'X');
+    Expect(vm->Name.Get() == L"X", "OneWayToSource wrote back");
+    Expect(TextOf(twoWay) == L"X", "TwoWay received the new value");
+    Expect(TextOf(oneTime) == L"Ada Lovelace", "OneTime is still frozen at load");
+
+    std::printf("\n[5] Reset is a ViewModel change, so OneWayToSource ignores it\n");
+    Widget* reset = ButtonWithText(root, L"Reset");
+    Expect(reset != nullptr, "found the reset button");
+    if (reset) {
+        root->ForceLayout(Size{840, 1200});
+        ClickAt(root, reset);
+    }
+    Expect(vm->Name.Get() == L"Ada Lovelace", "reset restored the VM");
+    Expect(TextOf(oneWay) == L"Ada Lovelace", "OneWay followed the reset");
+    Expect(TextOf(toSource) == L"X", "OneWayToSource kept its own value");
+
+    std::printf("\n[6] LostFocus writes only when focus leaves\n");
+    if (auto* tb = dynamic_cast<TextBox*>(lostFocus)) {
+        lostFocus->SetFocused(true);
+        tb->SetCaretToEnd();
+        tb->OnChar(L'!');
+        Expect(vm->Name.Get() == L"Ada Lovelace", "typing did not commit yet");
+        lostFocus->SetFocused(false);
+        Expect(vm->Name.Get() == L"Ada Lovelace!", "losing focus committed the value");
+        Widget* echo = TextBlockStartingWith(root, L"Committed value:");
+        Expect(echo != nullptr, "found the committed-value echo");
+        if (echo) Expect(TextOf(echo) == L"Committed value: Ada Lovelace!", "the echo followed");
+    }
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
+
+// Checks for samples/theming/Theming.waml. The palette itself is verified by
+// the snapshot tool; here the contract under test is that the switch is an
+// ordinary ViewModel bool and the page follows it.
+int RunThemingChecks(Widget* root, const std::shared_ptr<sample::ThemingVm>& vm) {
+    root->ForceLayout(Size{720, 1200});
+
+    std::printf("\n[1] the page starts on the light theme\n");
+    Expect(!vm->IsDarkTheme.Get(), "IsDarkTheme starts false");
+    Expect(vm->ThemeLabel.Get().find(L"Light") != std::wstring::npos, "the label says Light");
+
+    std::printf("\n[2] the button flips the ViewModel\n");
+    Widget* toggle = ButtonWithText(root, L"Switch to dark");
+    Expect(toggle != nullptr, "found the theme button");
+    if (toggle) {
+        root->ForceLayout(Size{720, 1200});
+        ClickAt(root, toggle);
+    }
+    Expect(vm->IsDarkTheme.Get(), "the command set IsDarkTheme");
+    Expect(vm->ThemeLabel.Get().find(L"Dark") != std::wstring::npos, "the label says Dark");
+    Expect(vm->ToggleLabel.Get() == L"Switch to light", "the button label swapped");
+    Expect(ButtonWithText(root, L"Switch to light") != nullptr, "the button follows the VM");
+
+    std::printf("\n[3] and back again\n");
+    if (Widget* back = ButtonWithText(root, L"Switch to light")) {
+        root->ForceLayout(Size{720, 1200});
+        ClickAt(root, back);
+    }
+    Expect(!vm->IsDarkTheme.Get(), "the second click returned to Light");
+    Expect(vm->ThemeLabel.Get().find(L"Light") != std::wstring::npos, "the label followed");
+
+    std::printf("\n[4] the page really uses tokens and literals\n");
+    // A token is stored as a token, not resolved at load time. If the parser ever
+    // started baking palettes into values, switching themes could not work.
+    auto findLabel = [&](const std::wstring& text) -> Widget* {
+        std::function<Widget*(Widget*)> walk = [&](Widget* w) -> Widget* {
+            if (!w) return nullptr;
+            if (TextOf(w) == text) return w;
+            for (auto& c : w->Children()) {
+                if (Widget* found = walk(c.get())) return found;
+            }
+            return nullptr;
+        };
+        return walk(root);
+    };
+    Expect(findLabel(L"AppBackground") != nullptr, "the palette lists AppBackground");
+    Expect(findLabel(L"Selection") != nullptr, "the palette lists Selection");
+
+    Widget* literal = nullptr;
+    std::function<void(Widget*)> findLiteral = [&](Widget* w) {
+        if (!w || literal) return;
+        if (std::string(w->TypeName()) == "wui/Border") {
+            const int slot = w->SlotOf("Background");
+            if (slot >= 0) {
+                const Color c = w->Get<Color>(slot);
+                if (c.token == Token::None && c.r > 0.8f && c.g < 0.3f) literal = w;
+            }
+        }
+        for (auto& c : w->Children()) findLiteral(c.get());
+    };
+    findLiteral(root);
+    Expect(literal != nullptr, "the literal red swatch is present");
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     // An explicit path wins; otherwise fall back to the basic sample's resource.
@@ -558,6 +763,22 @@ int main(int argc, char** argv) {
         root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
         root->ForceLayout(Size{860, 660});
         return RunEditorChecks(root.get(), vm);
+    }
+
+    if (IsBindingPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::BindingVm>();
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{840, 1200});
+        return RunBindingChecks(root.get(), vm);
+    }
+
+    if (IsThemingPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::ThemingVm>();
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{720, 1200});
+        return RunThemingChecks(root.get(), vm);
     }
 
     auto listVm = std::make_shared<sample::ListViewVm>();

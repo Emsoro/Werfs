@@ -1,0 +1,125 @@
+<?waml version="0.1"?>
+<!--
+  samples/binding — the four binding modes side by side, on one data source.
+
+  Reading "OneTime and OneWay are different" does not stick; watching a column
+  refuse to update does. The four columns below all bind the same `Name`
+  property, so the only variable is the mode.
+
+  Bound to sample::BindingVm in BindingVm.h.
+-->
+<Page Background="AppBackground" Padding="0">
+  <ScrollViewer>
+    <StackPanel Orientation="Vertical" Margin="24" Spacing="16">
+
+      <!-- ================= Header ================= -->
+      <TextBlock Text="{Binding Heading}" FontSize="30" FontWeight="SemiBold"
+                 Foreground="TextPrimary"/>
+      <TextBlock Text="{Binding Blurb}" FontSize="13" Foreground="TextSecondary"
+                 TextWrapping="Wrap"/>
+
+      <!-- ================= 1. Four modes, one property ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="1 · Four modes, one property" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="Every box below binds Name. Press 'Rename the source' and watch which columns follow; type in a box and watch which ones write back."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Grid ColumnDefinitions="1*,1*,1*,1*" ColumnSpacing="10">
+            <Border Grid.Column="0" Background="ControlFill" CornerRadius="6" Padding="10">
+              <StackPanel Orientation="Vertical" Spacing="6">
+                <TextBlock Text="OneTime" FontSize="13" FontWeight="SemiBold"
+                           Foreground="TextPrimary"/>
+                <TextBlock Text="Read once at load. Later VM changes never arrive, and typing never writes back."
+                           FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding Name, Mode=OneTime}" PlaceholderText="OneTime"/>
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="1" Background="ControlFill" CornerRadius="6" Padding="10">
+              <StackPanel Orientation="Vertical" Spacing="6">
+                <TextBlock Text="OneWay" FontSize="13" FontWeight="SemiBold"
+                           Foreground="TextPrimary"/>
+                <TextBlock Text="VM changes flow in, but typing stays in the box: the target is read-only to the source."
+                           FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding Name, Mode=OneWay}" PlaceholderText="OneWay"/>
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="2" Background="ControlFill" CornerRadius="6" Padding="10">
+              <StackPanel Orientation="Vertical" Spacing="6">
+                <TextBlock Text="TwoWay" FontSize="13" FontWeight="SemiBold"
+                           Foreground="TextPrimary"/>
+                <TextBlock Text="Both directions. Typing here changes the VM, which updates every other live column."
+                           FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding Name, Mode=TwoWay}" PlaceholderText="TwoWay"/>
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="3" Background="ControlFill" CornerRadius="6" Padding="10">
+              <StackPanel Orientation="Vertical" Spacing="6">
+                <TextBlock Text="OneWayToSource" FontSize="13" FontWeight="SemiBold"
+                           Foreground="TextPrimary"/>
+                <TextBlock Text="Starts empty by design: only the box may write. Typing changes the VM but VM changes never come back."
+                           FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding Name, Mode=OneWayToSource}"
+                         PlaceholderText="OneWayToSource"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Rename the source" Command="{Binding RenameCommand}"/>
+            <Button Content="Reset" Command="{Binding ResetCommand}"/>
+            <TextBlock Text="{Binding Name, StringFormat='VM Name = {0}'}" FontSize="12"
+                       Foreground="TextSecondary"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 2. StringFormat + FallbackValue ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="2 · StringFormat and FallbackValue" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="StringFormat decorates a value without a converter. FallbackValue is what the target shows when the path cannot be resolved at all."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <TextBlock Text="{Binding Count, StringFormat='Rename count: {0}'}" FontSize="14"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="{Binding MissingProperty, FallbackValue='(no such property — the fallback is what you see)'}"
+                     FontSize="14" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          <TextBlock Text="The second line binds MissingProperty, which the ViewModel does not have. It is a deliberate absence: the fallback is applied, and the binding is logged rather than counted as a broken binding."
+                     FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= 3. UpdateSourceTrigger ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="3 · UpdateSourceTrigger=LostFocus" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="Typing here changes only the box. The ViewModel is written when focus leaves the box — click elsewhere, or press Enter."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                   PlaceholderText="Type, then click outside"/>
+          <TextBlock Text="{Binding Name, StringFormat='Committed value: {0}'}" FontSize="13"
+                     Foreground="TextSecondary" TextWrapping="Wrap"/>
+          <TextBlock Text="The echo above binds the VM, not the box, so it is the honest read-out of when the write actually happened."
+                     FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ================= Footer ================= -->
+      <TextBlock Text="One data source, four modes. See samples/theming for the other half of MVVM: values that are not data at all."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"
+                 Padding="0,0,0,16"/>
+
+    </StackPanel>
+  </ScrollViewer>
+</Page>

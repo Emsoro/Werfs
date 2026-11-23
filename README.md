@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.7.2.0** · MIT · Windows 10/11 x64
+> 版本 **0.7.3.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -35,11 +35,11 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 |---|---|
 | **WAML 声明式界面** | 元素、属性、属性元素、文本内容、CDATA、实体、标记扩展 |
 | **静态校验** | 未知元素/属性、类型转换失败、语法错误全部在**加载期**报错，带行列号与建议 |
-| **四种绑定模式** | `OneTime` / `OneWay` / `TwoWay` / `OneWayToSource`，默认按目标属性决定 |
+| **四种绑定模式** | `OneTime` / `OneWay` / `TwoWay` / `OneWayToSource`，默认按目标属性决定；`FallbackValue`、`UpdateSourceTrigger=LostFocus` |
 | **DataTemplate** | 列表项由 WAML 描述，按项实例化 |
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
-| **主题** | Light/Dark 双主题，13 个语义 token |
+| **主题** | Light/Dark 双主题，12 个语义 token；`HostOptions::themeProperty` 让页面用一个 bool 实时切换 |
 | **应用外壳** | 菜单栏（含二级子菜单）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
 | **文件对话框** | 打开 / 另存为 / 选文件夹，`IFileDialogService` 可注入假实现供无窗口测试 |
 | **快捷键** | `Ctrl+N` `Ctrl+O` `Ctrl+S` `Ctrl+W`；菜单上显示的提示与真正生效的按键是同一个字符串 |
@@ -88,13 +88,15 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | 目标 | 产物 | 说明 |
 |---|---|---|
 | *（无参数）* | 全部示例 | **默认**：等价于 `samples` |
-| `samples` | `waml_basic.exe` `waml_list.exe` `waml_editor.exe` | 构建所有示例（release） |
+| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_editor.exe` | 构建所有示例（release） |
 | `basic` | `waml_basic.exe` | 只构基础控件示例 |
 | `list` | `waml_list.exe` | 只构集合与布局示例 |
+| `binding` | `waml_binding.exe` | 只构绑定模式示例（四种模式对照） |
+| `theming` | `waml_theming.exe` | 只构主题示例（token + 实时 Light/Dark） |
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 148 个用例 |
+| `tests` | `waml_tests.exe` | 150 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -126,7 +128,7 @@ pwsh -File build.ps1 all
 单一来源，CI 可用同名环境变量覆盖：
 
 ```powershell
-$env:WUI_VERSION_MINOR = '6'
+$env:WUI_VERSION_MINOR = '7'
 pwsh -File build.ps1 all
 ```
 
@@ -164,8 +166,8 @@ samples/                ← 示例，单向依赖框架
     basic/                 **已实现** 基础控件：TextBlock/Button/TextBox/CheckBox/Border
     list/                  **已实现** 集合与布局：ListBox + Grid/WrapPanel/Canvas/VariableSizedWrapGrid/Viewbox/Expander/TabView
     editor/                **已实现** 集成：菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框
-    binding/               （规划）四种绑定模式对照
-    theming/               （规划）Light/Dark 主题
+    binding/               **已实现** 四种绑定模式对照（含 FallbackValue / LostFocus）
+    theming/               **已实现** Light/Dark 实时切换与 token 面板
     usercontrol/           （规划）父子组件、两个独立数据源   ← 需先补 DataContext 可绑定
     animation/             （规划）隐式过渡与缓动            ← 需先补帧时钟
 
@@ -187,12 +189,12 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 1 | `basic` | **基础控件**：TextBlock / Button / TextBox / CheckBox / Border，单一数据源 | **已实现** |
 | 2 | `list` | **集合 + 布局**：ListBox/DataTemplate、Grid、WrapPanel、VariableSizedWrapGrid、Canvas、Viewbox、Expander、TabView | **已实现** |
 | 3 | `editor` | **集成**：菜单栏 + 工具栏 + 多标签 + 未保存提示 + 文件对话框 | **已实现** |
-| 4 | `binding` | 四种绑定模式并排对照 | 规划中 |
-| 5 | `theming` | Light/Dark 切换与 token | 规划中 |
+| 4 | `binding` | **绑定对照**：四种模式并排、StringFormat、FallbackValue、LostFocus | **已实现** |
+| 5 | `theming` | **主题**：12 个 token 面板、Light/Dark 实时切换、字面量对照 | **已实现** |
 | 6 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
 | 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
 
-三个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口）。
+五个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动）。
 
 > `files` 示例**已并入 `editor`**：它原本的四个区块（打开 / 另存为 / 选文件夹 / 读取预览）里，前三个和第四个都是编辑器的正常功能；单独做一个示例只会变成「按钮 → 弹框 → 显示路径」的纯演示，没有真实用途来暴露接线错误。
 
@@ -217,9 +219,9 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 目标 | 用途 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 148 个单元/集成用例 |
+| `waml_tests.exe` | 150 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |

@@ -26,6 +26,9 @@
       samples   DEFAULT. Every sample below, optimised, WAML embedded in the exe
       basic     basic controls sample  (waml_basic.exe)
       list      collections + layout   (waml_list.exe)
+      binding   the four binding modes (waml_binding.exe)
+      theming   tokens + Light/Dark    (waml_theming.exe)
+      editor    the multi-tab editor   (waml_editor.exe)
       all       samples plus every tool and test binary
       debug     one sample with symbols and WAML read from disk at runtime, so
                 editing markup needs no rebuild (-Sample picks which)
@@ -68,7 +71,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'basic', 'list', 'editor')]
+                 'basic', 'list', 'binding', 'theming', 'editor')]
     [string]$Target = 'samples',
 
     [switch]$Clean,
@@ -180,8 +183,8 @@ function Get-VersionPart {
 }
 
 $VersionMajor = Get-VersionPart 'MAJOR' '0'
-$VersionMinor = Get-VersionPart 'MINOR' '6'
-$VersionPatch = Get-VersionPart 'PATCH' '0'
+$VersionMinor = Get-VersionPart 'MINOR' '7'
+$VersionPatch = Get-VersionPart 'PATCH' '3'
 $VersionBuild = Get-VersionPart 'BUILD' '0'
 $VersionString = "$VersionMajor.$VersionMinor.$VersionPatch.$VersionBuild"
 
@@ -399,10 +402,14 @@ function Build-Bench {
 # still wins when building that sample.
 $ListSampleDir = Join-Path $SamplesRoot 'list'
 $BasicSampleDir = Join-Path $SamplesRoot 'basic'
+$BindingSampleDir = Join-Path $SamplesRoot 'binding'
+$ThemingSampleDir = Join-Path $SamplesRoot 'theming'
 $EditorSampleDir = Join-Path $SamplesRoot 'editor'
 # Tools that touch several samples need every sample's headers.
 $AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
                        $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'),
+                       $BindingSampleDir, (Join-Path $BindingSampleDir 'resources'),
+                       $ThemingSampleDir, (Join-Path $ThemingSampleDir 'resources'),
                        $EditorSampleDir, (Join-Path $EditorSampleDir 'resources'))
 
 # A sample's ViewModel implementation has to be compiled into the tools that drive
@@ -471,14 +478,20 @@ function Build-Sample {
 # Adding a sample means adding one line here. The dispatcher loops over this
 # table, so no target needs a hand-written branch.
 $SampleRegistry = @(
-    @{ Name = 'basic'; Exe = 'waml_basic'; Res = 'basic' }
-    @{ Name = 'list';  Exe = 'waml_list';  Res = 'list' }
+    @{ Name = 'basic';   Exe = 'waml_basic';   Res = 'basic' }
+    @{ Name = 'list';    Exe = 'waml_list';    Res = 'list' }
+    # The binding page exists to make a mode difference visible: four columns,
+    # one property. It also exercises FallbackValue and UpdateSourceTrigger.
+    @{ Name = 'binding'; Exe = 'waml_binding'; Res = 'binding' }
+    # The theming page is the only sample that asks the host for a runtime theme
+    # switch (HostOptions::themeProperty); everything else stays on Light.
+    @{ Name = 'theming'; Exe = 'waml_theming'; Res = 'theming' }
     # The integration sample: menu bar, command bar, tabs, unsaved prompt and the
     # file dialogs, all on one page. It absorbed the planned `files` sample, whose
     # four blocks (open / save as / folder pick / read preview) were a subset of
     # what the editor needs -- two samples for one capability meant two places to
     # keep the dialog wiring correct.
-    @{ Name = 'editor'; Exe = 'waml_editor'; Res = 'editor' }
+    @{ Name = 'editor';  Exe = 'waml_editor';  Res = 'editor' }
 )
 
 function Build-RegisteredSample {
