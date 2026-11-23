@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.9.1.0
+> 版本：0.9.2.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.9.1.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**214 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.9.2.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**214 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.9.1.0         [ ok ]
+file version: 0.9.2.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -802,7 +802,7 @@ samples/
 
 因此示例总数从 8 个收敛到 7 个，且顺序不再有「系统集成」这一档 —— `editor` 直接跨到了集成层。
 
-**为什么 `usercontrol` 排第六**：它依赖的能力（`DataContext` 可绑定）在框架里还不存在（见 10a.6）。把它排在概念演进的中段、而不是最前，可以让前几个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
+**为什么 `usercontrol` 排第六**：它依赖的能力（`DataContext` 可绑定）当时在框架里还不存在（见 10a.6）；实现时发现底层 §7.1 的修复已经打通了它，只差标记层验证，因此成本比预期低得多。把它排在概念演进的中段、而不是最前，可以让前几个示例立即开工，同时把框架改造集中在一次迭代里完成，而不是一开始就卡在设计决策上。
 
 `editor` 不是「控件演示」，而是**横切能力的验收**：它把文件对话框、菜单、工具栏、标签页、模态确认串在一个页面里，因此它的完成同时意味着 §10b.1 与 §10c 全部落地。
 
@@ -883,26 +883,31 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 **为什么这是关键能力**：没有它，「组件复用」只能靠复制粘贴 WAML，无法把「一个卡片」封装成一处定义、多处实例化、各自独立。MVVM 的价值有一半在这里。
 
-**框架缺口（实测确认）**：
+**框架缺口（实测后修正）**：
 
-| 现状 | 证据 | 结论 |
+这一节最初写于动手之前，结论错了一半。实际实现时逐条验证，真实情况是：
+
+| 当初的判断 | 实测结果 | 结论 |
 |---|---|---|
-| `Source=` 在 v0.5 被明确拒绝 | `Parser.cpp:1050` — "Source= is not supported in v0.5 (use DataContext inheritance)" | 无法在属性级指定数据源 |
-| 无 `ContentControl` / `UserControl` 类型 | `Types.cpp` 注册表只有 10 个类型 | 无法定义「组件」这一层 |
-| `DataContext` 无 WAML 可写属性 | 属性表里没有 `DataContext` | 无法在标记里给子树换数据源 |
-| 已有基础已具备 | `Widget::SetDataContext(dc, own)` 支持「本地值优先」（`ownsDataContext_`），§7.1 的修复正是为此 | 底层就绪，只缺标记层入口 |
+| `DataContext` 无 WAML 可写属性 | **已存在**：`Types.cpp` 早就把它注册成 `VType::Ref` 槽位，`Widget::BindType` 还专门缓存了 `dataContextSlot_`，`SetSlotValue` 里有对它的转发分支 | **无需改动**，标记层直接可用 |
+| 无 `ContentControl` / `UserControl` 类型 | 正确，但这**不是阻碍** | `ItemTemplate` 本身就是「组件定义」，列表决定实例数 |
+| `DataContext` 绑定会自我覆盖 | 未发生 | `Instantiate` 已经是「先下推父级 context，再解析本节点绑定」 |
+| `Source=` 被拒绝 | 正确 | 但 `DataContext` 已覆盖真实需求，`Source=` 属可选补充 |
 
-**要补的三件事**（按最小可行顺序）：
+**真正要做的事只有一件**：写一个用 `DataContext` 换数据源的页面，并断言其独立性。框架层面零改动。
 
-1. **`DataContext` 成为可绑定的 WAML 属性**（首选方案）
-   `DataContext="{Binding SelectedServer}"` 即可让整棵子树切换到该对象。改动集中在属性表 + `Instantiate` 时的赋值路径，不需要新的控件类型。
-   - 风险：`DataContext` 绑定本身依赖父级 context，初始化顺序必须「先解析绑定、再下推」，否则会自我覆盖。
+这也是一次教训：**没有实测的「缺口清单」不可信**。原表把「属性表里没有 `DataContext`」写成事实，而它当时就在 `Types.cpp:109`；如果照着原计划先去改框架，会做一堆无用的改动。
 
-2. **`Source=` 绑定参数**（备选/补充）
-   解掉 v0.5 的禁用，允许 `{Binding Name, Source={StaticResource ...}}`。需要资源引用机制，成本高于方案 1，列为补充。
+**验收（已全部通过）**：
+- 页面标题与三个卡片的 `Port` 互不影响；
+- 卡片 1 改端口，卡片 2 不受影响；
+- 卡片内嵌徽章跟随**卡片**的 `Enabled`（beta 显示 Offline，另两张 Online）；
+- 页面汇总 `OnlineCount` 跟随各卡片，但页面从不写卡片字段；
+- `waml_interact.exe samples/usercontrol/UserControl.waml` 六组断言全绿。
 
-3. **`UserControl` 模板机制**（可选，成本最高）
-   `samples/usercontrol/ServerCard.waml` 作为模板，`<UserControl Source="ServerCard.waml"/>` 实例化。这需要「编译期文档引用」，会让打包与路径解析复杂化。**建议延后**，先用 1 或 2 达成同样的可见效果。
+**为什么没有 `UserControl` 类型 / `ServerCard.waml` 模板文件**
+
+计划里设想过 `<UserControl Source="ServerCard.waml"/>`，即「编译期文档引用」。没有做，理由不是成本，而是它解决的问题不存在：`ItemTemplate` 里写一次模板、列表实例化三次，已经达成「一处定义、多处实例化、各自独立」。再引入一个文件级模板机制，只会多一层路径解析与打包复杂度，换来的表达力零。
 
 **推荐路径**：先做方案 1。它用最小改动达成「父子两数据源」的目标，且不需要模板机制。方案 3 若做，应在 v1.0 之后单独评估。
 
@@ -1000,8 +1005,8 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 3 | `editor` | **Visibility → Selector → 浮层 → 模态**（10c.3）+ **`IFileDialogService`**（10b.1） | **✅ 已完成**（四批全落地） |
 | 4 | `binding` | 无 | **✅ 已完成**（含 `FallbackValue`/`LostFocus` 两处框架修复，§7.23） |
 | 5 | `theming` | 无（主题已支持） | **✅ 已完成**（宿主新增 `HostOptions::themeProperty` 实时切换） |
-| 6 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | 需先补框架 |
-| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | 需先补框架 |
+| 6 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | **✅ 已完成**（底层 §7.1 已就绪，标记层可直接用；`Source=` 仍不需要） |
+| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | **✅ 已完成**（`VisualState` + `AnimationHost`，已并入 `basic` 卡片） |
 | ~~—~~ | ~~`files`~~ | — | **已并入 `editor`**（§10b.1 说明理由） |
 
 **`editor` 从第七位提前到第三位**。原顺序把它排在 `files` 之后、`animation` 之前，理由是「它是集成点，要等前面能力齐备」。实际做下来发现这个顺序判断反了：
@@ -1887,7 +1892,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 | R8 | 每控件 7.7 行注册样板 | 30 控件时约 230 行重复 | v0.6 引入聚合式 `PropList` |
 | R9 | 跨机器字体不一致 | 快照金样误报 | CI 固定或内嵌字体子集 |
 | R10 | IME 未实现 | 自绘 TextBox 无法输入中文 | 见 §20；需做垂直切片决策 |
-| R11 | `DataContext` 不可绑定 | 无法复用组件，示例只能复制粘贴 WAML | 迭代 2b（见 10a.6），底层已就绪只缺标记层入口 |
+| R11 | ~~`DataContext` 不可绑定~~ **误报** | — | **已关闭**：实测它早在 `Types.cpp:109` 注册为 Ref 槽位，无需任何框架改动，`usercontrol` 示例直接可用（见 10a.6） |
 | R12 | 示例之间复制宿主代码 | 六份 Win32+D2D 初始化重复，改动发散 | 迭代 0 先抽 `samples/shared/` |
 | R13 | 文件对话框阻塞 UI 线程 | 模态期间不重绘 | 可接受（与系统行为一致）；不引入异步 |
 | R14 | COM 初始化顺序 | 宿主未 `CoInitialize` 时弹框失败 | `SampleHost` 已初始化 `ole32`，做成显式前置断言 |
@@ -1920,7 +1925,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 ## 21. 验收标准（v1.0）
 1. **示例矩阵齐备**（10a）：`basic`、`list`、`editor`、`binding`、`theming`、`usercontrol`、`animation` 七个可独立运行的示例，`build.ps1` 无参数即全部构建。（`files` 已并入 `editor`。）
-2. **组件复用成立**：`usercontrol` 里两个卡片实例各有独立数据源，互不影响（10a.6 的四条断言）。
+2. **组件复用成立**：`usercontrol` 里三个卡片实例各有独立数据源，互不影响（10a.6 的六组断言，已通过）。
 3. ~~**系统集成可用**：`files` 示例里三种对话框~~ → **已达成**：`editor` 的 File ▸ Open / Save as 走真实 `IFileDialogService`；无窗口环境下注册 nullptr 并安全返回（10b.1）。
 4. **编辑器界面可用**（§10c）：**✅ 已达成** —— `editor` 能开多个标签、切换、关闭；改过内容后关标签会弹出「保存/不保存/取消」，**选取消则标签保留**（`interact` 第 6–8 项断言）。
 5. **动效可用且不破坏确定性**：`animation` 示例的过渡肉眼连贯，同时双主题快照哈希仍确定（10b.2 + R16）。

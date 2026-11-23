@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.9.1.0** · MIT · Windows 10/11 x64
+> 版本 **0.9.2.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -88,11 +88,12 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | 目标 | 产物 | 说明 |
 |---|---|---|
 | *（无参数）* | 全部示例 | **默认**：等价于 `samples` |
-| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_editor.exe` | 构建所有示例（release） |
+| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_usercontrol.exe` `waml_editor.exe` | 构建所有示例（release） |
 | `basic` | `waml_basic.exe` | 只构基础控件示例 |
 | `list` | `waml_list.exe` | 只构集合与布局示例 |
 | `binding` | `waml_binding.exe` | 只构绑定模式示例（四种模式对照） |
 | `theming` | `waml_theming.exe` | 只构主题示例（token + 实时 Light/Dark） |
+| `usercontrol` | `waml_usercontrol.exe` | 只构组件作用域示例（一份模板、三份数据源） |
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
@@ -194,7 +195,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 6 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
 | 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
 
-五个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动）。
+六个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动），`usercontrol` 是**数据源分层**（一份模板三份数据，卡片内嵌的徽章读卡片而不是页面）。
 
 > `files` 示例**已并入 `editor`**：它原本的四个区块（打开 / 另存为 / 选文件夹 / 读取预览）里，前三个和第四个都是编辑器的正常功能；单独做一个示例只会变成「按钮 → 弹框 → 显示路径」的纯演示，没有真实用途来暴露接线错误。
 
@@ -219,10 +220,10 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 目标 | 用途 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
 | `waml_tests.exe` | 214 个单元/集成用例 |
-| `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框） |
+| `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
 | `waml_bench.exe` | 性能基线 |
@@ -472,8 +473,41 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **筛选是子串匹配，不是前缀**。用户更常输入词中间的特征片段（“lon” → London、“se” → Seattle/Seoul），前缀匹配会把这类输入判成无结果。
 - **`AutoSuggestBox` 每次按键都从槽位重读文本**。它没有光标模型，早期版本用“缓冲区为空才同步”来省事，结果是**外部写入（绑定、重置）对它不可见**：屏幕上的字变了，下一次按键却接在旧缓冲后面，凭空拼出用户没输入过的字符串。这类缺陷只有“先清空再输入”的测试能抓到。
 
+### 写法示例：组件与分层数据源
+
+```xml
+<!-- 一份模板，多份数据：列表为每一行换一次 DataContext -->
+<ListBox ItemsSource="{Binding Cards}" ItemHeight="132">
+  <ListBox.ItemTemplate>
+    <DataTemplate>
+      <!-- 这里的每个绑定都读"这张卡片"，不是页面 -->
+      <StackPanel Orientation="Vertical" Spacing="8">
+        <TextBlock Text="{Binding Name}"/>
+        <TextBlock Text="{Binding StatusText}"/>   <!-- 卡片自己的派生状态 -->
+        <NumberBox Text="{Binding PortText, Mode=TwoWay}"/>
+        <ToggleSwitch IsChecked="{Binding Enabled, Mode=TwoWay}"/>
+      </StackPanel>
+    </DataTemplate>
+  </ListBox.ItemTemplate>
+</ListBox>
+```
+
+四层数据源各管各的：
+
+| 层 | 数据源 | 谁绑定它 |
+|---|---|---|
+| 页面 | `UserControlVm` | 标题、说明、卡片计数 |
+| 每一行 | 一个 `ServerCardVm` | 模板里的 Name/Port/Enabled |
+| 卡片内徽章 | **同一个** `ServerCardVm` | `StatusText` |
+| 卡片内开关 | 同一个 `ServerCardVm` | `Enabled`，改动回写卡片 |
+
+- **`DataContext` 是可绑定属性**。`ItemTemplate` 为每一行换一次上下文，因此「一个卡片组件」不需要新的控件类型——模板本身就是组件定义，列表决定实例数量。
+- **页面能观察卡片，但不能拥有卡片的数据**。`OnlineCount` 订阅了各卡片的 `Enabled`，所以拨动某张卡片的开关会更新顶部汇总；反过来页面从不写卡片里的字段。这条边界是 MVVM 里最容易被违反的地方。
+- **`{Binding ..., Source=...}` 仍然不支持**（属性级换数据源）。`DataContext` 已经覆盖了组件复用这个真实用途，`Source=` 只在需要"一个属性读 A、另一个读 B"的罕见场景才必要，暂不实现。
+
+
 - **动画只覆盖视觉状态过渡**：`VisualState` 的 `Transition` 会插值颜色/数值/Thickness，但没有关键帧、没有嵌套时间轴，也不对布局属性做动画（改尺寸的过渡会触发重排，目前只让绘制属性动）。
-- **`DataContext` 不可绑定**：`{Binding ..., Source=...}` 在 v0.5 被明确拒绝，无法在 WAML 里给子树换数据源——这意味着**组件复用目前只能靠复制 WAML**。这是实现 `usercontrol` 示例的前置阻塞项。
+- **`Source=` 仍不支持**：`DataContext` 已成为可绑定属性（`usercontrol` 示例即依赖它），但属性级换数据源（一个属性读 A、另一个读 B）仍不可用。真实需求已被 `DataContext` 覆盖，故暂不实现。
 - **`TextBox` 无 IME / 选区 / 剪贴板**：只有插入、退格、删除、方向键、Home/End、回车。**中文输入不可用** —— 对一个文本编辑器示例来说这是最明显的短板，见 `CODE_PLAN.md` R10。
 - **浮层只有一层**：菜单能在自己内部递归画子菜单，但「浮层里再开浮层」（例如对话框里的下拉框）不支持。
 - **关窗口不拦截**：关闭整个窗口时不检查未保存文档。单标签的提示流程已完整，批量流程见 `CODE_PLAN.md` §10c.5。

@@ -1,13 +1,20 @@
 <?waml version="0.1"?>
 <!--
-  samples/usercontrol — one page, three data sources.
+  samples/usercontrol — components with their own data sources.
 
-  The page binds PageVm. Each card below opens with
-      DataContext="{Binding AlphaServer}"
-  which replaces the source for that whole subtree, so a plain
-  {Binding Port} inside the card reads the server, not the page.
-  The status badge does it a second time: its DataContext is the
-  card's Status object, which is why a component can nest.
+  This page exists for one capability that copying markup cannot replace: a subtree
+  binding against a data source different from the page's.
+
+  THREE levels of data source are at work, and the third is the interesting one:
+
+    UserControlVm            the page: title, blurb, the summary line
+     └ ServerVm (per row)    the item template installs each as that row's DataContext
+        └ StatusVm           the badge installs a THIRD source, one level deeper
+
+  A badge that merely bound the card's Enabled would work but would not nest. This one is
+  a component with its own object, which is the case that breaks when the hand-off is
+  wrong -- and it is the same mechanism again, so it demonstrates reusability rather than
+  a special case.
 
   Bound to sample::UserControlVm in UserControlVm.h.
 -->
@@ -15,83 +22,90 @@
   <ScrollViewer>
     <StackPanel Orientation="Vertical" Margin="24" Spacing="16">
 
-      <!-- ================= Header ================= -->
-      <TextBlock Text="Component scope" FontSize="30" FontWeight="SemiBold"
+      <!-- ================= Page-owned data source ================= -->
+      <TextBlock Text="{Binding PageTitle}" FontSize="28" FontWeight="SemiBold"
                  Foreground="TextPrimary"/>
       <TextBlock Text="{Binding Blurb}" FontSize="13" Foreground="TextSecondary"
                  TextWrapping="Wrap"/>
 
-      <!-- ================= Page-owned source ================= -->
       <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
               CornerRadius="8" Padding="16">
         <StackPanel Orientation="Vertical" Spacing="8">
           <TextBlock Text="Page data source" FontSize="17" FontWeight="SemiBold"
                      Foreground="TextPrimary"/>
-          <TextBlock Text="This title belongs to the page. The cards bind their own servers, so changing it must not move anything inside them."
+          <TextBlock Text="This title and the summary belong to the page. The cards bind their own servers, so changing the title must not move anything inside them."
                      FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
           <StackPanel Orientation="Horizontal" Spacing="10">
             <Button Content="Change page title" Command="{Binding CyclePageTitleCommand}"/>
-            <TextBlock Text="{Binding PageTitle, StringFormat='Page title: {0}'}"
-                       FontSize="13" Foreground="TextPrimary"/>
+            <TextBlock Text="{Binding OnlineCount}" FontSize="13" Foreground="TextPrimary"/>
           </StackPanel>
           <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="TextSecondary"
                      TextWrapping="Wrap"/>
         </StackPanel>
       </Border>
 
-      <!-- ================= Two independent cards ================= -->
-      <Grid ColumnDefinitions="1*,1*" ColumnSpacing="12">
+      <!-- ================= The component, once per item =================
+           One template, three instances, three independent sources. The template says what
+           a card IS; the list says how many there are.
 
-        <!-- Card 1: its DataContext is the alpha server. -->
-        <Border Grid.Column="0" x:Name="AlphaCard" Background="CardBackground"
-                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8"
-                Padding="16" DataContext="{Binding AlphaServer}">
-          <StackPanel Orientation="Vertical" Spacing="10">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="{Binding Name}" FontSize="20" FontWeight="SemiBold"
-                         Foreground="TextPrimary"/>
-              <!-- Badge: a second DataContext binding, one level deeper. -->
-              <Border DataContext="{Binding Status}" Background="ControlFill"
-                      CornerRadius="12" Padding="8,2,8,2">
-                <TextBlock Text="{Binding Text}" Foreground="{Binding Color}"
-                           FontSize="12" FontWeight="SemiBold"/>
-              </Border>
-            </StackPanel>
-            <TextBlock Text="{Binding Port, StringFormat='Port {0}'}" FontSize="13"
-                       Foreground="TextSecondary"/>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="Bump port" Command="{Binding BumpPortCommand}"/>
-              <Button Content="Toggle enabled" Command="{Binding ToggleCommand}"/>
-            </StackPanel>
-          </StackPanel>
-        </Border>
+           ItemHeight is fixed because ListBox rows are fixed; the card is sized to fit it
+           rather than the other way round. -->
+      <ListBox ItemsSource="{Binding Cards}" ItemHeight="126">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+                    CornerRadius="8" Padding="14">
+              <StackPanel Orientation="Vertical" Spacing="8">
 
-        <!-- Card 2: same markup, its own server. -->
-        <Border Grid.Column="1" x:Name="BetaCard" Background="CardBackground"
-                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8"
-                Padding="16" DataContext="{Binding BetaServer}">
-          <StackPanel Orientation="Vertical" Spacing="10">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="{Binding Name}" FontSize="20" FontWeight="SemiBold"
-                         Foreground="TextPrimary"/>
-              <Border DataContext="{Binding Status}" Background="ControlFill"
-                      CornerRadius="12" Padding="8,2,8,2">
-                <TextBlock Text="{Binding Text}" Foreground="{Binding Color}"
-                           FontSize="12" FontWeight="SemiBold"/>
-              </Border>
-            </StackPanel>
-            <TextBlock Text="{Binding Port, StringFormat='Port {0}'}" FontSize="13"
-                       Foreground="TextSecondary"/>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="Bump port" Command="{Binding BumpPortCommand}"/>
-              <Button Content="Toggle enabled" Command="{Binding ToggleCommand}"/>
-            </StackPanel>
-          </StackPanel>
-        </Border>
-      </Grid>
+                <!-- Row 1: the card's own name, and a badge with its own source. -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="{Binding Name}" FontSize="19" FontWeight="SemiBold"
+                             Foreground="TextPrimary"/>
+                  <!-- THE THIRD LEVEL: the badge switches to the card's Status object, so
+                       these two bindings below resolve against StatusVm, not ServerVm.
+                       A badge that read the page would show the same text on every row. -->
+                  <Border DataContext="{Binding Status}" Background="ControlFill"
+                          CornerRadius="12" Padding="8,2,8,2">
+                    <TextBlock Text="{Binding Text}" Foreground="{Binding Color}"
+                               FontSize="12" FontWeight="SemiBold"/>
+                  </Border>
+                </StackPanel>
+
+                <!-- Row 2: the card's own port, editable. Editing one card must not touch
+                     another -- that is the assertion the interaction check makes. -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="Port" FontSize="12" Foreground="TextSecondary"/>
+                  <NumberBox Width="92" Text="{Binding PortText, Mode=TwoWay}"/>
+                  <Button Content="+1" Command="{Binding BumpPortCommand}"/>
+                </StackPanel>
+
+                <!-- Row 3: the card's own switch. The page summary follows it, which is the
+                     only way it should: the page observes, it does not own. -->
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <ToggleSwitch IsChecked="{Binding Enabled, Mode=TwoWay}"/>
+                  <Button Content="Toggle" Command="{Binding ToggleCommand}"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+
+      <!-- ================= How it works ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="6">
+          <TextBlock Text="Three data sources, one template" FontSize="15"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="Page  →  each row's ServerVm  →  each badge's StatusVm"
+                     FontFamily="Consolas" FontSize="12" Foreground="TextPrimary"/>
+          <TextBlock Text="Every arrow is a DataContext change, not a copy. The item template is written once and the list decides how many times it appears; a card never sees the page's properties, and the page never reaches into a card's."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
 
       <!-- ================= Footer ================= -->
-      <TextBlock Text="Two cards, two sources, one page. The markup is duplicated here because a reusable component template is a separate framework feature; the DataContext binding is what makes the copies independent."
+      <TextBlock Text="Bump a port or flip a switch above: only that card changes, and the page summary updates without writing to any card."
                  FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"
                  Padding="0,0,0,16"/>
 

@@ -51,6 +51,11 @@ bool IsBasicPage(const std::string& origin, const std::string& path) {
            path.find("Basic.waml") != std::string::npos;
 }
 
+bool IsUserControlPage(const std::string& origin, const std::string& path) {
+    return origin.find("UserControl.waml") != std::string::npos ||
+           path.find("UserControl.waml") != std::string::npos;
+}
+
 bool IsEditorPage(const std::string& origin, const std::string& path) {
     return origin.find("Editor.waml") != std::string::npos ||
            path.find("Editor.waml") != std::string::npos;
@@ -64,11 +69,6 @@ bool IsBindingPage(const std::string& origin, const std::string& path) {
 bool IsThemingPage(const std::string& origin, const std::string& path) {
     return origin.find("Theming.waml") != std::string::npos ||
            path.find("Theming.waml") != std::string::npos;
-}
-
-bool IsUserControlPage(const std::string& origin, const std::string& path) {
-    return origin.find("UserControl.waml") != std::string::npos ||
-           path.find("UserControl.waml") != std::string::npos;
 }
 
 // Checks that only make sense on samples/basic/Basic.waml.
@@ -959,6 +959,124 @@ int RunThemingChecks(Widget* root, const std::shared_ptr<sample::ThemingVm>& vm)
     return g_failures == 0 ? 0 : 1;
 }
 
+// Checks for samples/usercontrol/UserControl.waml.
+//
+// This page exists for ONE claim: a subtree can bind against a data source different from
+// the page's. So the checks are all about independence -- an assertion that the cards show
+// three different things is worth more here than any amount of "it rendered".
+int RunUserControlChecks(Widget* root, const std::shared_ptr<sample::UserControlVm>& vm) {
+    std::printf("\n[1] the page binds its own data source\n");
+    Widget* list = FindFirst(root, "wui/ListBox");
+    auto* listBox = dynamic_cast<ListBox*>(list);
+    Expect(listBox != nullptr, "the page has a ListBox of cards");
+    Expect(vm->CardList()->Count() == 3, "the model has three cards");
+    if (listBox != nullptr) {
+        Expect(listBox->ItemCount() == 3, "and three rows were instantiated");
+    }
+
+    // Collect the text each row shows, by walking the row itself. Reading the MODEL would
+    // prove nothing: the claim is that the WIDGETS resolved against different contexts.
+    auto rowTexts = [&](size_t index) {
+        std::vector<std::wstring> out;
+        std::function<void(Widget*)> visit = [&](Widget* w) {
+            if (w == nullptr) return;
+            const int slot = w->SlotOf("Text");
+            if (slot >= 0 && w->RawSlot(slot).type == VType::Text) {
+                const auto v = w->Get<std::wstring>(slot);
+                if (!v.empty()) out.push_back(v);
+            }
+            for (auto& c : w->Children()) visit(c.get());
+        };
+        if (listBox != nullptr) visit(listBox->ItemWidgetAt(index));
+        return out;
+    };
+    auto contains = [](const std::vector<std::wstring>& v, const std::wstring& needle) {
+        return std::find(v.begin(), v.end(), needle) != v.end();
+    };
+
+    std::printf("\n[2] every row shows ITS OWN card's data\n");
+    {
+        Expect(listBox != nullptr, "list present");
+        if (listBox != nullptr) {
+            const auto r0 = rowTexts(0);
+            const auto r1 = rowTexts(1);
+            const auto r2 = rowTexts(2);
+            // Names come from the card's own Name slot.
+            Expect(contains(r0, L"alpha"), "row 0 shows alpha");
+            Expect(contains(r1, L"beta"), "row 1 shows beta");
+            Expect(contains(r2, L"gamma"), "row 2 shows gamma");
+            // Ports differ, which is the part that breaks if every row shares one context.
+            Expect(contains(r0, L"8080"), "row 0 shows its own port");
+            Expect(contains(r1, L"9090"), "row 1 shows its own port");
+            Expect(contains(r2, L"7070"), "row 2 shows its own port");
+            Expect(!contains(r0, L"9090"), "row 0 does not show another card's port");
+        }
+    }
+
+    std::printf("\n[3] the badge inside a card follows THAT card, not the page\n");
+    {
+        Expect(listBox != nullptr, "list present");
+        if (listBox != nullptr) {
+            // beta starts disabled, the other two enabled. If the badge read the page's
+            // context all three would read the same.
+            // Lowercase because the text comes from StatusVm -- the badge's OWN object. That it
+            // says "online"/"offline" rather than reading a card field is the evidence that the
+            // third DataContext level actually took effect.
+            Expect(contains(rowTexts(0), L"online"), "alpha's badge says online");
+            Expect(contains(rowTexts(1), L"offline"), "beta's badge says offline");
+            Expect(contains(rowTexts(2), L"online"), "gamma's badge says online");
+        }
+    }
+
+    std::printf("\n[4] editing one card does not touch another\n");
+    {
+        const int betaPort = vm->Beta()->Port.Get();
+        vm->Alpha()->Port.Set(1234);
+        root->ForceLayout(Size{760, 620});
+        Expect(vm->Beta()->Port.Get() == betaPort, "beta's port is unchanged");
+        if (listBox != nullptr) {
+            const auto r0 = rowTexts(0);
+            const auto r1 = rowTexts(1);
+            Expect(contains(r0, L"1234"), "row 0 repainted with the new port");
+            // The row must not have picked up another card's edit.
+            Expect(!contains(r1, L"1234"), "row 1 did not");
+        }
+        vm->Alpha()->Port.Set(8080);
+        root->ForceLayout(Size{760, 620});
+    }
+
+    std::printf("\n[5] flipping one card's switch follows through, but stays scoped\n");
+    {
+        const std::wstring before = vm->OnlineCount.Get();
+        vm->Beta()->Enabled.Set(true);
+        root->ForceLayout(Size{760, 620});
+        // The page observes the cards: that is the one thing it is allowed to do with them.
+        Expect(vm->OnlineCount.Get() != before, "the page summary followed the card");
+        Expect(contains(rowTexts(0), L"online"), "alpha is still online");
+        Expect(contains(rowTexts(1), L"online"), "beta is now online");
+        Expect(contains(rowTexts(2), L"online"), "and gamma never changed");
+
+        vm->Beta()->Enabled.Set(false);
+        root->ForceLayout(Size{760, 620});
+        Expect(contains(rowTexts(1), L"offline"), "switching back shows offline again");
+    }
+
+    std::printf("\n[6] the same template produced all three rows\n");
+    {
+        // Three distinct widget trees, not one shared instance drawn three times: a shared
+        // instance would have identical bounds for every row.
+        Expect(listBox != nullptr, "list present");
+        if (listBox != nullptr && listBox->ItemCount() == 3) {
+            const Rect a = listBox->ItemWidgetAt(0)->Bounds();
+            const Rect b = listBox->ItemWidgetAt(1)->Bounds();
+            Expect(a.y != b.y, "the rows have different positions");
+        }
+    }
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     // An explicit path wins; otherwise fall back to the basic sample's resource.
@@ -1002,6 +1120,14 @@ int main(int argc, char** argv) {
         root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
         root->ForceLayout(Size{700, 1200});
         return RunBasicChecks(root.get(), vm);
+    }
+
+    if (IsUserControlPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::UserControlVm>();
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{760, 620});
+        return RunUserControlChecks(root.get(), vm);
     }
 
     if (IsEditorPage(loaded.origin, argPath)) {
