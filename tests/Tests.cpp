@@ -23,8 +23,10 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace wui;
@@ -5664,6 +5666,134 @@ TEST("chart: a category bar chart gets its series from the page") {
     CHECK(chart->Plot()->LastSourcePoints() == 12);
     // Twelve bars from twelve points, all drawn: nothing to reduce here.
     CHECK(chart->Plot()->LastDrawnPoints() == 12);
+}
+
+TEST("chart: the fps overlay measures itself from its own paints") {
+    // Regression: the overlay depended on the host calling TickFrame, the sample never
+    // wired that call up, and the rate stayed 0 forever -- a property that exists and
+    // reads as implemented while doing nothing. The control now derives the rate from
+    // the interval between its own paints, which cannot be forgotten.
+    InstallText();
+    auto plot = std::make_shared<ChartPlot>();
+    plot->SetShowFps(true);
+    CHECK(plot->Fps() == 0); // nothing painted yet, so no rate is claimed
+
+    auto series = std::make_shared<ChartSeries>();
+    series->SetUniformX(std::vector<double>(500, 1.0));
+    plot->SetSeries(series);
+    plot->ForceLayout(Size{400, 200});
+    const ThemePalette palette = MakePalette(ThemeKind::Light);
+    RecordingPaintContext rec;
+    plot->PaintTree(rec, palette);
+    // One paint has no predecessor: the rate must still be zero rather than infinite.
+    CHECK(plot->Fps() == 0);
+
+    // Paint repeatedly with real elapsed time between the passes.
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        plot->ForceLayout(Size{400, 200});
+        RecordingPaintContext again;
+        plot->PaintTree(again, palette);
+    }
+    CHECK(plot->Fps() > 0);
+    std::printf("    fps from paints alone: %.1f\n", plot->Fps());
+
+    // A long stall must not be folded in as one enormous frame interval.
+    const double steady = plot->Fps();
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    RecordingPaintContext afterStall;
+    plot->PaintTree(afterStall, palette);
+    CHECK(plot->Fps() > steady * 0.4);
+}
+
+TEST("chart: axis labels are drawn after the plot, with the scroll shift") {
+    // Regression: the labels were drawn from Chart::OnPaint, which runs BEFORE the
+    // plot child's bounds_ are shifted. The offset derived there was therefore always
+    // zero and the tick row stayed at the pre-scroll position while the polyline
+    // moved -- the figure visibly came apart when the page scrolled.
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile("<ScrollViewer><StackPanel><Chart Height=\"200\" Series=\"{Binding S}\"/>"
+                       "<Border Height=\"900\"/></StackPanel></ScrollViewer>",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class Vm final : public ObservableObject {
+    public:
+        Vm() {
+            auto s = std::make_shared<ChartSeries>();
+            s->SetUniformX(std::vector<double>(1000, 3.0));
+            S.Set(std::static_pointer_cast<RefObject>(s));
+            Make("S", S);
+        }
+        ObservableProperty<RefPtr> S{"S"};
+    };
+    auto vm = std::make_shared<Vm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+
+    auto findScroller = [](Widget* w) -> ScrollViewer* {
+        std::function<ScrollViewer*(Widget*)> walk = [&](Widget* n) -> ScrollViewer* {
+            if (!n) return nullptr;
+            if (auto* sv = dynamic_cast<ScrollViewer*>(n)) return sv;
+            for (auto& c : n->Children()) {
+                if (auto* r = walk(c.get())) return r;
+            }
+            return nullptr;
+        };
+        return walk(w);
+    };
+    root->ForceLayout(Size{400, 300});
+    // Two passes so the ScrollViewer knows its content is taller than the viewport.
+    root->ForceLayout(Size{400, 300});
+    ScrollViewer* scroller = findScroller(root.get());
+    CHECK(scroller != nullptr);
+    if (!scroller) return;
+    CHECK(scroller->MaxScroll() > 50.0f);
+
+    // Read where the x-axis labels land, before and after scrolling. Parsing the paint
+    // log is the only way to observe this: the labels are text, not a widget, so they
+    // have no bounds to inspect.
+    auto labelRowY = [&](float scrollTo) -> std::optional<float> {
+        root->ForceLayout(Size{400, 300});
+        scroller->ScrollTo(scrollTo);
+        RecordingPaintContext log;
+        root->PaintTree(log, MakePalette(ThemeKind::Light));
+        const std::string& txt = log.Text();
+        std::optional<float> best;
+        const std::string needle = "size=11.00";
+        size_t pos = 0;
+        while ((pos = txt.find(needle, pos)) != std::string::npos) {
+            const size_t recStart = txt.rfind("\ntext \"", pos);
+            if (recStart != std::string::npos) {
+                const size_t quoteOpen = recStart + 6;
+                const size_t quoteClose = txt.find('"', quoteOpen + 1);
+                if (quoteClose != std::string::npos && quoteClose < pos) {
+                    std::stringstream nums(txt.substr(quoteClose + 1));
+                    float x = 0, y = 0, w = 0, h = 0;
+                    if (nums >> x >> y >> w >> h) {
+                        if (!best || y < *best) best = y;
+                    }
+                }
+            }
+            pos += needle.size();
+        }
+        return best;
+    };
+
+    const auto atTop = labelRowY(0.0f);
+    const auto scrolled = labelRowY(60.0f);
+    CHECK(atTop.has_value());
+    CHECK(scrolled.has_value());
+    if (atTop && scrolled) {
+        std::printf("    axis label row: %.0f -> %.0f (scrolled 60)\n", *atTop, *scrolled);
+        CHECK(*scrolled < *atTop);
+        // The whole point: the labels move by the SAME amount as everything else. An
+        // implementation that merely moved them "some" would still look attached for a
+        // few pixels and then drift.
+        CHECK(std::abs((*atTop - *scrolled) - 60.0f) < 2.0f);
+    }
 }
 
 int main(int argc, char** argv) {

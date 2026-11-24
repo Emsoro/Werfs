@@ -125,8 +125,10 @@ public:
     void SetShowFps(bool show);
     bool ShowFps() const { return showFps_; }
     double Fps() const { return fps_; }
-    // Called by the host's frame loop with the real elapsed time, so the chart can
-    // tell "no frames are arriving" apart from "frames are arriving fast".
+    // Optional: lets a host feed its own clock. The overlay does NOT depend on it --
+    // paints are observed directly (AccumulateFrame), because a feature that only
+    // works when the host remembers to call something reads as implemented but does
+    // nothing.
     void TickFrame(float seconds);
 
     // Grid line positions in data coordinates; paint and hit testing share them.
@@ -156,6 +158,9 @@ public:
 private:
     Rect PlotRectFrom(const Rect& outer) const;
     void ComputeTicks();
+    // Adds one frame interval to the smoothed rate. Shared by TickFrame and by the
+    // paint observer, so the two can never disagree about how the number is derived.
+    void AccumulateFrame(double seconds);
     // Resolves LastDrawnPoints/LastBudget from the data and the plot width. Runs in
     // Fit(), so the numbers describe the frame that is ABOUT to be drawn rather than
     // the one that just finished.
@@ -193,6 +198,9 @@ private:
     double lastPaintUs_ = 0;
 
     bool showFps_ = false;
+    // Timestamp of the previous paint, in microseconds. Used to measure the interval
+    // directly so the overlay does not depend on a host calling TickFrame.
+    double lastPaintStampUs_ = 0;
     // Exponentially smoothed frames per second. Smoothing is what makes the number
     // legible: raw per-frame values swing between 40 and 400 on the same series.
     double fps_ = 0;
@@ -243,6 +251,9 @@ public:
 
 private:
     void PublishCounts();
+    // Axis labels, tick marks and the row of x labels. Called from PaintChildrenAt
+    // (after the plot has painted) so the offset is the frame's real scroll delta.
+    void DrawAxisLabels(PaintCtx& ctx, const ThemePalette& palette, const Point& shift);
     // The plot area is the child. Keeping it in the child list (rather than
     // painting it from Chart::OnPaint) is what lets the framework's clip, dirty
     // propagation and hit testing apply to it without the chart re-implementing

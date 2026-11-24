@@ -31,7 +31,10 @@
 #include <fstream>
 #include <functional>
 #include <sstream>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <thread>
 
 using namespace wui;
 
@@ -1305,17 +1308,31 @@ int RunChartsChecks(Widget* root, const std::shared_ptr<sample::ChartsVm>& vm) {
     root->ForceLayout(Size{840, 1500});
     root->PaintTree(rec, MakePalette(ThemeKind::Light));
 
-    std::printf("\n[6] the fps overlay is measured, not declared\n");
+    std::printf("\n[6] the fps overlay is measured without outside help\n");
     Expect(big->Get<bool>(big->SlotOf("ShowFps")), "ShowFps is on for the live chart");
+    // The overlay must derive its rate from its OWN paints, not from a host calling a
+    // tick method. The previous version required the sample to wire up a chart pointer,
+    // that call was never made, and the rate stayed 0 forever -- while this check
+    // passed because it drove TickFrame by hand. So this test drives nothing: it paints
+    // repeatedly and requires a rate to appear.
     const double before2 = plot->Fps();
-    // Drive the frame clock the way the host does: real elapsed times.
-    for (int i = 0; i < 20; ++i) plot->TickFrame(1.0f / 60.0f);
-    Expect(plot->Fps() > 0, "TickFrame produces a rate");
-    Expect(plot->Fps() != before2, "and the rate follows the frames it was given");
-    std::printf("    fps after 20 frames at 1/60 s: %.1f\n", plot->Fps());
-    // A paused clock must not keep reporting motion.
-    plot->TickFrame(0.0f);
-    Expect(plot->Fps() > 0, "a zero delta does not corrupt the reading");
+    for (int i = 0; i < 40; ++i) {
+        // Real elapsed time between paints, which is what the control measures.
+        std::this_thread::sleep_for(std::chrono::milliseconds(6));
+        root->ForceLayout(Size{840, 1500});
+        root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    }
+    Expect(plot->Fps() > 0, "painting repeatedly produces a frame rate on its own");
+    Expect(plot->Fps() != before2, "and the reading changed from the initial state");
+    std::printf("    fps observed purely from paints: %.1f\n", plot->Fps());
+    // A single enormous gap (a paused window) must not be folded in as a real frame
+    // interval, or the reported rate would sit near zero for seconds afterwards.
+    const double steady = plot->Fps();
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    root->ForceLayout(Size{840, 1500});
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    Expect(plot->Fps() > steady * 0.4, "a long gap does not collapse the rate");
+    std::printf("    after a 600 ms stall: %.1f\n", plot->Fps());
 
     std::printf("\n[7] the bar chart has data\n");
     Chart* bars = charts[1];
@@ -1401,6 +1418,84 @@ int RunChartsChecks(Widget* root, const std::shared_ptr<sample::ChartsVm>& vm) {
             std::printf("    scrollable by %.0f px\n", maxScroll);
             scroller->ScrollTo(200.0f);
             Expect(scroller->ScrollOffset() == 200.0f, "the scroller accepted the offset");
+
+            // Axis labels must travel WITH the line, not stay behind. Drawn from
+            // Chart::OnPaint they were positioned before the child's bounds_ were
+            // shifted, so the offset computed there was always zero and the tick row
+            // stayed at the pre-scroll position while the polyline moved.
+            //
+            // The offset that fixes this is the `shift` PaintChildrenAt receives. Assert
+            // on THAT, because it is the exact value the label positions are derived
+            // from: a non-zero shift at a scrolled offset, and zero at the top.
+            {
+                // The exact check: RecordingPaintContext logs every DrawText call with its
+                // rect, so the x-axis label row's Y can be read directly instead of
+                // inferred from colours. Colour matching over the whole page picked up
+                // unrelated text and reported a delta of 0 for a working build.
+                auto labelRowAt = [&](float scrollTo) -> std::optional<float> {
+                    root->ForceLayout(Size{840, 700});
+                    scroller->ScrollTo(scrollTo);
+                    RecordingPaintContext log;
+                    root->PaintTree(log, MakePalette(ThemeKind::Light));
+                    // Scan the raw text rather than splitting on newlines: a label can
+                    // contain spaces, and getline-based parsing of "text \"a b\" 1 2"
+                    // makes the field boundaries ambiguous.
+                    const std::string& txt = log.Text();
+                    std::optional<float> best;
+                    const std::string needle = "size=11.00";
+                    size_t pos = 0;
+                    while ((pos = txt.find(needle, pos)) != std::string::npos) {
+                        // Walk back to the start of this "text " record.
+                        const size_t recStart = txt.rfind("\ntext \"", pos);
+                        if (recStart != std::string::npos) {
+                            const size_t quoteOpen = recStart + 6; // points at the quote
+                            const size_t quoteClose = txt.find('"', quoteOpen + 1);
+                            if (quoteClose != std::string::npos && quoteClose < pos) {
+                                // Fields between the closing quote and size= are x y w h.
+                                std::stringstream nums(txt.substr(quoteClose + 1));
+                                float x0 = 0;
+                                float y0v = 0;
+                                float w = 0;
+                                float h = 0;
+                                if (nums >> x0 >> y0v >> w >> h) {
+                                    if (!best || y0v < *best) best = y0v;
+                                }
+                            }
+                        }
+                        pos += needle.size();
+                    }
+                    return best;
+                };
+
+                const auto y0 = labelRowAt(0.0f);
+                const auto y1 = labelRowAt(200.0f);
+                if (!y0) {
+                    // Dump what the chart actually logged, so a font-size change does not
+                    // turn this into an unfixable mystery.
+                    root->ForceLayout(Size{840, 700});
+                    scroller->ScrollTo(0.0f);
+                    RecordingPaintContext dump;
+                    root->PaintTree(dump, MakePalette(ThemeKind::Light));
+                    std::stringstream ss(dump.Text());
+                    std::string line;
+                    int shown = 0;
+                    while (std::getline(ss, line) && shown < 6) {
+                        if (line.rfind("text ", 0) != 0) continue;
+                        std::printf("      %s\n", line.substr(0, 110).c_str());
+                        ++shown;
+                    }
+                }
+                if (y0 && y1) {
+                    std::printf("    x-axis label row: %.0f -> %.0f (scroll was 200)\n", *y0, *y1);
+                    Expect(*y1 < *y0, "the axis labels move up when the page scrolls");
+                    // The label row must move by the SAME amount as the plot. Drawn from
+                    // OnPaint they moved by 0 -- the reported defect.
+                    Expect(std::abs((*y0 - *y1) - 200.0f) < 2.0f,
+                           "and by the full scroll amount, so they stay attached to the plot");
+                } else {
+                    Expect(false, "the axis labels were found in the paint log");
+                }
+            }
 
             // The decisive check: rasterize the page at two scroll offsets and require
             // the pixels to differ. Comparing op COUNTS or cached bounds would pass even

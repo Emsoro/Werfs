@@ -156,8 +156,17 @@ void ChartPlot::SetShowFps(bool show) {
 }
 
 void ChartPlot::TickFrame(float seconds) {
-    if (!showFps_) return;
-    if (seconds <= 0) return;
+    // Kept for hosts that have a real frame clock, but no longer the only source:
+    // ObservePaint() below measures the interval between paints, so the overlay works
+    // even when nobody calls this. The old design depended on the sample wiring an
+    // AttachChart() call that was never made, and the result was a chart that never
+    // displayed a rate at all -- a feature that silently does nothing is worse than a
+    // missing one, because the property is there and reads as implemented.
+    if (seconds > 0) AccumulateFrame(seconds);
+}
+
+void ChartPlot::AccumulateFrame(double seconds) {
+    if (!showFps_ || seconds <= 0) return;
     fpsAccumSeconds_ += seconds;
     ++fpsAccumFrames_;
     // Update about five times a second: faster is unreadable, slower hides stalls.
@@ -167,10 +176,8 @@ void ChartPlot::TickFrame(float seconds) {
         fps_ = fps_ <= 0 ? measured : fps_ * 0.6 + measured * 0.4;
         fpsAccumSeconds_ = 0;
         fpsAccumFrames_ = 0;
-        Invalidate(AffectsRender);
     }
 }
-
 void ChartPlot::Fit() {
     const double t0 = NowUs();
     // A live stream's bounds change on every push, so they are read fresh; a series
@@ -358,6 +365,20 @@ void ChartPlot::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
     const double t0 = NowUs();
 
+    // Observe the interval between paints. This is what makes the overlay work on its
+    // own: the control knows exactly when it painted, so it does not need a host to
+    // tell it. The FIRST paint has no predecessor and is skipped.
+    if (showFps_) {
+        if (lastPaintStampUs_ > 0) {
+            const double dt = (t0 - lastPaintStampUs_) / 1000000.0;
+            // Ignore implausible gaps: a paused window or a breakpoint can leave a
+            // seconds-long hole, and folding that in would report a rate of 0.2 fps for
+            // several seconds after the page resumes.
+            if (dt > 0 && dt < 0.5) AccumulateFrame(dt);
+        }
+        lastPaintStampUs_ = t0;
+    }
+
     // The rect to draw into THIS frame. bounds_ has already been shifted by the
     // enclosing scroller, so recomputing from it is what keeps the figure attached
     // to the page. plot_ (the cached rect) is layout geometry and is only valid in
@@ -418,8 +439,8 @@ void ChartPlot::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     // Drawn last so nothing overlaps it. In the plot's own coordinates (shifted by
     // the frame origin) so it travels with the figure when the page scrolls.
     // Drawing the overlay only once a rate exists. A "0 fps" plate is worse than no
-    // plate: it reads as "the chart is frozen" when the truth is "nobody has driven
-    // the frame clock yet" -- which is exactly the state a headless snapshot is in.
+    // plate: it reads as "the chart is frozen" when the truth is "no frame has been
+    // measured yet" -- which is the state of a headless single-pass render.
     if (showFps_ && fps_ > 0) {
         ITextService* text = TextSystem::Get();
         wchar_t buf[48];
@@ -563,18 +584,50 @@ void Chart::Arrange(const Rect& finalRect) {
 void Chart::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
     if (!plot_) return;
+    const Color titleColor = palette.colors[static_cast<int>(Token::TextPrimary)];
+
+    // Only the title is drawn here. Axis labels, tick marks and the grid belong to
+    // DrawAxisLabels, called from PaintChildrenAt -- see the comment there for why
+    // drawing them at THIS point put them at the wrong position once the page
+    // scrolled.
+
+    const std::wstring title = slotTitle_ >= 0 ? Get<std::wstring>(slotTitle_) : std::wstring();
+    if (!title.empty()) {
+        const float w = std::max(1.0f, bounds_.w - 8.0f);
+        ctx.DrawText(title, Rect{bounds_.x + 4.0f, bounds_.y - 2.0f, w, kAxisFontSize + 6},
+                     titleColor, kAxisFontSize + 1, WeightSemiBold, TextAlign::Left);
+    }
+    // NOTE: the counters are NOT published here. The count is resolved in Arrange
+    // (see ChartPlot::Fit) and published from Chart::Arrange, which is both earlier
+    // and stable -- publishing it mid-paint made the text depend on which frame a
+    // reader sampled, and two snapshot passes then disagreed.
+}
+
+void Chart::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
+    Widget::PaintChildrenAt(ctx, palette, shift);
+    // Axis labels are drawn HERE, not in OnPaint.
+    //
+    // OnPaint runs BEFORE the children do, so at that moment the plot's bounds_ have
+    // not been shifted yet: any offset derived from them is zero, and the labels end
+    // up where the figure was before the page scrolled. That is exactly the reported
+    // symptom -- the line slid with the page while its tick labels stayed behind.
+    //
+    // `shift` is the amount that will be added to the child's bounds_ (the base
+    // PaintChildrenAt passes shift + the child's own paintOffset down), so it is the
+    // authoritative scroll delta for this frame.
+    DrawAxisLabels(ctx, palette, shift);
+}
+
+void Chart::DrawAxisLabels(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
+    if (!plot_) return;
     ITextService* text = TextSystem::Get();
     const Color labelColor = palette.colors[static_cast<int>(Token::TextSecondary)];
-    const Color titleColor = palette.colors[static_cast<int>(Token::TextPrimary)];
     const Color axisColor = palette.colors[static_cast<int>(Token::TextSecondary)];
-    // PlotArea() derives from the CURRENT bounds_, and the plot child paints with the
-    // same shift. The label origin needs the same correction: the transform
-    // (LeftFromX/TopFromY) is built from the unscrolled layout rect, so a scrolled
-    // page would otherwise draw its axis labels where the figure used to be.
-    const Rect area = plot_->PlotArea();
-    const Rect layoutArea = plot_->LayoutPlotArea();
-    const double originX = area.x - layoutArea.x;
-    const double originY = area.y - layoutArea.y;
+
+    const Rect layoutArea = plot_->PlotArea();
+    const Rect area{layoutArea.x + shift.x, layoutArea.y + shift.y, layoutArea.w, layoutArea.h};
+    const double originX = shift.x;
+    const double originY = shift.y;
 
     // --- x labels, centred under their grid line ------------------------------
     for (double v : plot_->XTicks().values) {
@@ -607,26 +660,6 @@ void Chart::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         if (x < area.x - 1 || x > area.x + area.w + 1) continue;
         ctx.FillRect(Rect{static_cast<float>(x), area.y + area.h, 1.0f, 4.0f}, axisColor);
     }
-
-    // --- title ---------------------------------------------------------------
-    const std::wstring title = slotTitle_ >= 0 ? Get<std::wstring>(slotTitle_) : std::wstring();
-    if (!title.empty()) {
-        const float w = std::max(1.0f, bounds_.w - 8.0f);
-        ctx.DrawText(title, Rect{bounds_.x + 4.0f, bounds_.y - 2.0f, w, kAxisFontSize + 6},
-                     titleColor, kAxisFontSize + 1, WeightSemiBold, TextAlign::Left);
-    }
-    // NOTE: the counters are NOT published here. The plot is a child and paints
-    // AFTER this returns, so anything read now is the PREVIOUS frame's value. The
-    // counts are resolved in Arrange (see ChartPlot::Fit) and published from
-    // Chart::Arrange, which is both earlier and stable.
-}
-
-void Chart::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
-    // Deliberately just the base implementation: publishing after the child painted
-    // would make the drawn count depend on WHICH frame a reader sampled, and two
-    // snapshot passes then disagreed about the text. The count is already known at
-    // Arrange time because it depends on the budget and the data, not on pixels.
-    Widget::PaintChildrenAt(ctx, palette, shift);
 }
 
 void Chart::PublishCounts() {

@@ -189,12 +189,6 @@ public:
         return true;
     }
 
-    // Drives the plot's fps overlay from the same clock.
-    void TickChartFrame(float seconds) {
-        if (chart_) chart_->Plot()->TickFrame(seconds);
-    }
-
-    void AttachChart(wui::Chart* chart) { chart_ = chart; }
 
     // --- toggles -----------------------------------------------------------
     void SetStreaming(bool on) {
@@ -390,7 +384,6 @@ public:
 private:
     std::shared_ptr<wui::ObservableList<CategoryBar>> categoryBars_;
     std::unique_ptr<CounterSync> counterSync_;
-    wui::Chart* chart_ = nullptr;    // not owned; the widget tree owns it
     bool streaming_ = true;
     double samplesCarry_ = 0;
     size_t nextIndex_ = kWindowPoints;

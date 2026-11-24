@@ -35,12 +35,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.title = L"Werfs \u2014 Live Charts";
     options.widthDip = 840.0f;
     options.heightDip = 900.0f;
-    // One frame of live data: append the samples time has earned, then let the plot
-    // sample its own frame rate. Returning true only when something actually changed
-    // keeps a paused page from repainting 60 times a second for nothing.
+    // One frame of live data: append the samples time has earned. Returning true only
+    // when something actually changed keeps a paused page from repainting 60 times a
+    // second for nothing.
+    //
+    // The frame rate is NOT fed from here: ChartPlot measures the interval between its
+    // own paints. An earlier version called a TickChartFrame() that required the sample
+    // to wire up a chart pointer, the call was never made, and the overlay silently
+    // never appeared -- a property that exists and reads as implemented while doing
+    // nothing. The control observing itself cannot be forgotten.
     options.onFrame = [](float seconds) {
         if (!g_vm) return false;
-        g_vm->TickChartFrame(seconds);
         return g_vm->Tick(seconds);
     };
     return sample::RunSample(instance, options, &MakeViewModel);
