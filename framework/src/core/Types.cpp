@@ -231,6 +231,9 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Text", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender,
                 BindingMode::TwoWay);
         t->Prop("PlaceholderText", VType::Text, Value::Text(L""), AffectsRender);
+        // A document editor wants Enter to create a line; a one-line field wants
+        // Enter to commit and leave. Default stays single-line for every other page.
+        t->Prop("AcceptsReturn", VType::Bool, Value::Bool(false), AffectsRender);
         t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
         t->Prop("Foreground", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}),
                 AffectsRender, BindingMode::OneWay, true, true);

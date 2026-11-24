@@ -88,8 +88,8 @@ function(add_sample NAME)
     add_custom_command(
         OUTPUT ${res}
         COMMAND rc /nologo /fo${res}
-                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=7
-                /dWUI_VERSION_PATCH=3 /dWUI_VERSION_BUILD=0
+                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=10
+                /dWUI_VERSION_PATCH=1 /dWUI_VERSION_BUILD=0
                 ${dir}/resources/app.rc
         DEPENDS ${dir}/resources/app.rc
         COMMENT "Compiling ${NAME} resources"

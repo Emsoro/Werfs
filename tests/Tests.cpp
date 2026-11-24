@@ -70,6 +70,16 @@ std::unique_ptr<CompiledDocument> Compile(const std::string& src, DiagnosticBag&
     return CompileWaml(src, opt, bag);
 }
 
+// The real sample markup must be found whether the test binary is launched from
+// the repo root or from build/release. An absolute developer-machine path made
+// these checks fail everywhere else.
+std::string SampleWamlPath(const char* name) {
+    const std::string source = __FILE__;
+    const size_t slash = source.find_last_of("\\/");
+    const std::string dir = slash == std::string::npos ? "." : source.substr(0, slash);
+    return dir + "/../samples/basic/" + name;
+}
+
 // ---------------------------------------------------------------------------
 // Observable VM used across binding tests.
 // ---------------------------------------------------------------------------
@@ -1164,6 +1174,35 @@ TEST("input: textbox typing updates two-way source") {
     CHECK_EQ(box->CaretIndex(), size_t(1));
 }
 
+TEST("input: Enter inserts a newline only in a multi-line TextBox") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <TextBox x:Name="multi" Text="ab" AcceptsReturn="True"/>
+  <TextBox x:Name="single" Text="ab"/>
+</Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    auto* multi = dynamic_cast<TextBox*>(root->FindByName("multi"));
+    auto* single = dynamic_cast<TextBox*>(root->FindByName("single"));
+    CHECK(multi != nullptr);
+    CHECK(single != nullptr);
+    if (!multi || !single) return;
+
+    multi->SetCaretToEnd();
+    CHECK(multi->OnKeyDown(KeyReturn));
+    CHECK(multi->Get<std::wstring>(multi->SlotOf("Text")) == L"ab\n");
+    CHECK_EQ(multi->CaretIndex(), size_t(3));
+
+    single->SetFocused(true);
+    CHECK(single->OnKeyDown(KeyReturn));
+    CHECK(single->Get<std::wstring>(single->SlotOf("Text")) == L"ab");
+    CHECK(!single->Focused());
+}
+
 TEST("input: checkbox toggles two-way") {
     InstallText();
     DiagnosticBag bag;
@@ -1807,7 +1846,7 @@ TEST("border: explicit height is honoured inside a canvas") {
 TEST("basic page: wheel scrolls the page") {
     // Loads the real sample markup so this catches a broken sample, not just a
     // broken ScrollViewer.
-    const std::string path = "D:\\Cplusplus\\Werfs\\samples\\basic\\Basic.waml";
+    const std::string path = SampleWamlPath("Basic.waml");
     std::ifstream in(path, std::ios::binary);
     CHECK(in.good());
     if (!in.good()) return;
@@ -1878,7 +1917,7 @@ TEST("basic page: wheel reaches the scroller from anywhere in the viewport") {
     // Simulates the host's WM_MOUSEWHEEL path: hit-test the point, dispatch to
     // whatever comes back, and require the page to move. This is the exact
     // sequence that failed in the running app.
-    const std::string path = "D:\\Cplusplus\\Werfs\\samples\\basic\\Basic.waml";
+    const std::string path = SampleWamlPath("Basic.waml");
     std::ifstream in(path, std::ios::binary);
     CHECK(in.good());
     if (!in.good()) return;
@@ -4218,12 +4257,14 @@ TEST("ime: a composition is displayed but never written to the value") {
     CHECK(box != nullptr);
     if (!box) return;
 
+    box->SetCaretToEnd();
     box->SetComposition(L"zhong");
     CHECK(box->Composing());
     // The VALUE is untouched: this is the whole contract of a preview.
     CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"ab");
 
-    // The DISPLAYED text includes it, at the caret.
+    // The DISPLAYED text includes it at the caret: caret_ counts the preview,
+    // so the insertion point is caret_ minus the preview length.
     RecordingPaintContext rec;
     t->OnPaint(rec, MakePalette(ThemeKind::Light));
     CHECK(rec.Text().find("abzhong") != std::string::npos);
@@ -4340,6 +4381,93 @@ TEST("ime: a control that takes no text reports a harmless caret") {
     const CompositionCaret caret = b->ImeCaret();
     CHECK(caret.lineHeight > 0.0f);
     CHECK(!b->Composing());
+}
+
+TEST("ime: the preview and the commit agree when the caret is inside the text") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="abcdef" FontSize="14"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 100});
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    for (int i = 0; i < 3; ++i) box->OnKeyDown(KeyRight); // caret after "abc"
+    CHECK_EQ(box->CaretIndex(), size_t(3));
+    box->SetComposition(L"zhong");
+    RecordingPaintContext rec;
+    t->OnPaint(rec, MakePalette(ThemeKind::Light));
+    // The old code inserted the preview at caret_ (past the word) but committed
+    // at caret_ - previewLength, so the word jumped on selection.
+    CHECK(rec.Text().find("abczhongdef") != std::string::npos);
+
+    box->CommitComposition(L"\u4E2D");
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"abc\u4E2Ddef");
+    CHECK_EQ(box->CaretIndex(), size_t(4));
+}
+
+TEST("ime: a stale caret after the text was replaced cannot crash painting") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="0123456789" FontSize="14"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 100});
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->SetCaretToEnd(); // index 10
+    // A binding/tab switch replaces the value without telling the caret. The
+    // next composition must clamp it; substr(0, caret_) used to throw here.
+    t->SetSlotValue(t->SlotOf("Text"), Value::Text(L"xy"));
+    box->SetComposition(L"zhong");
+    CHECK_EQ(box->CaretIndex(), size_t(7));
+    RecordingPaintContext rec;
+    t->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("xyzhong") != std::string::npos);
+
+    box->CommitComposition(L"\u4E2D");
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"xy\u4E2D");
+}
+
+TEST("ime: the caret follows a soft-wrapped line in a multi-line box") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="aaaa bbbb cccc" FontSize="14" Height="80"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{80, 100}); // ~60px of text width: "aaaa bbbb" wraps
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    for (int i = 0; i < 10; ++i) box->OnKeyDown(KeyRight); // start of "cccc"
+    CHECK_EQ(box->CaretIndex(), size_t(10));
+    const CompositionCaret caret = box->ImeCaret();
+    const float lineH = g_fakeText.LineHeight(14.0f, L"");
+    // Counting only '\n' put the candidate window on line 1 even though the
+    // caret was on the second visual line.
+    CHECK(caret.y >= t->Bounds().y + lineH);
+    CHECK(caret.y < t->Bounds().y + t->Bounds().h);
+
+    box->SetComposition(L"zhong");
+    box->CommitComposition(L"\u4E2D");
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"aaaa bbbb \u4E2Dcccc");
 }
 
 // A widget plus the categories the shell tests need.

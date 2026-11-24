@@ -63,6 +63,11 @@ struct AppState {
     // is the host's, and passing it in is what lets Ctrl+S reach a shortcut table
     // without every control having to track the keyboard globally.
     int modifiers = 0;
+    // ImmSet* dispatches WM_IME_* synchronously, so an IME can re-enter our
+    // handler from inside UpdateImePosition(). Those nested messages echo the
+    // state we just installed; treating them as new edits corrupted the
+    // composition preview/caret pair and crashed the editor on Chinese input.
+    bool inImeMessage = false;
     // DIP scale factor (dpi / 96). Layout and hit testing run in DIPs; window
     // messages carry physical pixels, so every coordinate crosses this scale.
     float scale = 1.0f;
@@ -136,9 +141,9 @@ public:
             const uint32_t p = bitmap->pixels[i];
             const uint32_t a = (p >> 24) & 0xFF;
             const uint32_t r = ((p >> 16) & 0xFF) * a / 255;
-            const uint32_t g = ((p >> 8) & 0xFF) * a / 255;
+            const uint32_t green = ((p >> 8) & 0xFF) * a / 255;
             const uint32_t bl = (p & 0xFF) * a / 255;
-            premul[i] = (a << 24) | (r << 16) | (g << 8) | bl;
+            premul[i] = (a << 24) | (r << 16) | (green << 8) | bl;
         }
         ComPtr<ID2D1Bitmap> d2d;
         const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
@@ -359,6 +364,26 @@ void UpdateHover(HWND hwnd, Widget* target, int x, int y) {
     if (g.hovered) g.hovered->OnPointerEnter();
     InvalidateRect(hwnd, nullptr, FALSE);
 }
+
+// One composition message at a time. The IME sends replies to our own ImmSet* calls
+// synchronously, from inside the call; a nested reply must NOT run the state machine
+// again. RAII makes sure the flag is cleared even if a handler throws.
+class ImeMessageScope {
+public:
+    explicit ImeMessageScope(bool& flag) : flag_(flag), active_(!flag) {
+        if (active_) flag_ = true;
+    }
+    ~ImeMessageScope() {
+        if (active_) flag_ = false;
+    }
+    bool Active() const { return active_; }
+    ImeMessageScope(const ImeMessageScope&) = delete;
+    ImeMessageScope& operator=(const ImeMessageScope&) = delete;
+
+private:
+    bool& flag_;
+    bool active_;
+};
 
 // Reads a composition or result string out of the IME context.
 //
@@ -583,6 +608,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
         }
+        // While a composition is open the IME owns the keyboard: Enter picks a
+        // candidate, not "insert newline" or "leave the field". DefWindowProc is
+        // what forwards these keys to the IME.
+        if (g.focused && g.focused->Composing())
+            return DefWindowProcW(hwnd, msg, wp, lp);
         // The focused control gets the key first, so Ctrl+A inside a TextBox is
         // text selection rather than a menu shortcut. Only an unhandled key falls
         // through to the accelerator table.
@@ -599,11 +629,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_CHAR:
-        if (FILE* log = std::fopen("C:\\Users\\Mason\\AppData\\Local\\Temp\\opencode\\ime.log", "a")) {
-            std::fprintf(log, "CHAR 0x%x composing=%d\n", static_cast<unsigned>(wp),
-                         g.focused ? static_cast<int>(g.focused->Composing()) : -1);
-            std::fclose(log);
-        }
         // An IME delivers committed characters through the composition messages, not here.
         // If a composition is in progress this key belongs to the IME and must not also be
         // inserted as a literal, or "zhong" would appear as letters next to the candidate.
@@ -615,14 +640,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
 
-    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_STARTCOMPOSITION: {
+        ImeMessageScope scope(g.inImeMessage);
+        if (!scope.Active()) return 0; // nested echo from ImmSet*
         // Position the candidate window BEFORE the composition begins. If the first
         // position is wrong the list appears in a corner of the screen and never recovers,
         // because many IMEs only reposition on subsequent updates.
         UpdateImePosition();
         return 0;
+    }
 
     case WM_IME_COMPOSITION: {
+        ImeMessageScope scope(g.inImeMessage);
+        if (!scope.Active()) return 0;
         // GCS_RESULTSTR: the user picked a candidate. That is a real edit.
         // GCS_COMPSTR:   the string is still being built. That is a preview.
         // Both can arrive together, and the result must win.
@@ -635,23 +665,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         UpdateImePosition();
         InvalidateRect(hwnd, nullptr, FALSE);
-        if (FILE* log = std::fopen("C:\\Users\\Mason\\AppData\\Local\\Temp\\opencode\\ime.log", "a")) {
-            std::fprintf(log, "  slot=[%ls] composing=%d\n",
-                         g.focused ? g.focused->Get<std::wstring>(g.focused->SlotOf("Text")).c_str() : L"-",
-                         g.focused ? static_cast<int>(g.focused->Composing()) : -1);
-            std::fclose(log);
-        }
         return 0;
     }
 
-    case WM_IME_ENDCOMPOSITION:
+    case WM_IME_ENDCOMPOSITION: {
+        ImeMessageScope scope(g.inImeMessage);
+        if (!scope.Active()) return 0;
         // The IME finished or gave up. If it never sent a result string, the preview must
         // not be left on screen looking like committed text.
         if (g.focused && g.focused->Composing()) g.focused->CancelComposition();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    }
 
     case WM_IME_NOTIFY: {
+        ImeMessageScope scope(g.inImeMessage);
+        if (!scope.Active()) return 0;
         // Only the candidate-list notifications report something that actually moved. The
         // IMN_SETCOMPOSITIONWINDOW / IMN_SETCANDIDATEPOS ones are the IME echoing back the
         // ImmSet* calls UpdateImePosition just made, dispatched synchronously from inside
@@ -817,7 +846,9 @@ int RunInternal(HINSTANCE instance, const HostOptions& options, std::shared_ptr<
     // Window size in DIPs: a fixed pixel size would be cramped at 200%.
     const int winW = ToPixels(options.widthDip) + 16;
     const int winH = ToPixels(options.heightDip) + 39;
-    const std::wstring title = options.title + L"  " + ModuleVersionString();
+    // Titles name the sample, not the build: the version belongs in VERSIONINFO
+    // and the README, where it does not cover up the sample's own label.
+    const std::wstring title = options.title;
 
     HWND hwnd = CreateWindowExW(0, kClassName, title.c_str(), WS_OVERLAPPEDWINDOW,
                                 CW_USEDEFAULT, CW_USEDEFAULT, winW, winH, nullptr, nullptr,

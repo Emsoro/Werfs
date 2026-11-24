@@ -53,6 +53,26 @@ Widget* g_focused = nullptr;
 int g_imeMessages = 0;
 int g_compositions = 0;
 int g_results = 0;
+// ImmSet* sends WM_IME_* replies synchronously. Ignore the nested reply instead
+// of feeding it back into the composition state machine a second time.
+bool g_inImeMessage = false;
+
+class ImeMessageScope final {
+public:
+    explicit ImeMessageScope(bool& flag) : flag_(flag), active_(!flag) {
+        if (active_) flag_ = true;
+    }
+    ~ImeMessageScope() {
+        if (active_) flag_ = false;
+    }
+    bool Active() const { return active_; }
+    ImeMessageScope(const ImeMessageScope&) = delete;
+    ImeMessageScope& operator=(const ImeMessageScope&) = delete;
+
+private:
+    bool& flag_;
+    bool active_;
+};
 
 void PaintTo(HDC dc, int width, int height, const ThemePalette& palette) {
     // A minimal paint context: the probe only needs to show text, so a GDI-ish fallback is
@@ -175,13 +195,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_STARTCOMPOSITION: {
+        ImeMessageScope scope(g_inImeMessage);
+        if (!scope.Active()) return 0;
         ++g_imeMessages;
         std::printf("  WM_IME_STARTCOMPOSITION\n");
         UpdateImePosition();
         return 0;
+    }
 
     case WM_IME_COMPOSITION: {
+        ImeMessageScope scope(g_inImeMessage);
+        if (!scope.Active()) return 0;
         ++g_imeMessages;
         if (lp & GCS_RESULTSTR) {
             const std::wstring text = ReadImeString(hwnd, GCS_RESULTSTR);
@@ -203,14 +228,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    case WM_IME_ENDCOMPOSITION:
+    case WM_IME_ENDCOMPOSITION: {
+        ImeMessageScope scope(g_inImeMessage);
+        if (!scope.Active()) return 0;
         std::printf("  WM_IME_ENDCOMPOSITION (compositions=%d results=%d)\n", g_compositions,
                     g_results);
         if (g_focused && g_focused->Composing()) g_focused->CancelComposition();
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    }
 
     case WM_IME_NOTIFY: {
+        ImeMessageScope scope(g_inImeMessage);
+        if (!scope.Active()) return 0;
         // IMN_SETCOMPOSITIONWINDOW / IMN_SETCANDIDATEPOS are the IME echoing our own ImmSet*
         // calls; only the candidate-list notifications mean something moved.
         const UINT notification = static_cast<UINT>(wp);

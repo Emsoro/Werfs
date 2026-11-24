@@ -908,10 +908,10 @@ public:
             // pointer would be two sources of truth for the same thing.
             if (attr.name == "Style") {
                 std::string key = attr.value;
-                const std::string prefix = "{StaticResource ";
-                if (key.size() > prefix.size() + 1 && key.compare(0, prefix.size(), prefix) == 0 &&
+                const std::string marker = "{StaticResource ";
+                if (key.size() > marker.size() + 1 && key.compare(0, marker.size(), marker) == 0 &&
                     key.back() == '}') {
-                    key = key.substr(prefix.size(), key.size() - prefix.size() - 1);
+                    key = key.substr(marker.size(), key.size() - marker.size() - 1);
                 }
                 const StyleDesc* style = doc_.FindStyle(key);
                 if (!style) {

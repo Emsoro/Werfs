@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.10.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.10.1.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -128,12 +128,14 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
+当前默认版本为 `0.10.1.0`。CI 可用同名环境变量覆盖任意字段：
+
 ```powershell
-$env:WUI_VERSION_MINOR = '7'
+$env:WUI_VERSION_PATCH = '2'
 pwsh -File build.ps1 all
 ```
 
-也可直接改 `samples/basic/resources/BasicResource.h` 的默认值。
+也可直接改 `samples/basic/resources/BasicResource.h` 等各示例资源头中的默认值。
 
 ### 为什么是 PowerShell 直接驱动编译器
 
@@ -376,7 +378,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 
 本项目用 `build.ps1` 直接驱动 `cl.exe`/`link.exe`/`rc.exe`，而不是 CMake：CMake 与 Ninja 都通过管道捕获子进程 stdout 来解析诊断，在某些受限环境下该管道无法创建，导致 configure 挂起。这是**环境限制**，不是设计结论 —— 常规开发机请用 CMake（`CMakeLists.txt` 已保留并同步）。详见上文「为什么是 PowerShell 直接驱动编译器」。
 
-版本号单一来源：`build.ps1` 的 `WUI_VERSION_*` → `resources/Resource.h` → `app.rc` → 回读到窗口标题。
+版本号单一来源：`build.ps1` 的 `WUI_VERSION_*` → 各示例 `resources/*Resource.h` → `app.rc` → 写入 exe 的 `VERSIONINFO`。示例窗口标题只显示示例名称，不带版本号。
 
 ---
 

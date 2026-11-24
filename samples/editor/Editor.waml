@@ -154,7 +154,8 @@
                document's text back into this box. Height="0" lets the Border stretch
                it; a MinHeight keeps a usable box even in a very short window. -->
           <TextBox Text="{Binding ActiveContent, Mode=TwoWay}"
-                   PlaceholderText="Start typing…" Height="0" MinHeight="120"/>
+                   PlaceholderText="Start typing…" Height="0" MinHeight="120"
+                   AcceptsReturn="True"/>
         </Border>
         <TextBlock Grid.Row="1" Text="{Binding ActivePath}" Style="{StaticResource Caption}"
                    Padding="0,8,0,0"/>

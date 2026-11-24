@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+// WIN32_LEAN_AND_MEAN / NOMINMAX come from the build flags; redefining them here
+// only produces C4005 on every translation unit that includes this file.
 #include <windows.h>
 
 // shobjidl brings in IFileOpenDialog; the CLSID_FileOpenDialog and

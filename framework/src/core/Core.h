@@ -288,7 +288,7 @@ public:
     // the host stops dispatching to the document underneath.
     virtual bool OnPointerDown(const Point& p) = 0;
     virtual void OnPointerUp(const Point& p) = 0;
-    virtual void OnPointerMove(const Point& p) {}
+    virtual void OnPointerMove(const Point&) {}
     // Returns true when the key was consumed.
     virtual bool OnKeyDown(int vk, int modifiers) = 0;
     // True while the layer still wants pointer capture.

@@ -546,6 +546,16 @@ private:
     // entry; a box taller than one line wraps on explicit newlines and then on
     // width, so a document paragraph is readable instead of running off the edge.
     std::vector<std::wstring> BuildDisplayLines(float wrapWidth, float fontSize, int weight) const;
+    // Same splitter, parameterised so the caret can lay out the text BEFORE it,
+    // using the identical wrapping rule. Painting and IME positioning must agree
+    // on which visual line the caret is on, soft wraps included.
+    static std::vector<std::wstring> BuildDisplayLines(const std::wstring& text, ITextService* svc,
+                                                       float wrapWidth, float boxHeight,
+                                                       float fontSize, int weight);
+    // Caret position relative to the text area's top-left corner. x is the width
+    // of the last caret line; y is that line's offset, so the painted caret and
+    // the IME candidate window land on the same line in a multi-line box.
+    Point CaretPosition() const;
     void RepaintWithPreview();
     int slotText_ = -1;
     size_t caret_ = 0;
@@ -813,7 +823,7 @@ public:
 
     // Number of selectable entries. Derived classes report their own.
     virtual size_t ItemCount() const { return 0; }
-    virtual RefPtr ItemAt(size_t index) const { return nullptr; }
+    virtual RefPtr ItemAt(size_t) const { return nullptr; }
 
     // Called after the selection changes, so a subclass can repaint or re-layout.
     virtual void OnSelectionChanged() {}

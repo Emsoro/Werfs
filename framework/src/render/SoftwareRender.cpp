@@ -214,7 +214,7 @@ void RasterPaintContext::DrawLine(const Point& a, const Point& b, const Color& c
 }
 
 void RasterPaintContext::DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
-                                  int, TextAlign align, const std::wstring& family) {
+                                  int, TextAlign align, const std::wstring&) {
     const float advance = fontSize * 0.55f;
     const float total = advance * static_cast<float>(text.size());
     float x = r.x;

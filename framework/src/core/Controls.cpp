@@ -733,16 +733,21 @@ void TextBox::Arrange(const Rect& finalRect) {
 
 std::vector<std::wstring> TextBox::BuildDisplayLines(float wrapWidth, float fontSize,
                                                     int weight) const {
-    std::vector<std::wstring> lines;
     // DisplayText(), not Text: this is the ONLY place the paint path reads the content,
     // so routing it through the virtual is what makes PasswordBox's mask apply to the
     // whole drawing path instead of just the placeholder branch.
-    const std::wstring text = DisplayText();
-    ITextService* svc = TextSystem::Get();
+    return BuildDisplayLines(DisplayText(), TextSystem::Get(), wrapWidth, bounds_.h, fontSize,
+                             weight);
+}
+
+std::vector<std::wstring> TextBox::BuildDisplayLines(const std::wstring& text, ITextService* svc,
+                                                    float wrapWidth, float boxHeight,
+                                                    float fontSize, int weight) {
+    std::vector<std::wstring> lines;
     const float lineH = svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
     // A box only one line tall has no room to wrap into; wrapping there would
     // change what a single-line field looks like.
-    const bool canWrap = bounds_.h >= lineH * 1.9f && wrapWidth > 0.0f;
+    const bool canWrap = boxHeight >= lineH * 1.9f && wrapWidth > 0.0f;
     if (!canWrap) {
         // Single line: show as much as fits, which is the classic behaviour of a
         // one-line field with more text than room.
@@ -802,7 +807,12 @@ std::wstring TextBox::DisplayText() const {
     // ViewModel on each keystroke of a word that does not exist yet.
     const std::wstring text = Get<std::wstring>(SlotOf("Text"));
     if (composition_.empty()) return text;
-    const size_t at = std::min(caret_, text.size());
+    // caret_ counts the preview, so the preview begins BEFORE the caret: [at, caret_).
+    // Using caret_ itself as the insertion point put a composition after the wrong
+    // character whenever the caret was in the middle of the text (or on a later
+    // line), and the commit then inserted somewhere else entirely.
+    const size_t at = std::min(caret_ > composition_.size() ? caret_ - composition_.size() : 0,
+                               text.size());
     return text.substr(0, at) + composition_ + text.substr(at);
 }
 
@@ -844,18 +854,17 @@ void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
                      TextAlign::Left);
         y += lineH;
     }
-    ctx.PopClip();
     if (focused_) {
-        float caretX = textBox.x;
-        if (ITextService* svc = TextSystem::Get()) {
-            Size m = text.empty() ? Size{} : svc->Measure(text.substr(0, caret_), fontSize, WeightNormal);
-            caretX += m.w;
-        } else {
-            caretX += static_cast<float>(caret_) * fontSize * 0.55f;
-        }
-        ctx.FillRect(Rect{caretX, textBox.y, 1.5f, textBox.h},
+        // The old caret was a full-height bar at the width of the WHOLE prefix,
+        // newlines included: in a multi-line document it sat far outside the box.
+        // CaretPosition() uses the painter's own line splitter, so the bar sits on
+        // the caret's visual line and is one line high. Drawing it inside the clip
+        // also keeps it from covering the card below when the text overflows.
+        const Point cp = CaretPosition();
+        ctx.FillRect(Rect{textBox.x + cp.x, textBox.y + cp.y, 1.5f, lineH},
                      palette.colors[static_cast<int>(Token::TextPrimary)]);
     }
+    ctx.PopClip();
 }
 
 Widget* TextBox::HitTest(const Point& p) { return bounds_.Contains(p) ? this : nullptr; }
@@ -913,9 +922,20 @@ bool TextBox::OnKeyDown(int vk) {
             SetSlotValue(SlotOf("Text"), Value::Text(editing_));
         }
         return true;
-    case KeyReturn:
+    case KeyReturn: {
+        const int slotReturn = SlotOf("AcceptsReturn");
+        if (slotReturn >= 0 && Get<bool>(slotReturn)) {
+            // WM_CHAR filters out control characters, so Enter is the only way
+            // a document editor can create a new line. Caret stays after it.
+            editing_.insert(caret_, L"\n");
+            ++caret_;
+            SetSlotValue(SlotOf("Text"), Value::Text(editing_));
+            Invalidate(AffectsMeasure | AffectsRender);
+            return true;
+        }
         SetFocused(false);
         return true;
+    }
     default:
         return false;
     }
@@ -938,10 +958,35 @@ void TextBox::RepaintWithPreview() {
     Invalidate(AffectsMeasure | AffectsRender);
 }
 
+Point TextBox::CaretPosition() const {
+    // Lay out the text UP TO the caret with the same splitter and width the painter
+    // uses for the whole field. The last display line is the caret's line: its width
+    // is the caret's column and its index is the row. Counting only '\n' (the old
+    // ImeCaret rule) lost soft-wrapped lines, so the candidate list and the bar
+    // drifted away from the text in a wrapped multi-line box.
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    ITextService* svc = TextSystem::Get();
+    const float lineH = svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
+    const float wrapWidth = std::max(0.0f, bounds_.w - margin.H() - pad.H());
+
+    const std::wstring display = DisplayText();
+    const size_t at = std::min(caret_, display.size());
+    const std::vector<std::wstring> lines = BuildDisplayLines(
+        display.substr(0, at), svc, wrapWidth, bounds_.h, fontSize, WeightNormal);
+    Point p{0.0f, lineH * static_cast<float>(lines.empty() ? 0 : lines.size() - 1)};
+    if (!lines.empty() && !lines.back().empty()) {
+        p.x = svc ? svc->Measure(lines.back(), fontSize, WeightNormal).w
+                  : static_cast<float>(lines.back().size()) * fontSize * 0.55f;
+    }
+    return p;
+}
+
 CompositionCaret TextBox::ImeCaret() const {
     // The candidate window must sit at the CARET, not at the field's corner, and it must
-    // reuse the painter's own padding and line height -- computing the position a second,
-    // slightly different way is how a candidate window ends up one line too high.
+    // reuse the painter's own padding, splitter and line height -- computing the position a
+    // second, slightly different way is how a candidate window ends up one line too high.
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
     const float fontSize = Get<float>(SlotOf("FontSize"));
@@ -952,61 +997,47 @@ CompositionCaret TextBox::ImeCaret() const {
     caret.lineHeight = lineH;
     caret.x = bounds_.x + margin.l + pad.l;
     caret.y = bounds_.y + margin.t + pad.t;
-
-    // Width of everything before the caret on its line. The caret index counts the preview
-    // (see SetComposition), so the candidate window tracks the character being built.
-    const std::wstring text = DisplayText();
-    const size_t at = std::min(caret_, text.size());
-    if (ITextService* svc = TextSystem::Get()) {
-        const std::wstring prefix = text.substr(0, at);
-        const size_t lastNewline = prefix.rfind(L'\n');
-        if (lastNewline != std::wstring::npos) {
-            caret.y += lineH * static_cast<float>(std::count(prefix.begin(), prefix.end(), L'\n'));
-            caret.x += svc->Measure(prefix.substr(lastNewline + 1), fontSize, WeightNormal).w;
-        } else {
-            caret.x += svc->Measure(prefix, fontSize, WeightNormal).w;
-        }
-    }
+    const Point cp = CaretPosition();
+    caret.x += cp.x;
+    caret.y += cp.y;
     return caret;
 }
 
 void TextBox::SetComposition(const std::wstring& text) {
     if (composition_ == text) return;
-    // The caret is kept PAST the preview, so that: the drawn caret sits after the composed
-    // characters, and ImeCaret measures up to there. Growing or shrinking the preview moves
-    // the caret by exactly the difference.
-    const size_t before = composition_.size();
+    // caret_ is the index AFTER the preview, so the insertion point is caret_ minus
+    // the old preview. Recomputing it from the slot instead of adding a delta also
+    // repairs a stale caret left behind when a binding replaced the text (a tab
+    // switch in the editor): an out-of-range caret used to throw from OnPaint.
+    const std::wstring base = Get<std::wstring>(SlotOf("Text"));
+    const size_t oldLength = composition_.size();
+    size_t insertAt = caret_ > oldLength ? caret_ - oldLength : 0;
+    insertAt = std::min(insertAt, base.size());
     composition_ = text;
-    const size_t after = composition_.size();
-    if (after >= before) {
-        caret_ += after - before;
-    } else {
-        const size_t shrink = before - after;
-        caret_ = caret_ > shrink ? caret_ - shrink : 0;
-    }
+    caret_ = insertAt + composition_.size();
     RepaintWithPreview();
 }
 
 void TextBox::CommitComposition(const std::wstring& finalText) {
     if (composition_.empty() && finalText.empty()) return;
-    // The preview is inside the displayed text, so committing first takes it back out of the
-    // caret arithmetic, then inserts the real characters as a normal edit. That keeps one
-    // code path for "text was added", whether it came from a key or from an IME.
+    // Take the preview back out of the caret arithmetic, then insert the real
+    // characters at that same point: display and commit must agree on WHERE the
+    // word was being typed, including in the middle of a multi-line document.
     const size_t previewLength = composition_.size();
-    caret_ = caret_ > previewLength ? caret_ - previewLength : 0;
     composition_.clear();
+    size_t insertAt = caret_ > previewLength ? caret_ - previewLength : 0;
 
+    // Re-read from the SLOT rather than trusting editing_. A buffer refreshed only when
+    // empty cannot see a value written from outside (a binding), so committing would
+    // append the IME result to a stale string and replace the model's text with
+    // something the user never had -- the same class of bug as CODE_PLAN §7.27.
+    editing_ = Get<std::wstring>(SlotOf("Text"));
+    insertAt = std::min(insertAt, editing_.size());
     if (!finalText.empty()) {
-        // Re-read from the SLOT rather than trusting editing_. A buffer refreshed only when
-        // empty cannot see a value written from outside (a binding), so committing would
-        // append the IME result to a stale string and replace the model's text with
-        // something the user never had -- the same class of bug as CODE_PLAN §7.27.
-        editing_ = Get<std::wstring>(SlotOf("Text"));
-        if (caret_ > editing_.size()) caret_ = editing_.size();
-        editing_.insert(caret_, finalText);
-        caret_ += finalText.size();
+        editing_.insert(insertAt, finalText);
         SetSlotValue(SlotOf("Text"), Value::Text(editing_));
     }
+    caret_ = insertAt + finalText.size();
     RepaintWithPreview();
 }
 
@@ -1016,6 +1047,7 @@ void TextBox::CancelComposition() {
     // payoff for keeping the preview out of the slot: there is nothing to undo.
     const size_t previewLength = composition_.size();
     caret_ = caret_ > previewLength ? caret_ - previewLength : 0;
+    caret_ = std::min(caret_, Get<std::wstring>(SlotOf("Text")).size());
     composition_.clear();
     RepaintWithPreview();
 }
@@ -2247,7 +2279,7 @@ void TabView::RequestClose(size_t index) {
     // reset", and doing the reset here keeps that from being something each
     // sample has to remember.
     if (slotCloseRequested_ >= 0) {
-        SetSlotValue(slotCloseRequested_, Value::Number(index), true);
+        SetSlotValue(slotCloseRequested_, Value::Number(static_cast<double>(index)), true);
         SetSlotValue(slotCloseRequested_, Value::Number(-1), true);
     }
     Invalidate(AffectsRender);
@@ -3168,8 +3200,6 @@ void InfoBar::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         y += lineH;
     }
     if (!message.empty()) {
-        const float lineH = TextSystem::Get() ? TextSystem::Get()->LineHeight(kInfoBarBodySize)
-                                              : kInfoBarBodySize * 1.33f;
         ctx.DrawText(message, Rect{textX, y, textW, box.Bottom() - y},
                      palette.colors[static_cast<int>(Token::TextSecondary)], kInfoBarBodySize,
                      WeightNormal, TextAlign::Left);
@@ -4053,32 +4083,33 @@ Rect RelativePanel::PlaceChild(size_t index, int depth) {
     // LeftOf / RightOf establish x; Above / Below establish y. Align* overrides the other
     // axis. An unknown anchor name is ignored rather than fatal: the panel keeps a usable
     // position and the validator has already reported the typo.
-    const std::wstring rightOfW = self->Get<std::wstring>(slot("RelativePanel.RightOf"));
-    const std::string rightOf(rightOfW.begin(), rightOfW.end());
-    const std::wstring leftOfW = self->Get<std::wstring>(slot("RelativePanel.LeftOf"));
-    const std::string leftOf(leftOfW.begin(), leftOfW.end());
-    const std::wstring belowW = self->Get<std::wstring>(slot("RelativePanel.Below"));
-    const std::string below(belowW.begin(), belowW.end());
-    const std::wstring aboveW = self->Get<std::wstring>(slot("RelativePanel.Above"));
-    const std::string above(aboveW.begin(), aboveW.end());
+    // WideToUtf8, not a raw iterator range: copying wchar_t into char silently
+    // truncates non-ASCII names (C4244) and breaks Chinese x:Name anchors.
+    const std::string rightOf = WideToUtf8(self->Get<std::wstring>(slot("RelativePanel.RightOf")));
+    const std::string leftOf = WideToUtf8(self->Get<std::wstring>(slot("RelativePanel.LeftOf")));
+    const std::string below = WideToUtf8(self->Get<std::wstring>(slot("RelativePanel.Below")));
+    const std::string above = WideToUtf8(self->Get<std::wstring>(slot("RelativePanel.Above")));
 
-    if (size_t other = IndexOfName(rightOf); other != static_cast<size_t>(-1)) {
+    const size_t kNoAnchor = static_cast<size_t>(-1);
+    size_t other = IndexOfName(rightOf);
+    if (other != kNoAnchor) {
         const Rect r = PlaceChild(other, depth + 1);
         done_[other] = true;
         x = r.Right() + kRelativePad;
         y = r.y;
-    } else if (size_t other = IndexOfName(leftOf); other != static_cast<size_t>(-1)) {
+    } else if ((other = IndexOfName(leftOf)) != kNoAnchor) {
         const Rect r = PlaceChild(other, depth + 1);
         done_[other] = true;
         x = r.x - size.w - kRelativePad;
         y = r.y;
     }
-    if (size_t other = IndexOfName(below); other != static_cast<size_t>(-1)) {
+    other = IndexOfName(below);
+    if (other != kNoAnchor) {
         const Rect r = PlaceChild(other, depth + 1);
         done_[other] = true;
         y = r.Bottom() + kRelativePad;
         if (rightOf.empty() && leftOf.empty()) x = r.x;
-    } else if (size_t other = IndexOfName(above); other != static_cast<size_t>(-1)) {
+    } else if ((other = IndexOfName(above)) != kNoAnchor) {
         const Rect r = PlaceChild(other, depth + 1);
         done_[other] = true;
         y = r.y - size.h - kRelativePad;
@@ -4145,8 +4176,9 @@ void Image::EnsureDecoded() {
     IImageService* service = ImageService();
     if (service == nullptr) return;
     // Source is a UTF-8 string on the wire; narrow it once here rather than in the
-    // service, which deals only in paths-and-bytes.
-    std::string narrow(source.begin(), source.end());
+    // service, which deals only in paths-and-bytes. WideToUtf8, not a raw iterator
+    // range: the latter truncates every non-ASCII path (and warns on C4244).
+    const std::string narrow = WideToUtf8(source);
     bitmap_ = service->Load(narrow);
 }
 
@@ -4237,7 +4269,7 @@ void PersonPicture::EnsureDecoded() {
     if (source.empty()) return;
     IImageService* service = ImageService();
     if (service == nullptr) return;
-    std::string narrow(source.begin(), source.end());
+    const std::string narrow = WideToUtf8(source);
     bitmap_ = service->Load(narrow);
 }
 
