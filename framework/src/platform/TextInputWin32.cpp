@@ -28,6 +28,15 @@ namespace wui {
 
 namespace {
 
+// Clears the "already positioning" flag on every exit path.
+struct ReentryGuard {
+    bool& flag;
+    explicit ReentryGuard(bool& f) : flag(f) { flag = true; }
+    ~ReentryGuard() { flag = false; }
+    ReentryGuard(const ReentryGuard&) = delete;
+    ReentryGuard& operator=(const ReentryGuard&) = delete;
+};
+
 // Converts a DIP caret rect into the IMESetCompositionWindow form. IME positions are in
 // SCREEN pixels, not client DIPs, so both the window origin and the DPI scale have to be
 // applied -- the classic bug here is a candidate window that sits under the field at 100%
@@ -67,6 +76,20 @@ class Win32TextInputService final : public ITextInputService {
 public:
     void MoveCandidateWindow(const CompositionCaret& caret) override {
         if (hwnd_ == nullptr) return;
+        // ImmSetCompositionWindow and ImmSetCandidateWindow are not silent setters: the IME
+        // answers each one with WM_IME_NOTIFY (IMN_SETCOMPOSITIONWINDOW / IMN_SETCANDIDATEPOS)
+        // and it dispatches that message SYNCHRONOUSLY, from inside the ImmSet* call, before
+        // the call returns. A host that repositions the window from that notification
+        // therefore re-enters this function from inside itself, and the reply to the nested
+        // call re-enters again. Microsoft Pinyin does exactly this: one "zhong" grew the
+        // stack ~760 frames deep and the process died with 0xC00000FD (stack overflow).
+        //
+        // The placement is one operation, so a nested request has nothing left to say -- the
+        // outer call is already positioning the caret it was asked about. Guarding here
+        // rather than in the host keeps every host safe, including a future one that makes
+        // the same reasonable-looking mistake.
+        if (positioning_) return;
+        ReentryGuard guard(positioning_);
         // The default IME window paints the composition string at our caret if we tell it
         // where the caret is; without this call the IME draws at the field's origin.
         ApplyCaretToIme(hwnd_, caret);
@@ -84,6 +107,7 @@ public:
 
 private:
     HWND hwnd_ = nullptr;
+    bool positioning_ = false;
 };
 
 Win32TextInputService& Service() {

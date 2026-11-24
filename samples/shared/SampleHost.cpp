@@ -599,6 +599,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_CHAR:
+        if (FILE* log = std::fopen("C:\\Users\\Mason\\AppData\\Local\\Temp\\opencode\\ime.log", "a")) {
+            std::fprintf(log, "CHAR 0x%x composing=%d\n", static_cast<unsigned>(wp),
+                         g.focused ? static_cast<int>(g.focused->Composing()) : -1);
+            std::fclose(log);
+        }
         // An IME delivers committed characters through the composition messages, not here.
         // If a composition is in progress this key belongs to the IME and must not also be
         // inserted as a literal, or "zhong" would appear as letters next to the candidate.
@@ -630,6 +635,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         UpdateImePosition();
         InvalidateRect(hwnd, nullptr, FALSE);
+        if (FILE* log = std::fopen("C:\\Users\\Mason\\AppData\\Local\\Temp\\opencode\\ime.log", "a")) {
+            std::fprintf(log, "  slot=[%ls] composing=%d\n",
+                         g.focused ? g.focused->Get<std::wstring>(g.focused->SlotOf("Text")).c_str() : L"-",
+                         g.focused ? static_cast<int>(g.focused->Composing()) : -1);
+            std::fclose(log);
+        }
         return 0;
     }
 
@@ -640,10 +651,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
-    case WM_IME_NOTIFY:
-        // The candidate list opened or moved; keep it anchored to the caret.
-        UpdateImePosition();
+    case WM_IME_NOTIFY: {
+        // Only the candidate-list notifications report something that actually moved. The
+        // IMN_SETCOMPOSITIONWINDOW / IMN_SETCANDIDATEPOS ones are the IME echoing back the
+        // ImmSet* calls UpdateImePosition just made, dispatched synchronously from inside
+        // them; repositioning on those re-enters UpdateImePosition from within itself. The
+        // service refuses the nested call (Microsoft Pinyin otherwise recursed until the
+        // stack overflowed), but not asking for the echo keeps the intent clear: we move the
+        // list because the user's composition changed, not because we moved it ourselves.
+        const UINT notification = static_cast<UINT>(wp);
+        if (notification == IMN_OPENCANDIDATE || notification == IMN_CHANGECANDIDATE)
+            UpdateImePosition();
         return 0;
+    }
 
     case WM_DESTROY:
         KillTimer(hwnd, 1);

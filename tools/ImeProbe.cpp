@@ -111,23 +111,32 @@ class ProbeInput final : public ITextInputService {
 public:
     void MoveCandidateWindow(const CompositionCaret& caret) override {
         if (!hwnd) return;
+        // The IME answers ImmSetCompositionWindow / ImmSetCandidateWindow with WM_IME_NOTIFY
+        // synchronously, from inside the call. Repositioning from that message would re-enter
+        // here and recurse until the stack overflows (Microsoft Pinyin does exactly that);
+        // the placement is one operation, so the nested request is dropped.
+        if (positioning) return;
+        positioning = true;
         HIMC context = ImmGetContext(hwnd);
-        if (!context) return;
-        POINT origin{};
-        ClientToScreen(hwnd, &origin);
-        COMPOSITIONFORM form{};
-        form.dwStyle = CFS_POINT | CFS_FORCE_POSITION;
-        form.ptCurrentPos.x = origin.x + static_cast<LONG>(caret.x);
-        form.ptCurrentPos.y = origin.y + static_cast<LONG>(caret.y);
-        ImmSetCompositionWindow(context, &form);
-        CANDIDATEFORM candidate{};
-        candidate.dwIndex = 0;
-        candidate.dwStyle = CFS_CANDIDATEPOS;
-        candidate.ptCurrentPos = form.ptCurrentPos;
-        ImmSetCandidateWindow(context, &candidate);
-        ImmReleaseContext(hwnd, context);
+        if (context) {
+            POINT origin{};
+            ClientToScreen(hwnd, &origin);
+            COMPOSITIONFORM form{};
+            form.dwStyle = CFS_POINT | CFS_FORCE_POSITION;
+            form.ptCurrentPos.x = origin.x + static_cast<LONG>(caret.x);
+            form.ptCurrentPos.y = origin.y + static_cast<LONG>(caret.y);
+            ImmSetCompositionWindow(context, &form);
+            CANDIDATEFORM candidate{};
+            candidate.dwIndex = 0;
+            candidate.dwStyle = CFS_CANDIDATEPOS;
+            candidate.ptCurrentPos = form.ptCurrentPos;
+            ImmSetCandidateWindow(context, &candidate);
+            ImmReleaseContext(hwnd, context);
+        }
+        positioning = false;
     }
     HWND hwnd = nullptr;
+    bool positioning = false;
 } g_input;
 
 void UpdateImePosition() {
@@ -201,9 +210,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
-    case WM_IME_NOTIFY:
-        UpdateImePosition();
+    case WM_IME_NOTIFY: {
+        // IMN_SETCOMPOSITIONWINDOW / IMN_SETCANDIDATEPOS are the IME echoing our own ImmSet*
+        // calls; only the candidate-list notifications mean something moved.
+        const UINT notification = static_cast<UINT>(wp);
+        if (notification == IMN_OPENCANDIDATE || notification == IMN_CHANGECANDIDATE)
+            UpdateImePosition();
         return 0;
+    }
 
     case WM_CHAR:
         if (g_focused && !g_focused->Composing()) {
