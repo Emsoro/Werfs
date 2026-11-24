@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.11.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.12.0.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -38,6 +38,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **四种绑定模式** | `OneTime` / `OneWay` / `TwoWay` / `OneWayToSource`，默认按目标属性决定；`FallbackValue`、`UpdateSourceTrigger=LostFocus` |
 | **DataTemplate** | 列表项由 WAML 描述，按项实例化 |
 | **列表虚拟化** | `ListBox` 给定有界高度时只保留视口内的行，滚动即建/毁；模型 1000 行也只持有十几个控件 |
+| **图表与降采样** | `Chart`/`ChartPlot` 三种图形（折线/柱状/面积）+ 坐标轴与 nice 刻度；四种降采样模式；`ChartStream` 环形缓冲支持实时流，100 万点降到每像素一点，实测 **5.4 ms vs 37.2 ms** |
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
 | **主题** | Light/Dark 双主题，12 个语义 token；`HostOptions::themeProperty` 让页面用一个 bool 实时切换 |
@@ -89,16 +90,17 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | 目标 | 产物 | 说明 |
 |---|---|---|
 | *（无参数）* | 全部示例 | **默认**：等价于 `samples` |
-| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_usercontrol.exe` `waml_editor.exe` | 构建所有示例（release） |
+| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_usercontrol.exe` `waml_editor.exe` `waml_charts.exe` | 构建所有示例（release） |
 | `basic` | `waml_basic.exe` | 只构基础控件示例 |
 | `list` | `waml_list.exe` | 只构集合与布局示例 |
 | `binding` | `waml_binding.exe` | 只构绑定模式示例（四种模式对照） |
 | `theming` | `waml_theming.exe` | 只构主题示例（token + 实时 Light/Dark） |
 | `usercontrol` | `waml_usercontrol.exe` | 只构组件作用域示例（一份模板、三份数据源） |
+| `charts` | `waml_charts.exe` | 只构图表示例（百万点 + 降采样开关 + 帧率测量） |
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 232 个用例 |
+| `tests` | `waml_tests.exe` | 242 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -129,7 +131,7 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.11.0.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.12.0.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
 $env:WUI_VERSION_PATCH = '1'
@@ -198,7 +200,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 6 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
 | 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
 
-六个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动），`usercontrol` 是**数据源分层**（一份模板三份数据，卡片内嵌的徽章读卡片而不是页面）。
+七个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动），`usercontrol` 是**数据源分层**（一份模板三份数据，卡片内嵌的徽章读卡片而不是页面），`charts` 是**成本**（同一份百万点数据，开与不关降采样的帧时间当场量给你看）。
 
 > `files` 示例**已并入 `editor`**：它原本的四个区块（打开 / 另存为 / 选文件夹 / 读取预览）里，前三个和第四个都是编辑器的正常功能；单独做一个示例只会变成「按钮 → 弹框 → 显示路径」的纯演示，没有真实用途来暴露接线错误。
 
@@ -215,7 +217,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | P1 常用增强 | 16（**3 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` ／ 待做 `Popup` `ContentDialog`（已提前）`AutoSuggestBox` 等 | 进行中 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **47 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 5 个）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**。
+目前 **49 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 5 个 + 图表 `Chart`/`ChartPlot`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**。
 
 ---
 
@@ -223,9 +225,9 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 目标 | 用途 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 232 个单元/集成用例 |
+| `waml_tests.exe` | 242 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -389,9 +391,43 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **行高固定**。窗口化要用「第 N 行在哪」做算术，不去测量它前面的每一行；行高可变的列表不能窗口化。
 - **`ItemWidgetAt(i)` 返回空不等于项不存在**。它问的是「这一行现在实现了没有」；`ItemAt(i)` 才是模型。所以任何需要「所有行同时在场」的逻辑（例如逐行统计控件）都必须用非虚拟化路径。
 
----
+### 图表与降采样
 
-## 构建说明
+```xml
+<!-- 一条百万点的实时曲线：给个高度就成图，坐标轴与刻度自己算 -->
+<Chart Series="{Binding Stream}" Height="320" AutoFit="True" ShowFps="{Binding ShowFps}"
+       Downsample="{Binding DownsampleMode}"/>
+```
+
+三种图形共用同一套坐标变换：`Line`、`Bar`、`Area`。刻度只取 **1/2/5 × 10ⁿ**，因为网格标着 0、333.3、666.7 的图没人读得下去。
+
+**实时流用环形缓冲，不是不断增长的数组**。`ChartStream` 容量固定，新样本挤掉最旧的，所以窗口的成本在一小时后和下一秒完全一样。x 值是**绝对样本序号**——样本 N 永远是值 N，于是窗口在信号上向左滑过，而不是每秒把所有点重新编号（那样看起来永远不动）。
+
+**降采样是重点，参考库不做这件事**（它把每个点直接交给 WPF 的 `Polyline`）。四种模式：
+
+| 模式 | 做法 | 代价 |
+|---|---|---|
+| `None` | 每个点都画 | 100 万点 = 每帧 100 万条线段 |
+| `Uniform` | 每隔 k 个取一个 | 最便宜，但**会丢掉尖峰** |
+| `MinMax` | 每桶取最小/最大 | 保留包络，尖峰丢不掉 |
+| `LTTB` | 保留构成最大三角形的点 | 轮廓最接近原图（默认） |
+
+100 万点实时窗口、700×300 软件光栅实测（`samples/charts` 第 2、3 节，数字由渲染路径本身产生）：
+
+| 模式 | 帧时间 | 绘制点数 |
+|---|---|---|
+| `LTTB` | **5.44 ms** | 560 |
+| `MinMax` | **5.36 ms** | 560 |
+| `Uniform` | **5.60 ms** | 560 |
+| `None` | **37.2 ms** | 1,000,000 |
+
+**三条契约**：
+
+- **预算是像素，不是常数**。`MaxPoints=0` 表示「每水平像素一个点」，宽窗口不会比窄窗口画得更粗。
+- **`Uniform` 会丢尖峰**。测试里明确断言了这一点（`uniform=10.0 minmax=40.0 lttb=40.0`），因为一个只会说「我们都支持」的图表库不会告诉你哪个模式在骗你。
+- **帧率是量出来的，不是写死的**。`ShowFps` 在图表右上角画出实时帧率，取自**真实绘制间隔**的平滑值；没有帧就不画数字（`0 fps` 会被读成「图表卡死了」，而真相是「还没人驱动帧时钟」）。
+
+---
 
 本项目用 `build.ps1` 直接驱动 `cl.exe`/`link.exe`/`rc.exe`，而不是 CMake：CMake 与 Ninja 都通过管道捕获子进程 stdout 来解析诊断，在某些受限环境下该管道无法创建，导致 configure 挂起。这是**环境限制**，不是设计结论 —— 常规开发机请用 CMake（`CMakeLists.txt` 已保留并同步）。详见上文「为什么是 PowerShell 直接驱动编译器」。
 

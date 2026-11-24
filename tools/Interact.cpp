@@ -3,6 +3,7 @@
 // drives synthesized input through the same InputRouter/HitTest path the Win32
 // window uses, asserting on ViewModel state. This is what makes the "input
 // works" claim verifiable in CI without a desktop.
+#include "Chart.h"
 #include "Controls.h"
 #include "Core.h"
 #include "Diagnostics.h"
@@ -11,6 +12,7 @@
 #include "ThemingVm.h"  // sample: the token/theme page's ViewModel
 #include "UserControlVm.h" // sample: the nested-data-source page's ViewModels
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
+#include "ChartsVm.h"   // sample: the chart/downsampling page's ViewModel
 #include "FileDialog.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "Mvvm.h"
@@ -24,6 +26,7 @@
 #include "Waml.h"
 #include "Widget.h"
 
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -69,6 +72,11 @@ bool IsBindingPage(const std::string& origin, const std::string& path) {
 bool IsThemingPage(const std::string& origin, const std::string& path) {
     return origin.find("Theming.waml") != std::string::npos ||
            path.find("Theming.waml") != std::string::npos;
+}
+
+bool IsChartsPage(const std::string& origin, const std::string& path) {
+    return origin.find("Charts.waml") != std::string::npos ||
+           path.find("Charts.waml") != std::string::npos;
 }
 
 // Checks that only make sense on samples/basic/Basic.waml.
@@ -1215,7 +1223,218 @@ int RunUserControlChecks(Widget* root, const std::shared_ptr<sample::UserControl
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }
+//
+// The page is LIVE: a ring buffer of one million points receives new samples every
+// frame and drops the oldest. So these checks are about a moving target -- the
+// window must slide, its cost must stay bounded, and the fps overlay must be driven
+// by real paint intervals rather than by a constant.
+int RunChartsChecks(Widget* root, const std::shared_ptr<sample::ChartsVm>& vm) {
+    auto allCharts = [&]() {
+        std::vector<Chart*> out;
+        std::function<void(Widget*)> visit = [&](Widget* w) {
+            if (!w) return;
+            if (auto* c = dynamic_cast<Chart*>(w)) out.push_back(c);
+            for (auto& child : w->Children()) visit(child.get());
+        };
+        visit(root);
+        return out;
+    };
 
+    std::printf("\n[1] the page has its figures\n");
+    auto charts = allCharts();
+    std::printf("    found %zu Chart widgets\n", charts.size());
+    Expect(charts.size() >= 2, "the page's Chart widgets were instantiated");
+    if (charts.size() < 2) return g_failures == 0 ? 0 : 1;
+    auto stream = std::dynamic_pointer_cast<ChartStream>(vm->Stream.Get());
+    Expect(stream != nullptr, "the live stream is reachable");
+    if (!stream) return 1;
+    Expect(stream->Count() == sample::ChartsVm::kWindowPoints,
+           "the window holds a full million points");
+    Expect(stream->Capacity() == sample::ChartsVm::kWindowPoints,
+           "and its capacity is fixed");
+
+    std::printf("\n[2] the window slides without growing\n");
+    // The defining property of a live chart: pushing does not increase the count.
+    const size_t before = stream->Count();
+    const size_t totalBefore = stream->TotalPushed();
+    for (int i = 0; i < 1000; ++i) stream->Push(0.0);
+    Expect(stream->Count() == before, "1000 pushes leave the window size unchanged");
+    Expect(stream->TotalPushed() == totalBefore + 1000, "but the sample counter advanced");
+    // x values are absolute indices, which is what makes the scene scroll instead of
+    // renumbering itself from zero every frame.
+    std::vector<ChartPoint> snap;
+    stream->Snapshot(snap);
+    Expect(!snap.empty(), "the window can be read as points");
+    if (!snap.empty()) {
+        Expect(snap.front().x > 0, "the leftmost x grows with the stream (it scrolls)");
+        Expect(snap.back().x > snap.front().x, "and x is ascending");
+    }
+    std::printf("    window %zu points, oldest x=%.0f, %zu pushed total\n", stream->Count(),
+                snap.empty() ? 0.0 : snap.front().x, stream->TotalPushed());
+
+    std::printf("\n[3] the big chart draws a bounded number of points\n");
+    Chart* big = charts[0];
+    root->ForceLayout(Size{840, 1500});
+    RecordingPaintContext rec;
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    ChartPlot* plot = big->Plot();
+    Expect(plot != nullptr, "the chart owns a plot area");
+    if (!plot) return g_failures == 0 ? 0 : 1;
+    Expect(plot->IsLive(), "and it is bound to the stream, not a static series");
+    Expect(plot->LastSourcePoints() == sample::ChartsVm::kWindowPoints,
+           "the plot sees every source point");
+    Expect(plot->LastDrawnPoints() > 100, "the viewport is covered");
+    Expect(plot->LastDrawnPoints() < 2000, "but only a viewport's worth is drawn");
+    std::printf("    %zu drawn of %zu source (budget %d)\n", plot->LastDrawnPoints(),
+                plot->LastSourcePoints(), plot->LastBudget());
+
+    std::printf("\n[4] the counters reached the ViewModel\n");
+    Expect(vm->SourcePoints.Get() == static_cast<int>(sample::ChartsVm::kWindowPoints),
+           "SourcePoints was published by the control");
+    Expect(vm->DrawnPoints.Get() > 100, "DrawnPoints was published by the control");
+    Expect(vm->Timing.Get().find(L"reduction") != std::wstring::npos,
+           "the timing label was rebuilt from them");
+
+    std::printf("\n[5] turning downsampling off draws every point\n");
+    big->SetSlotValue(big->SlotOf("Downsample"), Value::Enum(0));
+    root->ForceLayout(Size{840, 1500});
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    Expect(plot->LastDrawnPoints() == sample::ChartsVm::kWindowPoints,
+           "with None every source point reaches the renderer");
+    big->SetSlotValue(big->SlotOf("Downsample"), Value::Enum(3));
+    root->ForceLayout(Size{840, 1500});
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+
+    std::printf("\n[6] the fps overlay is measured, not declared\n");
+    Expect(big->Get<bool>(big->SlotOf("ShowFps")), "ShowFps is on for the live chart");
+    const double before2 = plot->Fps();
+    // Drive the frame clock the way the host does: real elapsed times.
+    for (int i = 0; i < 20; ++i) plot->TickFrame(1.0f / 60.0f);
+    Expect(plot->Fps() > 0, "TickFrame produces a rate");
+    Expect(plot->Fps() != before2, "and the rate follows the frames it was given");
+    std::printf("    fps after 20 frames at 1/60 s: %.1f\n", plot->Fps());
+    // A paused clock must not keep reporting motion.
+    plot->TickFrame(0.0f);
+    Expect(plot->Fps() > 0, "a zero delta does not corrupt the reading");
+
+    std::printf("\n[7] the bar chart has data\n");
+    Chart* bars = charts[1];
+    ChartPlot* barPlot = bars->Plot();
+    Expect(barPlot != nullptr, "the bar chart owns a plot area");
+    if (barPlot) {
+        // An empty bar chart renders axes over nothing, which reads as "working".
+        Expect(barPlot->Series() != nullptr, "the bar chart was given a series");
+        root->PaintTree(rec, MakePalette(ThemeKind::Light));
+        const size_t n = barPlot->LastSourcePoints();
+        Expect(n >= 3, "the categories reached the plot");
+        Expect(barPlot->LastDrawnPoints() == n, "and all of them were drawn");
+        std::printf("    bar chart: %zu of %zu points\n", barPlot->LastDrawnPoints(), n);
+    }
+
+    std::printf("\n[8] the frame measurement really measures\n");
+    {
+        // The measurement now happens at construction (it feeds the bar chart), so
+        // this asserts the RESULT rather than triggering it. A label of "None 0.00 ms"
+        // is what a measurement over an unseeded window produced, so checking that the
+        // slow case is actually slow catches that class of defect.
+        const std::wstring label = vm->FrameRateLabel.Get();
+        Expect(!label.empty(), "a frame-rate measurement was produced");
+        Expect(label.find(L"ms") != std::wstring::npos, "and it reports milliseconds");
+        Expect(label.find(L"LTTB") != std::wstring::npos, "with the modes named");
+        std::printf("    %ls\n", label.c_str());
+        Expect(label.find(L"None 0.00") == std::wstring::npos,
+               "the unreduced case was actually measured (not over an empty window)");
+
+        auto probe = std::make_shared<ChartPlot>();
+        probe->SetStream(stream);
+        probe->SetAutoFit(true);
+        SoftwareRasterizer raster(700, 300);
+        const ThemePalette palette = MakePalette(ThemeKind::Light);
+        auto timeOnce = [&](DownsampleMode mode) {
+            probe->SetDownsampleMode(mode);
+            probe->ForceLayout(Size{700, 300});
+            // steady_clock: the tool is headless and must not assume windows.h.
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < 3; ++i) {
+                RasterPaintContext ctx(raster);
+                probe->PaintTree(ctx, palette);
+            }
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                            t0)
+                .count();
+        };
+        const double reduced = timeOnce(DownsampleMode::Lttb);
+        const double full = timeOnce(DownsampleMode::None);
+        std::printf("    reduced %.1f ms vs unreduced %.1f ms (3 frames)\n", reduced, full);
+        // The DIRECTION is the claim. Only asserted when the slow case is clearly
+        // above timer noise.
+        if (full > 20) Expect(reduced < full, "the reduced pass is faster");
+    }
+
+    std::printf("\n[9] the chart moves with the page when it scrolls\n");
+    // The reported defect: scrolling moved everything except the chart, leaving the
+    // figure pinned while its card slid away. The cause was a cached absolute rect:
+    // controls draw from their own bounds_, the scroller shifts bounds_ for the
+    // duration of a paint, and the chart read a rect captured at Arrange time.
+    {
+        ScrollViewer* scroller = nullptr;
+        std::function<void(Widget*)> findScroller = [&](Widget* w) {
+            if (!w || scroller) return;
+            if (auto* sv = dynamic_cast<ScrollViewer*>(w)) scroller = sv;
+            for (auto& c : w->Children()) findScroller(c.get());
+        };
+        findScroller(root);
+        Expect(scroller != nullptr, "the page scrolls");
+        if (scroller) {
+            // A SHORT viewport on purpose. At the tool's usual 1500 px height the whole
+            // page fits, maxScroll is 0, and a scroll test silently passes without
+            // scrolling anything -- which is how the "chart is pinned" defect survived a
+            // green gate in the first place. A real window is also far shorter than the
+            // page, so this is the realistic case.
+            //
+            // Scroll AFTER layout: ForceLayout re-measures and recomputes maxScroll_,
+            // and scrolling beforehand clamps against the previous (possibly zero)
+            // maximum, silently discarding the scroll.
+            root->ForceLayout(Size{840, 700});
+            const float maxScroll = scroller->MaxScroll();
+            Expect(maxScroll > 200.0f, "the page is taller than the viewport");
+            std::printf("    scrollable by %.0f px\n", maxScroll);
+            scroller->ScrollTo(200.0f);
+            Expect(scroller->ScrollOffset() == 200.0f, "the scroller accepted the offset");
+
+            // The decisive check: rasterize the page at two scroll offsets and require
+            // the pixels to differ. Comparing op COUNTS or cached bounds would pass even
+            // if every primitive were drawn at a fixed position -- which is precisely the
+            // reported defect (the figure stayed put while its card slid away).
+            auto capture = [&](float scrollTo) {
+                // Layout BEFORE scrolling, for the reason above.
+                root->ForceLayout(Size{840, 700});
+                scroller->ScrollTo(scrollTo);
+                SoftwareRasterizer raster(720, 700);
+                raster.Clear(0xFF000000u);
+                RasterPaintContext ctx(raster);
+                root->PaintTree(ctx, MakePalette(ThemeKind::Light));
+                return raster.Pixels();
+            };
+            const std::vector<uint32_t> atTopPixels = capture(0.0f);
+            const std::vector<uint32_t> scrolledPixels = capture(200.0f);
+            Expect(atTopPixels.size() == scrolledPixels.size(), "both captures have a size");
+            size_t differing = 0;
+            for (size_t i = 0; i < atTopPixels.size() && i < scrolledPixels.size(); ++i) {
+                if (atTopPixels[i] != scrolledPixels[i]) ++differing;
+            }
+            std::printf("    %zu of %zu pixels differ between offset 0 and 200\n", differing,
+                        atTopPixels.size());
+            Expect(differing > atTopPixels.size() / 10,
+                   "scrolling moves a large part of the page, chart included");
+            scroller->ScrollTo(0.0f);
+            root->ForceLayout(Size{840, 1500});
+        }
+    }
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     // An explicit path wins; otherwise fall back to the basic sample's resource.
@@ -1295,6 +1514,14 @@ int main(int argc, char** argv) {
         root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
         root->ForceLayout(Size{720, 1200});
         return RunThemingChecks(root.get(), vm);
+    }
+
+    if (IsChartsPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::ChartsVm>();
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{820, 1500});
+        return RunChartsChecks(root.get(), vm);
     }
 
     auto listVm = std::make_shared<sample::ListViewVm>();

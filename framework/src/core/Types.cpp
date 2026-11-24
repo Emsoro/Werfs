@@ -3,6 +3,7 @@
 #include "Converters.h"
 
 #include "Controls.h"
+#include "Chart.h"
 #include "Widget.h"
 
 #include <algorithm>
@@ -815,6 +816,49 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("IsOpen", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
         t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
         t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/ChartPlot", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<ChartPlot>(); });
+        AddLayoutProps(*t);
+        // PlotKind lives here because this is the control that draws the bars or
+        // the line; the Chart re-exposes it so a page can author it on the figure.
+        t->EnumProp("PlotKind", {"Line", "Bar", "Area"}, 0, AffectsRender);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/Chart", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<Chart>(); });
+        AddLayoutProps(*t);
+        t->Prop("Title", VType::Text, Value::Text(L""), AffectsMeasure);
+        // Series is a Ref rather than a templated collection: the chart data is a
+        // packed numeric array held by a ChartSeries, and a per-item object would
+        // make a 10-million-point demo measure the allocator instead.
+        t->Prop("Series", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
+                BindingMode::OneWay);
+        // A live ring-buffer source. Separate from Series because the control has to
+        // re-read it every frame; a fixed series is read once and cached.
+        t->Prop("Stream", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
+                BindingMode::OneWay);
+        // Draws the measured frame rate in the plot's top-right corner. The number is
+        // sampled from real paint intervals, so it describes the frame, not a timer.
+        t->Prop("ShowFps", VType::Bool, Value::Bool(false), AffectsRender);
+        t->Prop("AutoFit", VType::Bool, Value::Bool(true), AffectsRender);
+        // Downsampling is a first-class, bindable property, not a hidden heuristic:
+        // the sample switches it on and off from the page precisely because "the
+        // chart is fast" is only meaningful next to "and here it is slow".
+        t->EnumProp("Downsample", {"None", "Uniform", "MinMax", "Lttb"}, 3, AffectsRender);
+        // 0 = one point per horizontal pixel. A non-zero value pins an explicit
+        // budget, which is what the comparison in the sample uses.
+        t->Prop("MaxPoints", VType::Number, Value::Number(0), AffectsRender);
+        t->EnumProp("PlotKind", {"Line", "Bar", "Area"}, 0, AffectsRender);
+        // Read-back surface for the sample: what the last paint actually drew.
+        t->Prop("DrawnPoints", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("SourcePoints", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
         add(t);
     }
 }

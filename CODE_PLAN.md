@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.11.0.0
+> 版本：0.12.0.0
 > 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.11.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、两种渲染后端、**232 个测试**全绿，并交付 **6 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol`）共用一套宿主。
+当前 0.12.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、两种渲染后端、**242 个测试**全绿，并交付 **7 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 232 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 242 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -67,7 +67,7 @@ build.ps1  CMakeLists.txt
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 5 个示例（basic / list / editor / binding / theming）共用同一 Win32+D2D 宿主 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 7 个示例（basic / list / editor / binding / theming / usercontrol / charts）共用同一 Win32+D2D 宿主 |
 | **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
 | **文件选择器**（打开 / 保存 / 选文件夹） | ✅ **已接入示例** | `IFileDialogService` + Win32 实现；`editor` 的 File ▸ Open / Save as 真实可弹（§10b.1） |
 | **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 232 个单元/集成用例 |
+| `waml_tests.exe` | 242 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -364,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.11.0.0         [ ok ]
+file version: 0.12.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -790,6 +790,80 @@ model = 1000 rows · realized widgets = 12 · virtualized = no (no bounded heigh
 
 ---
 
+## 7.30 图表：五个「画出来了」但都不对
+
+图表功能的难点不在画线，而在**所有错误都长得像成功**。下面五个都是渲染正常、没有崩溃、断言能过，但语义是错的。
+
+**7.30.1 一条格式串同时扮演两个角色**
+
+```cpp
+std::swprintf(buf, size, decimals > 0 ? L"%.*f" : L"%.0f", decimals, value);
+```
+
+`%.*f` 要两个变参（精度 + 值），`%.0f` 只要一个。`decimals == 0` 时格式串说「一个变参」，实参却给了两个——`value` 被当成下一个格式说明符去读。
+
+**现象**：页面上 `drawn 0 of 10000000`、`generated 0 points`、`12 categories · 0 bars` 全是 0，而图表本身画得好好的。三次不同位置的「0」，同一个根因。
+
+**教训**：格式串是**调用约定的一部分**，不是值。用三元运算符在两条格式串之间选，就必须同时选中匹配的实参列表。`/W4` 不会报这个（变参函数不做检查）。
+
+**7.30.2 池化返回值被两次调用别名**
+
+`Downsampled()` 一开始返回 `const std::vector<ChartPoint>&`（内部缓存）。看起来省一次分配，实际上第二次用不同预算调用时**原地重算同一块内存**，先前拿到引用的调用方看到的内容随之改变。测试里「细粒度视图应该比粗粒度大」直接失败——两个变量指向同一块。
+
+**修复**：返回 `shared_ptr<const vector>`，每个 key 一份独立分配，由缓存摊薄。
+
+**教训**：**返回内部缓冲区的引用 = 让调用方替你管生命周期**。「省一次分配」在这里换来了一个只有「同时持有两个视图」才会暴露的缺陷，而那个场景恰恰是这个 API 的正常用法。
+
+**7.30.3 计数在错误的时机发布**
+
+`DrawnPoints` 由控件发布给页面显示。第一版在 `Chart::OnPaint` 里发布——但图表是一个**子控件**，在 `OnPaint` 返回之后才绘制。于是发布的是**上一帧**的值，首帧永远是 0。
+
+改成在 `PaintChildrenAt` 里（子控件绘制之后）发布，快照门禁立刻报 `deterministic=NO`：两次渲染之间的文字内容不同，因为**哪一帧被采样**不确定。
+
+**最终修复**：计数只依赖「预算 + 数据」，两者在**布局期**就已知，所以放到 `ChartPlot::Fit()` 里算、`Chart::Arrange` 里发布。这样无论在布局后读还是绘制后读，值都一样。
+
+**教训**：「什么时候能算出这个数」和「什么时候看起来合适发布」是两件事。选后者会让确定性测试变得随机——而随机性只在门禁里显形。
+
+**7.30.4 `VType::Enum` 不是 `VType::Number`**
+
+```cpp
+value.type == VType::Number ? ... : /* 默认值 */
+```
+
+`EnumProp` 注册的槽位是 `VType::Enum`。这行代码让 `Downsample="None"` **静默变成默认值 LTTB**——降采样关不掉，而页面上「Downsampling OFF」的按钮看起来是生效的。
+
+**教训**：类型判断用错分支时，代码不报错、不崩溃，只是永远走 else。三处枚举读取现在共用一个 `EnumSlotValue()` 助手。
+
+**7.30.5 墙钟时间进了快照**
+
+`PointsLabel` 里写了「generated in 154.2 ms」。快照门禁捕获：同一页面渲染两次哈希不同。
+
+**教训**：**任何会被截图的东西都不能含未固定的测量值**。这条和 §7.26（动画破坏确定性）是同一类；不同的是动画还能靠 `ResetAll` 稳下来，墙钟时间没有这个选项，只能不进产物。测得的数字属于 benchmark，不属于截图。
+
+**验证**：10 个单元用例（端点/顺序/尖峰保留/降采样确实减少工作量/边界退化/刻度 nice 数/缓存键/受控绘制量/柱状图数据/种类区分）+ `interact` 的 21 条断言（含真实帧率测量）+ 双主题快照确定性。
+
+**7.30.6 缓存的绝对坐标让图表脱离页面**
+
+`ChartPlot` 在 `Arrange` 时缓存了 `plot_`（绝对矩形），绘制时直接用它算每个像素位置。框架的滚动实现是「绘制期间临时平移 `bounds_`，并把位移向下传递」——于是页面里其他所有东西都会移动，**只有图表留在原地**。
+
+**现象**：滚轮上下滚动时，卡片、文字、按钮都跟着走，图表固定在窗口某个位置不动，视觉上像浮在上面。
+
+**这个缺陷能活过门禁，是因为测试视口恰好不需要滚动**。`interact` 用 1500 px 高，整页放得下，`maxScroll` 为 0，滚动测试在没有滚任何东西的情况下「通过」了。
+
+**修复**：绘制路径一律从当前的 `bounds_` 推导区域（`PlotRectFrom(bounds_)`），缓存值只用于布局期的尺寸。同时把 interact 的滚动测试改成 700 px 短视口 + **像素级比较**（`237218/504000` 个像素不同才算滚动真的发生了）——比较 `OpCount` 或 bounds 都会让这个缺陷继续通过。
+
+**教训**：门禁测的是「我断言的东西」，不是「用户看到的东西」。一个在不需要滚动的布局下测滚动的用例，测的是布局。
+
+**7.30.7 两种源类型共用一个绑定槽时，`dynamic_cast` 失败被当成「没有数据」**
+
+`Chart` 有 `Series` 和 `Stream` 两个槽，但页面自然只会写 `Series="{Binding ...}"`。第一版在 `Series` 分支里 `dynamic_pointer_cast<ChartSeries>`，绑定值是 `ChartStream` 时转换失败返回 null，于是两个都没设——图表渲染成空网格，标题却写着「live」。
+
+**修复**：`Series` 槽同时接受两种源，按实际类型分派；并在构造函数末尾**回放**一次所有已绑定的槽（绑定可能在这个构造函数跑完之前就写入了，那时 `plot_` 还是 null，写入被静默丢弃且不会重试）。
+
+**教训**：`dynamic_cast` 失败后 `if (ptr)` 静默跳过，是「看起来在工作」的最短路径。绑定的时序同理——写入被丢弃时不会有人告诉你。
+
+---
+
 # 第四部分：目标架构
 ## 8. 分层
 ```
@@ -847,6 +921,7 @@ samples/
   5. theming/      主题：Light/Dark 与 token             ✅
   6. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
   7. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
+  8. charts/       图表：百万点与降采样                    ✅ 已完成（0.12）
 ```
 
 **`files/` 已并入 `editor/`（本轮决定）**：原计划第 6 个示例 `files` 有四个区块（打开 / 另存为 / 选文件夹 / 读取预览）。逐条对照后发现它们**全部是编辑器的子集**——编辑器本来就要「打开文件成为新标签」「另存为」「读取内容显示」；只有「选文件夹」一项是编辑器不需要的，而它只是同一个 WinUI 对话框的一个标志位（`FOS_PICKFOLDERS`），没有独立的框架能力。
@@ -2045,7 +2120,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（232 用例）
+## A. 测试清单（242 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -2057,6 +2132,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 | instantiate | 3 | 树结构、默认值、绑定附加、DataContext 继承 |
 | binding | 20 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、**`FallbackValue` 应用与恢复**、LostFocus 延迟与**失焦提交**、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
 | list | 3 | 模板实例化、数据上下文隔离（回归）、订阅泄漏 |
+| chart | 10 | 降采样端点保序/尖峰保留/工作量确实减少/边界退化/刻度 nice 数/缓存键/受控绘制量/柱状图/种类区分 |
 | virtual | 8 | 有界高度只实现视口内的行、滚动后窗口移动且行数据对齐、选中跨窗口进出、End 到模型末项并滚入视口、滚动后点击命中正确行、行滚出窗口释放绑定、无界高度保持全量实例化、`RealizedCount`/`IsVirtualized` 发布到 ViewModel |
 | layout | 6 | 垂直/水平排列、**Border padding（含边框占位）**、**边框单边厚度**、**Page 多子节点堆叠与弹性填充**、失效冒泡、显式尺寸 |
 | grid | 5 | 星号分配、固定+星号混合、跨列、间距、auto 列自适应 |

@@ -3,6 +3,8 @@
 #include "TestHarness.h"
 
 #include "Animation.h"
+#include "Chart.h"
+#include "ChartData.h"
 #include "Controls.h"
 #include "Core.h"
 #include "Diagnostics.h"
@@ -5364,6 +5366,304 @@ TEST("tabview: titles come from the model, not a placeholder") {
     CHECK(tabs->TitleForTesting(0) == L"Alpha");
     CHECK(tabs->TitleForTesting(1) == L"Beta");
     CHECK(tabs->TitleForTesting(0) != L"Tab");
+}
+
+// ===========================================================================
+// Chart data: downsampling
+//
+// These tests exist because downsampling is the kind of feature where a wrong
+// implementation still "looks like a chart". The assertions are therefore about
+// SHAPE properties that a wrong algorithm breaks in a way a screenshot would not
+// reveal: endpoints kept, peaks preserved, x still ordered, and -- the one that
+// matters most -- the reduction being real, so the pixel cost follows the viewport
+// rather than the data.
+// ===========================================================================
+namespace {
+
+// A deterministic signal with a spike, so "did the peak survive" is answerable.
+// 1 000 000 points would make the suite slow; the shape is what is under test and
+// it is identical at any length.
+std::vector<ChartPoint> MakeSignal(size_t n, size_t spikeAt = 0, double spikeValue = 0) {
+    std::vector<ChartPoint> pts(n);
+    for (size_t i = 0; i < n; ++i) {
+        const double x = static_cast<double>(i);
+        pts[i].x = x;
+        pts[i].y = std::sin(x * 0.01) * 10.0;
+    }
+    if (spikeAt < n) pts[spikeAt].y = spikeValue;
+    return pts;
+}
+
+double MaxAbsY(const std::vector<ChartPoint>& pts) {
+    double m = 0;
+    for (const auto& p : pts) m = std::max(m, std::abs(p.y));
+    return m;
+}
+
+bool XAscending(const std::vector<ChartPoint>& pts) {
+    for (size_t i = 1; i < pts.size(); ++i) {
+        if (pts[i].x < pts[i - 1].x) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+TEST("chart: every mode keeps the endpoints and stays ordered") {
+    const auto in = MakeSignal(5000);
+    for (auto mode : {DownsampleMode::Uniform, DownsampleMode::MinMax, DownsampleMode::Lttb}) {
+        std::vector<ChartPoint> out;
+        const size_t n = Downsample(in.data(), in.size(), 300, mode, out);
+        CHECK(n <= 300);
+        CHECK(!out.empty());
+        if (out.empty()) continue;
+        // The line must start and end where the data does. A mode that drops the
+        // first or last point draws a chart whose edges do not match its axis.
+        CHECK(out.front().x == in.front().x);
+        CHECK(out.back().x == in.back().x);
+        // Reordering would draw a zig-zag that looks like noise in the data.
+        CHECK(XAscending(out));
+    }
+}
+
+TEST("chart: a series shorter than the budget is copied unchanged") {
+    // The downsampler must never be the reason a small chart is wrong.
+    const auto in = MakeSignal(50);
+    for (auto mode : {DownsampleMode::Uniform, DownsampleMode::MinMax, DownsampleMode::Lttb}) {
+        std::vector<ChartPoint> out;
+        const size_t n = Downsample(in.data(), in.size(), 500, mode, out);
+        CHECK(n == in.size());
+        CHECK(XAscending(out));
+    }
+    // And an explicitly disabled mode keeps everything even over budget.
+    std::vector<ChartPoint> out;
+    CHECK(Downsample(in.data(), in.size(), 3, DownsampleMode::None, out) == in.size());
+}
+
+TEST("chart: LTTB and MinMax keep a spike that Uniform can lose") {
+    // This is the whole argument for anything beyond uniform sampling: a single
+    // extreme sample between two uniform picks simply disappears, and the chart
+    // then reports a smooth line over data that has a 40-unit excursion.
+    const auto in = MakeSignal(20000, 12345, 40.0);
+    std::vector<ChartPoint> uniform, minmax, lttb;
+    Downsample(in.data(), in.size(), 400, DownsampleMode::Uniform, uniform);
+    Downsample(in.data(), in.size(), 400, DownsampleMode::MinMax, minmax);
+    Downsample(in.data(), in.size(), 400, DownsampleMode::Lttb, lttb);
+
+    CHECK(MaxAbsY(minmax) > 30.0); // the envelope always reaches the peak
+    CHECK(MaxAbsY(lttb) > 30.0);   // and LTTB keeps it because it is salient
+    // Uniform is not REQUIRED to lose it, but if it always kept it there would be
+    // no reason to offer the other two. Asserting the failure is honest: it
+    // documents what the mode is for.
+    std::printf("    spike preserved: uniform=%.1f minmax=%.1f lttb=%.1f\n",
+                MaxAbsY(uniform), MaxAbsY(minmax), MaxAbsY(lttb));
+}
+
+TEST("chart: downsampling actually reduces the work") {
+    // 200 000 points into a 700 px budget: the drawn count must follow the BUDGET,
+    // not the data. If this fails, "10 million points at 60 fps" is a lie.
+    const auto in = MakeSignal(200000);
+    for (auto mode : {DownsampleMode::Uniform, DownsampleMode::MinMax, DownsampleMode::Lttb}) {
+        std::vector<ChartPoint> out;
+        const size_t n = Downsample(in.data(), in.size(), 700, mode, out);
+        CHECK(n <= 704);            // MinMax emits up to 2 per bucket
+        CHECK(n > 100);             // and still covers the width
+        std::printf("    %-7s 200000 -> %zu points\n", DownsampleModeName(mode), n);
+    }
+}
+
+TEST("chart: bounds cover the data and inflate a flat series safely") {
+    std::vector<ChartPoint> pts{{0, 5}, {10, 5}, {20, 5}};
+    ChartBounds b = ChartBounds::FromPoints(pts.data(), pts.size());
+    CHECK(!b.empty);
+    CHECK(b.minY == 5 && b.maxY == 5);
+    const ChartBounds padded = b.Inflated(0.02);
+    // A constant series has zero height; padding by a fraction of zero would leave
+    // zero, and every projection would then divide by zero. The inflation has to
+    // produce a usable range.
+    CHECK(padded.Height() > 0.0);
+    CHECK(padded.Width() > 0.0);
+    // A single point is still a valid, non-empty range.
+    ChartBounds single = ChartBounds::FromPoints(pts.data(), 1);
+    CHECK(!single.empty);
+    CHECK(single.Height() == 0);
+    // Empty input reports empty rather than a bogus 0..0 range.
+    ChartBounds none = ChartBounds::FromPoints(nullptr, 0);
+    CHECK(none.empty);
+}
+
+TEST("chart: axis ticks land on nice numbers") {
+    const AxisTicks t = ComputeNiceTicks(0.0, 97.0, 10);
+    CHECK(!t.values.empty());
+    // The step must be 1, 2 or 5 times a power of ten: that is what makes a reader
+    // able to interpolate between two labels.
+    const double norm = t.step / std::pow(10.0, std::floor(std::log10(t.step)));
+    CHECK(std::abs(norm - 1.0) < 1e-9 || std::abs(norm - 2.0) < 1e-9 || std::abs(norm - 5.0) < 1e-9);
+    CHECK(t.values.size() <= 12); // never denser than asked (plus the two ends)
+    for (double v : t.values) {
+        CHECK(v >= -1e-9);
+        CHECK(v <= 97.0 + 1e-9);
+        // Evenly spaced: a grid whose gaps differ is misread as non-linear.
+        if (v != t.values.front()) {
+            const double steps = v / t.step;
+            CHECK(std::abs(steps - std::round(steps)) < 1e-6);
+        }
+    }
+    // A degenerate range still produces a label rather than an empty axis.
+    const AxisTicks one = ComputeNiceTicks(3.0, 3.0, 5);
+    CHECK(one.values.size() == 1);
+    // Labels follow the step, not the magnitude.
+    CHECK(FormatTickLabel(1.5, 0.1) == L"1.5");
+    CHECK(FormatTickLabel(2.0, 1.0) == L"2");
+    CHECK(FormatTickLabel(0.0, 0.5) == L"0");
+}
+
+TEST("chart: a series caches its downsampled view per key") {
+    auto series = std::make_shared<ChartSeries>();
+    series->SetUniformX(std::vector<double>(10000, 1.0));
+    CHECK(series->Count() == 10000);
+    auto first = series->Downsampled(400, DownsampleMode::Lttb);
+    CHECK(first->size() <= 400);
+    const ChartPoint* addr = first->data();
+    // Same key: no recomputation, the same buffer comes back.
+    auto again = series->Downsampled(400, DownsampleMode::Lttb);
+    CHECK(again->data() == addr);
+    CHECK(again.get() == first.get());
+    // Different budget: a SEPARATE view that does not invalidate the first. This is
+    // the assertion that matters -- returning a reference to a shared buffer made
+    // two live views alias, so comparing a coarse and a fine reduction was
+    // impossible.
+    auto finer = series->Downsampled(800, DownsampleMode::Lttb);
+    CHECK(finer->size() > first->size());
+    CHECK(first->size() <= 400);
+    CHECK(finer->data() != first->data());
+    // Changing the data drops the cache rather than serving stale points.
+    series->SetUniformX(std::vector<double>(100, 2.0));
+    CHECK(series->Count() == 100);
+    auto small = series->Downsampled(400, DownsampleMode::Lttb);
+    CHECK(small->size() == 100);
+}
+
+TEST("chart: the control draws a bounded number of points") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Chart Series=\"{Binding Series}\" Title=\"t\"/>",
+        bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class ChartVm final : public ObservableObject {
+    public:
+        ChartVm() {
+            auto s = std::make_shared<ChartSeries>();
+            // SetPoints, not SetUniformX: MakeSignal already carries explicit x
+            // values, and reusing them keeps the assertion about the point count
+            // honest rather than about x-generation.
+            s->SetPoints(MakeSignal(100000));
+            Series.Set(std::static_pointer_cast<RefObject>(s));
+            Make("Series", Series);
+        }
+        ObservableProperty<RefPtr> Series{"Series"};
+    };
+    auto vm = std::make_shared<ChartVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* chart = dynamic_cast<Chart*>(root.get());
+    CHECK(chart != nullptr);
+    if (!chart) return;
+    root->ForceLayout(Size{720, 320});
+    RecordingPaintContext rec;
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    ChartPlot* plot = chart->Plot();
+    CHECK(plot != nullptr);
+    if (!plot) return;
+    CHECK(plot->LastSourcePoints() == 100000);
+    // The plot area is 720 - 64 - 14 = 642 px, so ~642 points, not 100 000.
+    CHECK(plot->LastDrawnPoints() > 100);
+    CHECK(plot->LastDrawnPoints() <= 720);
+    std::printf("    drew %zu of %zu points (budget %d)\n", plot->LastDrawnPoints(),
+                plot->LastSourcePoints(), plot->LastBudget());
+
+    // Turning downsampling off draws every point -- that is the comparison the
+    // sample page makes, and it has to be a real difference, not a label.
+    chart->SetSlotValue(chart->SlotOf("Downsample"), Value::Enum(0));
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    CHECK(plot->LastDrawnPoints() == 100000);
+}
+
+TEST("chart: bar and area kinds both draw something distinguishable") {
+    InstallText();
+    for (const wchar_t* kind : {L"Bar", L"Area"}) {
+        DiagnosticBag bag;
+        const std::string src = std::string("<Chart Title=\"k\" PlotKind=\"") +
+                                (kind[0] == L'B' ? "Bar" : "Area") + "\" Series=\"{Binding Series}\"/>";
+        auto doc = Compile(src, bag);
+        CHECK(doc != nullptr);
+        if (!doc) continue;
+
+        class Vm final : public ObservableObject {
+        public:
+            Vm() {
+                auto s = std::make_shared<ChartSeries>();
+                std::vector<double> ys;
+                for (int i = 0; i < 20; ++i) ys.push_back(i % 2 ? 5.0 : 2.0);
+                s->SetUniformX(std::move(ys));
+                Series.Set(std::static_pointer_cast<RefObject>(s));
+                Make("Series", Series);
+            }
+            ObservableProperty<RefPtr> Series{"Series"};
+        };
+        auto vm = std::make_shared<Vm>();
+        WidgetPtr root = doc->Instantiate(&g_fakeText);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{600, 300});
+        RecordingPaintContext rec;
+        root->PaintTree(rec, MakePalette(ThemeKind::Light));
+        // Both kinds must produce drawing operations AND the axis labels/grid that
+        // make the figure readable; zero ops would mean the kind silently fell
+        // through to nothing.
+        CHECK(rec.OpCount() > 10);
+    }
+}
+
+TEST("chart: a category bar chart gets its series from the page") {
+    // Regression guard for the sample's third figure, which rendered as an empty
+    // grid: the category series was bound but the plot had no data. A chart that
+    // shows axes and no bars is the failure mode that looks like "it is working".
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Chart Series=\"{Binding CategorySeries}\" Downsample=\"None\" PlotKind=\"Bar\"/>",
+        bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class Vm final : public ObservableObject {
+    public:
+        Vm() {
+            std::vector<ChartPoint> pts;
+            for (int i = 0; i < 12; ++i) pts.push_back(ChartPoint{static_cast<double>(i), 10.0 + i});
+            auto s = std::make_shared<ChartSeries>();
+            s->SetPoints(std::move(pts));
+            CategorySeries.Set(std::static_pointer_cast<RefObject>(s));
+            Make("CategorySeries", CategorySeries);
+        }
+        ObservableProperty<RefPtr> CategorySeries{"CategorySeries"};
+    };
+    auto vm = std::make_shared<Vm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto* chart = dynamic_cast<Chart*>(root.get());
+    CHECK(chart != nullptr);
+    if (!chart) return;
+    root->ForceLayout(Size{600, 240});
+    CHECK(chart->Plot()->Series() != nullptr);
+    RecordingPaintContext rec;
+    root->PaintTree(rec, MakePalette(ThemeKind::Light));
+    CHECK(chart->Plot()->LastSourcePoints() == 12);
+    // Twelve bars from twelve points, all drawn: nothing to reduce here.
+    CHECK(chart->Plot()->LastDrawnPoints() == 12);
 }
 
 int main(int argc, char** argv) {

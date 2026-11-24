@@ -31,6 +31,8 @@ set(FRAMEWORK_SRC
     framework/src/core/Widget.cpp
     framework/src/core/Types.cpp
     framework/src/core/Controls.cpp
+    framework/src/core/Chart.cpp
+    framework/src/core/ChartData.cpp
     framework/src/core/Overlay.cpp
     framework/src/mvvm/Binding.cpp
     framework/src/mvvm/Converters.cpp
@@ -88,7 +90,7 @@ function(add_sample NAME)
     add_custom_command(
         OUTPUT ${res}
         COMMAND rc /nologo /fo${res}
-                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=11
+                /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=12
                 /dWUI_VERSION_PATCH=0 /dWUI_VERSION_BUILD=0
                 ${dir}/resources/app.rc
         DEPENDS ${dir}/resources/app.rc

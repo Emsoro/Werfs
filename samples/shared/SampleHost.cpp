@@ -453,6 +453,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             last = now;
             AnimationHost::AdvanceAll(dt);
+            // The page's own per-frame work, after the framework's animation clock so a
+            // page that appends samples sees the same dt the animations did. Its return
+            // value is the page telling us "I changed something" -- without it a live
+            // page would either never repaint or repaint every tick regardless.
+            if (g_options.onFrame && g_options.onFrame(dt)) {
+                if (g.root) g.root->Invalidate(AffectsRender);
+            }
         }
         // Repaint only when something is actually dirty; a free-running repaint
         // wastes a core and hides invalidation bugs.

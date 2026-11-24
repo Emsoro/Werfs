@@ -72,7 +72,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'basic', 'list', 'binding', 'theming', 'usercontrol', 'editor')]
+                 'basic', 'list', 'binding', 'theming', 'usercontrol', 'editor', 'charts')]
     [string]$Target = 'samples',
 
     [switch]$Clean,
@@ -184,7 +184,7 @@ function Get-VersionPart {
 }
 
 $VersionMajor = Get-VersionPart 'MAJOR' '0'
-$VersionMinor = Get-VersionPart 'MINOR' '11'
+$VersionMinor = Get-VersionPart 'MINOR' '12'
 $VersionPatch = Get-VersionPart 'PATCH' '0'
 $VersionBuild = Get-VersionPart 'BUILD' '0'
 $VersionString = "$VersionMajor.$VersionMinor.$VersionPatch.$VersionBuild"
@@ -235,6 +235,8 @@ $CoreSources = @(
     'src\core\Widget.cpp'
     'src\core\Types.cpp'
     'src\core\Controls.cpp'
+    'src\core\Chart.cpp'
+    'src\core\ChartData.cpp'
     'src\core\Overlay.cpp'
     'src\mvvm\Binding.cpp'
     'src\mvvm\Converters.cpp'
@@ -413,13 +415,15 @@ $BindingSampleDir = Join-Path $SamplesRoot 'binding'
 $ThemingSampleDir = Join-Path $SamplesRoot 'theming'
 $UserControlSampleDir = Join-Path $SamplesRoot 'usercontrol'
 $EditorSampleDir = Join-Path $SamplesRoot 'editor'
+$ChartsSampleDir = Join-Path $SamplesRoot 'charts'
 # Tools that touch several samples need every sample's headers.
 $AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
                        $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'),
                        $BindingSampleDir, (Join-Path $BindingSampleDir 'resources'),
                        $ThemingSampleDir, (Join-Path $ThemingSampleDir 'resources'),
                        $UserControlSampleDir, (Join-Path $UserControlSampleDir 'resources'),
-                       $EditorSampleDir, (Join-Path $EditorSampleDir 'resources'))
+                       $EditorSampleDir, (Join-Path $EditorSampleDir 'resources'),
+                       $ChartsSampleDir, (Join-Path $ChartsSampleDir 'resources'))
 
 # A sample's ViewModel implementation has to be compiled into the tools that drive
 # it. The editor is the first sample with real logic in a .cpp; the others keep
@@ -505,6 +509,10 @@ $SampleRegistry = @(
     # what the editor needs -- two samples for one capability meant two places to
     # keep the dialog wiring correct.
     @{ Name = 'editor';  Exe = 'waml_editor';  Res = 'editor' }
+    # The charts page: the only sample that is about COST rather than layout. It
+    # renders a 10,000,000-point series with and without downsampling and prints the
+    # control's own paint counters, so "the reduction matters" is a measurement.
+    @{ Name = 'charts';  Exe = 'waml_charts';  Res = 'charts' }
 )
 
 function Build-RegisteredSample {

@@ -33,6 +33,7 @@
 // ahead of Core.h.
 #undef DrawText
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -80,6 +81,15 @@ struct HostOptions {
     // means "stay on the initial theme". A missing property is a startup error,
     // not a silently ignored setting.
     std::wstring themeProperty;
+
+    // Called once per frame with the real elapsed time in seconds, before the repaint
+    // decision. This is what a LIVE page needs: animations advance on their own, but
+    // "append a sample every 16 ms and repaint" is application behaviour the host
+    // cannot guess. Returning true means "I changed something, repaint me".
+    //
+    // The host clamps and measures the delta; a page that reads a clock itself would
+    // drift from the frame it is drawing.
+    std::function<bool(float)> onFrame;
 };
 
 // Runs the sample until the window closes. `makeVm` returns the root

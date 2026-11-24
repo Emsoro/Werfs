@@ -13,6 +13,7 @@
 #include "ThemingVm.h"  // sample: the token/theme page's ViewModel
 #include "UserControlVm.h" // sample: the nested-data-source page's ViewModels
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
+#include "ChartsVm.h"   // sample: the chart/downsampling page's ViewModel
 #include "Mvvm.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (default page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
@@ -98,6 +99,7 @@ int main(int argc, char** argv) {
     const bool isThemingPage = source.find("Theming.waml") != std::string::npos;
     const bool isUserControlPage = source.find("UserControl.waml") != std::string::npos;
     const bool isEditorPage = source.find("Editor.waml") != std::string::npos;
+    const bool isChartsPage = source.find("Charts.waml") != std::string::npos;
 
     std::shared_ptr<RefObject> vmRef;
     if (isBasicPage) {
@@ -125,6 +127,17 @@ int main(int argc, char** argv) {
         auto editorVm = std::make_shared<sample::EditorVm>();
         std::printf("vm: EditorVm (%zu documents)\n", editorVm->DocumentCount());
         vmRef = std::static_pointer_cast<RefObject>(editorVm);
+    } else if (isChartsPage) {
+        auto chartsVm = std::make_shared<sample::ChartsVm>();
+        // The page is LIVE, so a snapshot has to decide how much signal to advance
+        // before capturing. Freezing it at t=0 keeps the gate deterministic: the
+        // stream is seeded with exactly one window and no frame callback runs, so
+        // two passes render identical pixels. Advancing a random number of frames
+        // here is what would make the hash unstable, not the chart itself.
+        chartsVm->SetStreaming(false);
+        std::printf("vm: ChartsVm (%zu points, stream paused for a still frame)\n",
+                    sample::ChartsVm::kWindowPoints);
+        vmRef = std::static_pointer_cast<RefObject>(chartsVm);
     } else {
         // Default: the basic page. There is no gallery sample any more; every
         // page belongs to exactly one sample, and an unknown one is a mistake
