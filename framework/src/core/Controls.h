@@ -516,6 +516,23 @@ public:
     // Test hook: caret position for assertions.
     size_t CaretIndex() const { return caret_; }
 
+    // --- IME composition ---------------------------------------------------
+    //
+    // A composition is the text an IME is still building ("zhong" on the way to 中). It is
+    // a PREVIEW: it is drawn in the field, but it is NOT written to the Text slot, so
+    // bindings and the ViewModel never see a half-typed candidate. Only CommitComposition
+    // produces an edit.
+    //
+    // These are driven by the host from WM_IME_COMPOSITION. They are public so a headless
+    // test can exercise the whole lifecycle with no IME installed.
+    void SetComposition(const std::wstring& text) override;
+    void CommitComposition(const std::wstring& finalText) override;
+    void CancelComposition() override;
+    bool Composing() const override { return !composition_.empty(); }
+    CompositionCaret ImeCaret() const override;
+    // Test hook: what the field is previewing.
+    const std::wstring& CompositionText() const { return composition_; }
+
 protected:
     // The text as it should be DISPLAYED. TextBox returns Text unchanged; PasswordBox
     // overrides it. Splitting display from value here is what lets the mask stay a
@@ -529,10 +546,13 @@ private:
     // entry; a box taller than one line wraps on explicit newlines and then on
     // width, so a document paragraph is readable instead of running off the edge.
     std::vector<std::wstring> BuildDisplayLines(float wrapWidth, float fontSize, int weight) const;
+    void RepaintWithPreview();
     int slotText_ = -1;
     size_t caret_ = 0;
     bool caretVisible_ = true;
     std::wstring editing_;
+    // The uncommitted IME preview. Empty means no composition is in progress.
+    std::wstring composition_;
 };
 
 // A text field that suggests completions as you type.

@@ -453,6 +453,16 @@ bool Widget::OnPointerWheel(float deltaLines) {
     return false;
 }
 
+CompositionCaret Widget::ImeCaret() const {
+    // A control that takes no text still has a position; returning its top-left means a host
+    // that asks anyway puts the candidate window somewhere sane rather than at (0,0).
+    CompositionCaret caret;
+    caret.x = bounds_.x;
+    caret.y = bounds_.y;
+    caret.lineHeight = bounds_.h > 0 ? bounds_.h : 16.0f;
+    return caret;
+}
+
 void Widget::SetPressed(bool pressed) {
     if (pressed_ == pressed) return;
     pressed_ = pressed;

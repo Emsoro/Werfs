@@ -4194,6 +4194,154 @@ TEST("autosuggest: an unchanged prefix keeps the list closed instead of empty") 
     CHECK(f.root->Overlay() != nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// IME composition.
+//
+// The interesting assertions are about what the VALUE never sees. A composition is a
+// preview: writing it into the Text slot would fire the binding and the ViewModel for a
+// word that does not exist yet, and cancelling would then require retracting those writes.
+// ---------------------------------------------------------------------------
+TEST("ime: a composition is displayed but never written to the value") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="ab"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* t = root->FindByName("t");
+    CHECK(t != nullptr);
+    if (!t) return;
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->SetComposition(L"zhong");
+    CHECK(box->Composing());
+    // The VALUE is untouched: this is the whole contract of a preview.
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"ab");
+
+    // The DISPLAYED text includes it, at the caret.
+    RecordingPaintContext rec;
+    t->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("abzhong") != std::string::npos);
+}
+
+TEST("ime: committing inserts the composed characters and clears the preview") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="a"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->SetCaretToEnd();
+    box->SetComposition(L"zhong");
+    box->CommitComposition(L"\u4E2D"); // 中
+    CHECK(!box->Composing());
+    // The committed character IS an edit, so it lands in the value.
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"a\u4E2D");
+}
+
+TEST("ime: cancelling drops the preview and leaves the value untouched") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="keep"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->SetCaretToEnd();
+    box->SetComposition(L"zhong");
+    box->CancelComposition();
+    CHECK(!box->Composing());
+    // Escape must not undo anything, because the preview was never an edit.
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"keep");
+}
+
+TEST("ime: the composition replaces itself as the user keeps typing") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text=""/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    // The IME rebuilds the string on every keystroke; each update replaces the last.
+    box->SetComposition(L"z");
+    box->SetComposition(L"zh");
+    box->SetComposition(L"zhong");
+    RecordingPaintContext rec;
+    t->OnPaint(rec, MakePalette(ThemeKind::Light));
+    CHECK(rec.Text().find("zhong") != std::string::npos);
+    // Not "zzhzhong": the preview is replaced, not accumulated.
+    CHECK(rec.Text().find("zzh") == std::string::npos);
+    // And still nothing in the value.
+    CHECK(t->Get<std::wstring>(t->SlotOf("Text")).empty());
+}
+
+TEST("ime: the caret rect follows the text, so the candidate window can be placed") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page><TextBox x:Name="t" Text="abc" FontSize="14"/></Page>)WAML",
+                       bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{400, 200});
+    Widget* t = root->FindByName("t");
+    auto* box = dynamic_cast<TextBox*>(t);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->SetCaretToEnd();
+    const CompositionCaret atEnd = box->ImeCaret();
+    // A candidate window at the field's corner would sit over the first character.
+    CHECK(atEnd.x > t->Bounds().x);
+    CHECK(atEnd.lineHeight > 0.0f);
+
+    // With a composition in progress the caret has already moved past the preview, so the
+    // list tracks the character being built rather than the one before it.
+    box->SetComposition(L"zhong");
+    const CompositionCaret during = box->ImeCaret();
+    CHECK(during.x > atEnd.x);
+}
+
+TEST("ime: a control that takes no text reports a harmless caret") {
+    DiagnosticBag bag;
+    Widget* b = MakeWidget("Button", "Content=\"Go\"", bag);
+    CHECK(b != nullptr);
+    if (!b) return;
+    // The host asks every focused control; a button must not crash or report nonsense.
+    const CompositionCaret caret = b->ImeCaret();
+    CHECK(caret.lineHeight > 0.0f);
+    CHECK(!b->Composing());
+}
+
 // A widget plus the categories the shell tests need.
 struct ShellFixture {
     WidgetPtr root;

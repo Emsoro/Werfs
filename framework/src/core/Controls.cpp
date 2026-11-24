@@ -796,7 +796,14 @@ std::vector<std::wstring> TextBox::BuildDisplayLines(float wrapWidth, float font
 }
 
 std::wstring TextBox::DisplayText() const {
-    return Get<std::wstring>(SlotOf("Text"));
+    // The composition is spliced in HERE rather than written to the slot, so every paint
+    // path shows it while the value stays untouched. That is the whole reason it is a
+    // display concern: a preview that reached the slot would fire the binding and the
+    // ViewModel on each keystroke of a word that does not exist yet.
+    const std::wstring text = Get<std::wstring>(SlotOf("Text"));
+    if (composition_.empty()) return text;
+    const size_t at = std::min(caret_, text.size());
+    return text.substr(0, at) + composition_ + text.substr(at);
 }
 
 void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
@@ -860,7 +867,8 @@ void TextBox::SetCaretToEnd() {
 
 bool TextBox::OnChar(wchar_t ch) {
     if (ch < 32 && ch != L'\t') return false;
-    if (editing_.empty()) editing_ = Get<std::wstring>(SlotOf("Text"));
+    // Re-read from the slot for the same reason as OnKeyDown above.
+    editing_ = Get<std::wstring>(SlotOf("Text"));
     if (caret_ > editing_.size()) caret_ = editing_.size();
     editing_.insert(editing_.begin() + static_cast<long>(caret_), ch);
     ++caret_;
@@ -869,7 +877,11 @@ bool TextBox::OnChar(wchar_t ch) {
 }
 
 bool TextBox::OnKeyDown(int vk) {
-    if (editing_.empty()) editing_ = Get<std::wstring>(SlotOf("Text"));
+    // Re-read from the SLOT on every key, not only when the buffer is empty. "Empty" conflates
+    // "never initialised" with "stale", and a value written from outside (a binding, a reset)
+    // is invisible to a buffer refreshed only in the first case -- the same class of bug as
+    // CODE_PLAN §7.27. The slot is the single source of truth here.
+    editing_ = Get<std::wstring>(SlotOf("Text"));
     if (caret_ > editing_.size()) caret_ = editing_.size();
     switch (vk) {
     case KeyLeft:
@@ -912,6 +924,101 @@ bool TextBox::OnKeyDown(int vk) {
 void TextBox::CommitText() { SetSlotValue(SlotOf("Text"), Value::Text(editing_)); }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// IME composition
+//
+// A composition is the text an IME is still building ("zhong" on the way to 中). It is a
+// PREVIEW: spliced into the displayed text, but never written to the Text slot, so bindings
+// and the ViewModel only ever see committed characters.
+// ---------------------------------------------------------------------------
+void TextBox::RepaintWithPreview() {
+    // The preview changes the DISPLAYED text, so it can change the measured width (and, in
+    // a wrapping box, the line count). Invalidate measure too: repainting without
+    // re-measuring leaves a single-line box sized for the old string.
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+CompositionCaret TextBox::ImeCaret() const {
+    // The candidate window must sit at the CARET, not at the field's corner, and it must
+    // reuse the painter's own padding and line height -- computing the position a second,
+    // slightly different way is how a candidate window ends up one line too high.
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const float lineH =
+        TextSystem::Get() ? TextSystem::Get()->LineHeight(fontSize) : fontSize * 1.33f;
+
+    CompositionCaret caret;
+    caret.lineHeight = lineH;
+    caret.x = bounds_.x + margin.l + pad.l;
+    caret.y = bounds_.y + margin.t + pad.t;
+
+    // Width of everything before the caret on its line. The caret index counts the preview
+    // (see SetComposition), so the candidate window tracks the character being built.
+    const std::wstring text = DisplayText();
+    const size_t at = std::min(caret_, text.size());
+    if (ITextService* svc = TextSystem::Get()) {
+        const std::wstring prefix = text.substr(0, at);
+        const size_t lastNewline = prefix.rfind(L'\n');
+        if (lastNewline != std::wstring::npos) {
+            caret.y += lineH * static_cast<float>(std::count(prefix.begin(), prefix.end(), L'\n'));
+            caret.x += svc->Measure(prefix.substr(lastNewline + 1), fontSize, WeightNormal).w;
+        } else {
+            caret.x += svc->Measure(prefix, fontSize, WeightNormal).w;
+        }
+    }
+    return caret;
+}
+
+void TextBox::SetComposition(const std::wstring& text) {
+    if (composition_ == text) return;
+    // The caret is kept PAST the preview, so that: the drawn caret sits after the composed
+    // characters, and ImeCaret measures up to there. Growing or shrinking the preview moves
+    // the caret by exactly the difference.
+    const size_t before = composition_.size();
+    composition_ = text;
+    const size_t after = composition_.size();
+    if (after >= before) {
+        caret_ += after - before;
+    } else {
+        const size_t shrink = before - after;
+        caret_ = caret_ > shrink ? caret_ - shrink : 0;
+    }
+    RepaintWithPreview();
+}
+
+void TextBox::CommitComposition(const std::wstring& finalText) {
+    if (composition_.empty() && finalText.empty()) return;
+    // The preview is inside the displayed text, so committing first takes it back out of the
+    // caret arithmetic, then inserts the real characters as a normal edit. That keeps one
+    // code path for "text was added", whether it came from a key or from an IME.
+    const size_t previewLength = composition_.size();
+    caret_ = caret_ > previewLength ? caret_ - previewLength : 0;
+    composition_.clear();
+
+    if (!finalText.empty()) {
+        // Re-read from the SLOT rather than trusting editing_. A buffer refreshed only when
+        // empty cannot see a value written from outside (a binding), so committing would
+        // append the IME result to a stale string and replace the model's text with
+        // something the user never had -- the same class of bug as CODE_PLAN §7.27.
+        editing_ = Get<std::wstring>(SlotOf("Text"));
+        if (caret_ > editing_.size()) caret_ = editing_.size();
+        editing_.insert(caret_, finalText);
+        caret_ += finalText.size();
+        SetSlotValue(SlotOf("Text"), Value::Text(editing_));
+    }
+    RepaintWithPreview();
+}
+
+void TextBox::CancelComposition() {
+    if (composition_.empty()) return;
+    // The value was never touched, so cancelling is just dropping the preview. This is the
+    // payoff for keeping the preview out of the slot: there is nothing to undo.
+    const size_t previewLength = composition_.size();
+    caret_ = caret_ > previewLength ? caret_ - previewLength : 0;
+    composition_.clear();
+    RepaintWithPreview();
+}
 // Canvas
 // ---------------------------------------------------------------------------
 Size Canvas::Measure(const Size& available) {

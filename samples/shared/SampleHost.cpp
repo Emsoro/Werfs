@@ -27,6 +27,7 @@
 #include "Mvvm.h"
 #include "Overlay.h"
 #include "Resources.h"
+#include "TextInput.h"
 #include "Types.h"
 #include "Waml.h"
 #include "Widget.h"
@@ -359,6 +360,37 @@ void UpdateHover(HWND hwnd, Widget* target, int x, int y) {
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
+// Reads a composition or result string out of the IME context.
+//
+// The two-pass ImmGetCompositionStringW is the documented contract: ask for the size, then
+// ask for the bytes. It returns the length in BYTES, not characters, which is the usual
+// source of buffer overruns here.
+std::wstring ReadImeString(HWND hwnd, DWORD which) {
+    HIMC context = ImmGetContext(hwnd);
+    if (context == nullptr) return {};
+    const LONG bytes = ImmGetCompositionStringW(context, which, nullptr, 0);
+    std::wstring result;
+    if (bytes > 0) {
+        result.resize(static_cast<size_t>(bytes) / sizeof(wchar_t));
+        ImmGetCompositionStringW(context, which, result.data(), bytes);
+    }
+    ImmReleaseContext(hwnd, context);
+    return result;
+}
+
+// Tells the IME where the caret is, in the coordinates the platform service expects.
+//
+// The framework works in DIPs and knows nothing about windows; the service converts to
+// screen pixels. A widget that cannot describe its caret simply leaves the candidate window
+// where it was, which is the right failure: a slightly stale position beats no IME at all.
+void UpdateImePosition() {
+    ITextInputService* service = TextInputSystem::Get();
+    if (service == nullptr || g.focused == nullptr) return;
+    const CompositionCaret caret = g.focused->ImeCaret();
+    service->MoveCandidateWindow(caret);
+}
+
+
 void SetFocus(Widget* target) {
     if (g.focused == target) return;
     if (g.focused) g.focused->SetFocused(false);
@@ -370,6 +402,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE:
         SetTimer(hwnd, 1, 16, nullptr);
+        // Install the IME service as soon as there is an HWND: the candidate window can
+        // only be positioned once a window exists, and a composition that starts before this
+        // would have nowhere to go.
+        TextInputSystem::Set(CreateWin32TextInputService(hwnd));
         return 0;
 
     case WM_TIMER:
@@ -563,11 +599,51 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_CHAR:
-        if (g.focused && g.focused->OnChar(static_cast<wchar_t>(wp))) {
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
+        // An IME delivers committed characters through the composition messages, not here.
+        // If a composition is in progress this key belongs to the IME and must not also be
+        // inserted as a literal, or "zhong" would appear as letters next to the candidate.
+        if (g.focused && !g.focused->Composing()) {
+            if (g.focused->OnChar(static_cast<wchar_t>(wp))) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
+
+    case WM_IME_STARTCOMPOSITION:
+        // Position the candidate window BEFORE the composition begins. If the first
+        // position is wrong the list appears in a corner of the screen and never recovers,
+        // because many IMEs only reposition on subsequent updates.
+        UpdateImePosition();
+        return 0;
+
+    case WM_IME_COMPOSITION: {
+        // GCS_RESULTSTR: the user picked a candidate. That is a real edit.
+        // GCS_COMPSTR:   the string is still being built. That is a preview.
+        // Both can arrive together, and the result must win.
+        if (lp & GCS_RESULTSTR) {
+            const std::wstring text = ReadImeString(hwnd, GCS_RESULTSTR);
+            if (g.focused) g.focused->CommitComposition(text);
+        } else if (lp & GCS_COMPSTR) {
+            const std::wstring text = ReadImeString(hwnd, GCS_COMPSTR);
+            if (g.focused) g.focused->SetComposition(text);
+        }
+        UpdateImePosition();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_IME_ENDCOMPOSITION:
+        // The IME finished or gave up. If it never sent a result string, the preview must
+        // not be left on screen looking like committed text.
+        if (g.focused && g.focused->Composing()) g.focused->CancelComposition();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_IME_NOTIFY:
+        // The candidate list opened or moved; keep it anchored to the caret.
+        UpdateImePosition();
+        return 0;
 
     case WM_DESTROY:
         KillTimer(hwnd, 1);

@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.9.2.0** · MIT · Windows 10/11 x64
+> 版本 **0.10.0.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -97,7 +97,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 214 个用例 |
+| `tests` | `waml_tests.exe` | 220 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -222,7 +222,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 214 个单元/集成用例 |
+| `waml_tests.exe` | 220 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -505,10 +505,29 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **页面能观察卡片，但不能拥有卡片的数据**。`OnlineCount` 订阅了各卡片的 `Enabled`，所以拨动某张卡片的开关会更新顶部汇总；反过来页面从不写卡片里的字段。这条边界是 MVVM 里最容易被违反的地方。
 - **`{Binding ..., Source=...}` 仍然不支持**（属性级换数据源）。`DataContext` 已经覆盖了组件复用这个真实用途，`Source=` 只在需要"一个属性读 A、另一个读 B"的罕见场景才必要，暂不实现。
 
+### 中文输入（IME）怎么工作
+
+自绘文本框没有原生 `EDIT` 可交出去，IME 必须直接和我们对话。三个状态：
+
+| 状态 | 含义 | 是否写入 `Text` 槽位 |
+|---|---|---|
+| **组字中** | IME 在拼 `zhong`，还没确认 | ❌ 只做**预览** |
+| **已确认** | 用户选了候选字 `中` | ✅ 一次编辑 |
+| **已取消** | Esc 或点别处 | ❌ 从未写过，无需撤销 |
+
+- **预览不写入槽位**，而是拼进 `DisplayText()`。这是整套设计的关键：组字期间每敲一个字母字符串都在变（`z` → `zh` → `zhong`），若写进槽位就会**每敲一个字母触发一次绑定与 ViewModel**，取消时还得逐一撤回。留在显示层意味着值只会看到确认过的字。
+- **候选窗跟着光标走**，不是跟着输入框角落走。`ImeCaret()` 复用绘制器自己的 padding 与行高来算位置——用第二种算法算一遍是候选窗高出一行的经典原因。
+- **宿主对组字中的 `WM_CHAR` 不插入字符**，否则 `zhong` 会以字母形式混进候选词旁边。
+
+**已验证与未验证的边界**（重要，不夸大）：
+
+- ✅ 组合状态机（预览/确认/取消/光标矩形）由 `waml_tests.exe` 与 `waml_interact.exe` 覆盖，**无需安装 IME** 即可运行。
+- ⚠️ **操作系统真的把 `WM_IME_*` 送到窗口**这一环，无法在此环境自动验证——真实 IME 的候选窗属于 IME 自己的窗口，自动化驱动不可复现。提供 `tools/ImeProbe.cpp` 供在装有输入法的机器上手动确认：它打印每一条 IME 消息。
+
 
 - **动画只覆盖视觉状态过渡**：`VisualState` 的 `Transition` 会插值颜色/数值/Thickness，但没有关键帧、没有嵌套时间轴，也不对布局属性做动画（改尺寸的过渡会触发重排，目前只让绘制属性动）。
 - **`Source=` 仍不支持**：`DataContext` 已成为可绑定属性（`usercontrol` 示例即依赖它），但属性级换数据源（一个属性读 A、另一个读 B）仍不可用。真实需求已被 `DataContext` 覆盖，故暂不实现。
-- **`TextBox` 无 IME / 选区 / 剪贴板**：只有插入、退格、删除、方向键、Home/End、回车。**中文输入不可用** —— 对一个文本编辑器示例来说这是最明显的短板，见 `CODE_PLAN.md` R10。
+- **`TextBox` 有 IME，但仍无选区与剪贴板**：中文输入走 `WM_IME_*`，组字时是预览、确认后才写入值。仍未实现的是**选区**、**剪贴板**（Ctrl+C/V/X）与**鼠标点选定位光标**。见 `CODE_PLAN.md` R10。
 - **浮层只有一层**：菜单能在自己内部递归画子菜单，但「浮层里再开浮层」（例如对话框里的下拉框）不支持。
 - **关窗口不拦截**：关闭整个窗口时不检查未保存文档。单标签的提示流程已完整，批量流程见 `CODE_PLAN.md` §10c.5。
 - **不虚拟化**：见性能基线。

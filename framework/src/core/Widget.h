@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Core.h"
+#include "TextInput.h"
 #include "Mvvm.h"
 #include "Types.h"
 
@@ -18,6 +19,7 @@ class ITextService;
 class StyleTriggerHost;
 class AnimationHost;
 class VisualStateHost;
+
 
 // Process-wide text measurement service. Controls that need to measure text
 // read it here; tests can install a deterministic implementation.
@@ -239,6 +241,18 @@ public:
     VisualStateHost* VisualStates() const { return visualStateHost_.get(); }
     // Recomputes the visual state from Hovered/Pressed/Focused/IsEnabled.
     void UpdateVisualState(bool animate = true);
+
+    // --- text composition ---------------------------------------------------
+    // A widget that accepts text reports where its caret is, so the platform can put the
+    // candidate window beside it. Base returns an empty caret at the widget origin: every
+    // control that does not take text needs no override, and a host asking one of them is
+    // harmless.
+    virtual CompositionCaret ImeCaret() const;
+    // Same three, defaulted to "this control takes no composition".
+    virtual void SetComposition(const std::wstring&) {}
+    virtual void CommitComposition(const std::wstring&) {}
+    virtual void CancelComposition() {}
+    virtual bool Composing() const { return false; }
 
 protected:
     void SetDirtyUpwards(uint32_t flags);

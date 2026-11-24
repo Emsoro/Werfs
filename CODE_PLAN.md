@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.9.2.0
+> 版本：0.10.0.0
 > 日期：2026-11-23
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.9.2.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**214 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.10.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**220 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 214 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 220 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
@@ -84,7 +84,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 214 个单元/集成用例 |
+| `waml_tests.exe` | 220 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -363,7 +363,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.9.2.0         [ ok ]
+file version: 0.10.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -735,6 +735,29 @@ if (editing_.empty()) editing_ = Get<std::wstring>(SlotOf("Text"));
 - **"为空就初始化"是缓存失效逻辑里最危险的形状**。它把"缺省"和"脏"当成同一件事，而缓存系统里这两者必须分开判断。
 - 一个控件只要持有跨事件的缓冲，就必须明确回答：**谁是真源**。这里答案是槽位；凡是偏离它的读取都要有理由。
 - 这条缺陷和 §7.25、§7.26 是同一类：**状态在多处各自维护**。三次都是把状态收敛到单一位置才修掉。
+
+
+## 7.28 【中】组字提交把模型里的文本吃掉了
+
+**现象**：IME 测试里 `commit` 之后值变成了 `Hello, WAML! 中文`，而槽位原本是 `from-vm`——**用户输入的整段旧文本被一段毫不相干的字符串替换了**。
+
+**根因**：`CommitComposition` 复用了 `editing_` 缓冲，而加载条件又是熟悉的那一行：
+
+```cpp
+if (editing_.empty()) editing_ = Get<std::wstring>(SlotOf("Text"));
+```
+
+`editing_` 里还留着上次按键时的内容（`"Hello, WAML! "`），槽位却已被绑定改成 `from-vm`。于是提交把 IME 结果接在了**陈旧缓冲**后面，再写回槽位。
+
+**这和 §7.27 是同一个缺陷**，只是发生在另一个入口。当时只修了 `AutoSuggestBox::OnChar`，没有意识到 `TextBox` 里同样的写法还有三处（`OnChar`、`OnKeyDown`、`CommitComposition`）。IME 这一轮把第三处暴露了出来。
+
+**修复**：三处全部改为每次从槽位重读。槽位是唯一真源。
+
+**教训**：
+
+- **修一个缺陷时要搜同类写法**，而不是只修报错的那一处。§7.27 当时的修复范围太窄，代价是同一个 bug 以新入口又出现一次。
+- **新功能会点亮旧代码的暗角**。IME 之前没有任何路径会在"缓冲非空且槽位被外部改过"时提交，所以这个分支从没被执行过；IME 带来了这种时序。
+- 断言要落在**最终值**上。`[I2]` 若只检查"长度变长了"就会通过；检查 `after == before + 确认字符` 才抓住了它。
 
 # 第四部分：目标架构
 ## 8. 分层
@@ -1757,6 +1780,35 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 `IsOpen` 是 TwoWay，ViewModel 可以把它设为 true。但基类只知道"该开一个浮层"，不知道**里面放什么**——那只有子类清楚。所以有个 `BuildContentForSlotOpen()` 钩子：返回空表示"这个控件不能这样打开"，返回内容则照常开。没有这个钩子时，绑定 `IsOpen` 会**静默无效**。
 
 
+### 13.7 IME：为什么不走原生 `EDIT` 孤岛
+
+计划里给 IME 留了退路：不达标就切一个原生 `EDIT` 控件当"孤岛"。**没有走这条路**，而且事后看这个决定是对的。
+
+原生 `EDIT` 能免费拿到 IME、选区、剪贴板、鼠标定位——听起来全是想要的。但它会把文本框变成**框架里两个不同的东西**：焦点、绘制、滚动、主题、绑定都要为它再写一遍；而 `TextBox` 已经是 40 多个控件里被引用最多的之一。为了一个特性换来第二条文本路径，长期成本远高于自己接 `WM_IME_*`。
+
+**设计要点（三条，缺一条就不可用）**
+
+1. **组字是预览，不进槽位。**
+   组字期间字符串每个字母都在变（`z` → `zh` → `zhong`）。若写进 `Text` 槽位，每敲一个字母就触发一次绑定与 ViewModel，取消时还要逐一撤回。做法是把它拼进 `DisplayText()`——那是所有绘制路径的唯一入口，于是"显示它"和"不改值"同时成立。
+
+2. **候选窗跟着光标，不跟着控件角落。**
+   `ImeCaret()` 复用绘制器自己的 padding 与行高来算位置。用第二种算法算一遍是候选窗高出一行的经典原因；而行数是组字中会变的（多行框），所以要先按前缀里的换行数算出行号。
+
+3. **组字中的 `WM_CHAR` 不插入。**
+   否则 `zhong` 会以字母形式混进候选词旁边——拼音既在预览里、又作为字面字符被插入一遍。
+
+**能测与不能测的边界**
+
+这一轮最重要的一条纪律是**不夸大验证范围**：
+
+| 环节 | 验证方式 |
+|---|---|
+| 组合状态机（预览/确认/取消/光标矩形） | `waml_tests.exe` 6 例 + `waml_interact.exe` 4 组，**无需 IME** |
+| 宿主把 `WM_IME_*` 翻成框架调用 | 交互测试按宿主的**同一顺序**驱动同一组调用 |
+| 操作系统真的发这些消息 | **无法自动验证**，提供 `tools/ImeProbe.cpp` 手动确认 |
+
+第三行不是遗漏，是性质：真实 IME 的候选窗属于 IME 自己的窗口，自动化驱动不可复现。把它写清楚比假装覆盖了更有用。
+
 ## 14. 迭代 2b：组件复用能力（v0.7+）⭐
 
 **这是 `samples/usercontrol/` 的前置条件，也是 MVVM 价值兑现的关键一步**（详见 10a.6）。
@@ -1891,7 +1943,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 | R6 | 代码片段与真实 WAML 漂移 | 文档失信 | 迭代 4.1 自动提取 |
 | R8 | 每控件 7.7 行注册样板 | 30 控件时约 230 行重复 | v0.6 引入聚合式 `PropList` |
 | R9 | 跨机器字体不一致 | 快照金样误报 | CI 固定或内嵌字体子集 |
-| R10 | IME 未实现 | 自绘 TextBox 无法输入中文 | 见 §20；需做垂直切片决策 |
+| R10 | ~~IME 未实现~~ **已完成** | 自绘 TextBox 现在可输入中文 | 组字为预览、确认才写值；选区/剪贴板仍缺 |
 | R11 | ~~`DataContext` 不可绑定~~ **误报** | — | **已关闭**：实测它早在 `Types.cpp:109` 注册为 Ref 槽位，无需任何框架改动，`usercontrol` 示例直接可用（见 10a.6） |
 | R12 | 示例之间复制宿主代码 | 六份 Win32+D2D 初始化重复，改动发散 | 迭代 0 先抽 `samples/shared/` |
 | R13 | 文件对话框阻塞 UI 线程 | 模态期间不重绘 | 可接受（与系统行为一致）；不引入异步 |
@@ -1912,7 +1964,8 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| IME 组字、选区、剪贴板（自绘 TextBox） | **未实现** | 仅有插入/退格/删除/方向键/Home/End/回车。**中文输入不可用**，需 Go/No-Go 决策 |
+| IME 组字（自绘 TextBox） | **✅ 已实现** | 走 `WM_IME_*`：组字为预览、确认才写值、取消无需撤销；候选窗随光标 |
+| 选区、剪贴板、鼠标点选定位 | **未实现** | 仍需方向键定位；无 Ctrl+C/V/X |
 | 虚拟化列表 | 未实现 | 计划 v1.1 |
 | `VisualState` / `FontFamily` / 等宽字体 | 未实现 | 样式、资源字典与 `Trigger` 已落地（§13.1–13.3）；`VisualState` 需要状态机与过渡，与动画一起做 |
 | 无障碍（UIA Provider） | 未实现 | 仅保留 `AutomationRole` 属性位 |
@@ -1950,7 +2003,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 9. **`Style` / `ResourceDictionary`**（迭代 2.2–2.3）：`editor` 的 WAML 里每个 `AppBarButton` 都在重复 `Icon`/`Label`/`Command` 三个属性，样式系统能显著缩短——现在有真实页面做参照，比凭空设计更有依据。
 10. **关窗口守卫**（§10c.5 未做项）：`WM_CLOSE` 拦截 + 逐个询问脏文档 + 「全部保存」。机制全都有了，只差一层循环；但它是真实使用中最容易丢数据的地方，优先级不低。
 11. **动画一期**（迭代 3b.C、§10b.2）：要改绘制与失效流程，风险最高；**动工前先写好 R16 的门禁测试**。
-12. **`TextBox` 路线决策**（R10）：IME 是唯一会让工期翻倍的风险点。`editor` 现在把这个问题推到台面上——一个不能输入中文的文本编辑器是不完整的。建议先做 2 天垂直切片（`WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` + 候选窗定位），不达标就切原生 `EDIT` 孤岛——**WAML 语法不变**。
+12. **`TextBox` 剩余部分**（R10 已闭环）：IME 已实现且**没有**走原生 `EDIT` 孤岛——直接接 `WM_IME_*`，保持了一个文本框实现。剩下的是选区、剪贴板与鼠标点选定位，三者共享一套"光标 + 锚点"模型，适合一次做完。
 13. **绑定失败可观测到所有宿主**：Debug 下断言 `BindingErrorCount()` 为 0，让「拼错属性名」在开发期立即暴露。
 14. **`wamlc` 仍不做**：解析 8 KB 仅 175 µs，启动期成本可忽略。
 
@@ -1960,7 +2013,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（214 用例）
+## A. 测试清单（220 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

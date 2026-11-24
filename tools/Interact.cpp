@@ -147,6 +147,8 @@ void AdvanceFrames(float seconds) {
 }
 
 } // namespace
+int RunImeChecks(Widget* root);
+
 int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm) {
     std::printf("\n[1] TextBlock bound from ViewModel\n");
     Widget* heading = nullptr;
@@ -484,6 +486,8 @@ int RunBasicChecks(Widget* root, const std::shared_ptr<sample::BasicViewVm>& vm)
             root->SetOverlay(nullptr);
         }
     }
+
+    RunImeChecks(root);
 
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
@@ -954,6 +958,70 @@ int RunThemingChecks(Widget* root, const std::shared_ptr<sample::ThemingVm>& vm)
     };
     findLiteral(root);
     Expect(literal != nullptr, "the literal red swatch is present");
+
+    std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
+    return g_failures == 0 ? 0 : 1;
+}
+
+// Checks for samples/basic/Basic.waml's IME path.
+//
+// There is no IME in a headless harness, and driving a REAL IME is not reproducible (the
+// candidate list belongs to the IME's own window). So this drives exactly the calls the
+// host makes on WM_IME_COMPOSITION, in the same order, which is the part of the feature
+// that can regress. What it cannot cover is the OS delivering those messages at all --
+// that is what tools/ImeProbe.cpp is for, run by hand on a machine with an IME.
+int RunImeChecks(Widget* root) {
+    Widget* target = nullptr;
+    std::function<void(Widget*)> find = [&](Widget* w) {
+        if (!w || target) return;
+        if (dynamic_cast<TextBox*>(w) && w->Focusable()) { target = w; return; }
+        for (auto& c : w->Children()) find(c.get());
+    };
+    find(root);
+    Expect(target != nullptr, "the page has a TextBox");
+    if (target == nullptr) return g_failures == 0 ? 0 : 1;
+    auto* box = dynamic_cast<TextBox*>(target);
+
+    std::printf("\n[I1] the composition is a preview, not a value\n");
+    {
+        const std::wstring before = target->Get<std::wstring>(target->SlotOf("Text"));
+        box->SetComposition(L"zhong");
+        // The host calls this on GCS_COMPSTR. The VALUE must not move: a preview that
+        // reached the slot would fire the binding on every keystroke of a word that does
+        // not exist yet.
+        Expect(target->Get<std::wstring>(target->SlotOf("Text")) == before,
+               "the value is unchanged while composing");
+        Expect(box->Composing(), "the control reports a composition in progress");
+    }
+
+    std::printf("\n[I2] a result string commits exactly one edit\n");
+    {
+        const std::wstring before = target->Get<std::wstring>(target->SlotOf("Text"));
+        // The host calls this on GCS_RESULTSTR, immediately after the composition above.
+        box->CommitComposition(L"\u4E2D\u6587"); // 中文
+        Expect(!box->Composing(), "the composition ended");
+        const std::wstring after = target->Get<std::wstring>(target->SlotOf("Text"));
+        Expect(after == before + L"\u4E2D\u6587", "the committed characters were inserted");
+    }
+
+    std::printf("\n[I3] WM_IME_ENDCOMPOSITION without a result leaves nothing behind\n");
+    {
+        box->SetComposition(L"beijing");
+        const std::wstring before = target->Get<std::wstring>(target->SlotOf("Text"));
+        // The host cancels on ENDCOMPOSITION. Nothing to undo, because nothing was written.
+        box->CancelComposition();
+        Expect(!box->Composing(), "the preview is gone");
+        Expect(target->Get<std::wstring>(target->SlotOf("Text")) == before,
+               "and the value never saw it");
+    }
+
+    std::printf("\n[I4] the candidate window can follow the caret\n");
+    {
+        const CompositionCaret caret = target->ImeCaret();
+        // A zero line height would put the candidate list inside the field's border.
+        Expect(caret.lineHeight > 0.0f, "the caret reports a line height");
+        Expect(caret.x > 0.0f, "and a horizontal position");
+    }
 
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;

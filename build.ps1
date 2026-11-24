@@ -243,11 +243,13 @@ $CoreSources = @(
     'src\waml\StyleTriggers.cpp'
     'src\core\Animation.cpp'
     'src\core\VisualStates.cpp'
+    'src\core\TextInput.cpp'
     'src\render\SoftwareRender.cpp'
     'src\platform\Resources.cpp'
     'src\platform\FileDialogWin32.cpp'
     'src\platform\Image.cpp'
     'src\platform\ImageWin32.cpp'
+    'src\platform\TextInputWin32.cpp'
 ) | ForEach-Object { Join-Path $Framework $_ }
 
 $RenderSources = @(Join-Path $Framework 'src\render\D2DRender.cpp')
