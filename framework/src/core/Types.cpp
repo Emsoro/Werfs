@@ -288,6 +288,27 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::TwoWay);
         t->Prop("SelectedItem", VType::Ref, Value::Null(),
                 AffectsRender, BindingMode::TwoWay);
+        // Virtualisation surface. These four are CONTROL-TO-VIEWMODEL outputs: the
+        // list publishes where its window is and how big it is, and a page may show
+        // that. They must be TwoWay for the same reason CloseRequested is -- a OneWay
+        // binding silently ignores the target's write (§7.16) -- and ScrollOffset is
+        // additionally an INPUT: a ViewModel may set it to scroll the list. Marked
+        // writable because the loader rejects TwoWay bindings to read-only targets,
+        // not because setting RealizedCount means anything: the control overwrites it
+        // on the next layout.
+        t->Prop("RealizedCount", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("IsVirtualized", VType::Bool, Value::Bool(false), AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("FirstVisibleIndex", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
+        t->Prop("ScrollOffset", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
+        // What ScrollOffset clamps to. Published rather than derived by the page from
+        // "rows x itemHeight" in markup, because the page does not know the viewport
+        // height the host actually granted.
+        t->Prop("ScrollMax", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
         add(t);
     }
     {

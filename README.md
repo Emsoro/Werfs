@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.10.1.0** · MIT · Windows 10/11 x64
+> 版本 **0.11.0.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -37,6 +37,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **静态校验** | 未知元素/属性、类型转换失败、语法错误全部在**加载期**报错，带行列号与建议 |
 | **四种绑定模式** | `OneTime` / `OneWay` / `TwoWay` / `OneWayToSource`，默认按目标属性决定；`FallbackValue`、`UpdateSourceTrigger=LostFocus` |
 | **DataTemplate** | 列表项由 WAML 描述，按项实例化 |
+| **列表虚拟化** | `ListBox` 给定有界高度时只保留视口内的行，滚动即建/毁；模型 1000 行也只持有十几个控件 |
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
 | **主题** | Light/Dark 双主题，12 个语义 token；`HostOptions::themeProperty` 让页面用一个 bool 实时切换 |
@@ -97,7 +98,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 220 个用例 |
+| `tests` | `waml_tests.exe` | 232 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -128,10 +129,10 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.10.1.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.11.0.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
-$env:WUI_VERSION_PATCH = '2'
+$env:WUI_VERSION_PATCH = '1'
 pwsh -File build.ps1 all
 ```
 
@@ -224,7 +225,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 220 个单元/集成用例 |
+| `waml_tests.exe` | 232 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -370,7 +371,23 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 | 布局（100 项列表） | ~102 µs |
 | 软件光栅 1280×800 一帧 | 0.41 ms |
 
-`ListBox` 不做虚拟化，**建议项数 ≤ 500**。
+### 列表虚拟化
+
+`ListBox` 拿到**有界高度**时（自己写了 `Height=`，或父面板给的高度有限），它会变成一个**视口**：只保留视口内的行（外加一行 overscan），滚出去的行连同它的绑定一起释放。模型 1000 行，实际控件十几个。
+
+| 场景 | 行为 |
+|---|---|
+| `Height="260" ItemHeight="26"` | 虚拟化：约 13 个行控件 |
+| 放在 `ScrollViewer` 里（高度无界） | **不虚拟化**：全部行都实例化，由外层滚动器负责滚动 |
+
+这条切换由**约束**决定，不由开关决定 —— 这也是既有页面一行都不用改的原因：所有示例的列表都在 `ScrollViewer` 里，行为与改动前完全一致。
+
+四个属性让页面能**看到**窗口在动（都是控件写给 ViewModel 的，`Mode=TwoWay`）：`RealizedCount`、`IsVirtualized`、`FirstVisibleIndex`、`ScrollOffset`（这个也是输入，ViewModel 写它即可滚动），外加只读的 `ScrollMax`。`samples/list` 第 8 节就是把这几个值直接印在页面上。
+
+两条契约值得记住：
+
+- **行高固定**。窗口化要用「第 N 行在哪」做算术，不去测量它前面的每一行；行高可变的列表不能窗口化。
+- **`ItemWidgetAt(i)` 返回空不等于项不存在**。它问的是「这一行现在实现了没有」；`ItemAt(i)` 才是模型。所以任何需要「所有行同时在场」的逻辑（例如逐行统计控件）都必须用非虚拟化路径。
 
 ---
 
@@ -532,7 +549,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **`TextBox` 有 IME，但仍无选区与剪贴板**：中文输入走 `WM_IME_*`，组字时是预览、确认后才写入值。仍未实现的是**选区**、**剪贴板**（Ctrl+C/V/X）与**鼠标点选定位光标**。见 `CODE_PLAN.md` R10。
 - **浮层只有一层**：菜单能在自己内部递归画子菜单，但「浮层里再开浮层」（例如对话框里的下拉框）不支持。
 - **关窗口不拦截**：关闭整个窗口时不检查未保存文档。单标签的提示流程已完整，批量流程见 `CODE_PLAN.md` §10c.5。
-- **不虚拟化**：见性能基线。
+- **虚拟化只做纵向、只做固定行高**：`ListBox` 在拿到有界高度时窗口化行（见性能基线）。不支持的方向与形态：横向虚拟化、行高可变、以及把窗口化行「回收复用」成不同数据 —— 滚出去的行会被释放并重新创建，而不是改绑数据。后者的代价是一次实例化，收益是不会有「复用的行还带着上一个数据的绑定」这类缺陷。
 
 这些都在路线图里，见 `CODE_PLAN.md`。
 

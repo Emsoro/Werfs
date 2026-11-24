@@ -796,6 +796,77 @@ int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
     // Keeps the two samples from drifting into one another.
     Expect(FindFirst(root, "wui/TextBox") == nullptr, "list page has no TextBox");
 
+    std::printf("\n[5] the virtualized list only holds a window of rows\n");
+    {
+        // The page has two ListBoxes now: the card list (unbounded, inside the page
+        // scroller) and the log list (Height=260, virtualized). Finding "a ListBox"
+        // would silently test whichever came first, so pick by the property that
+        // defines the behaviour being checked.
+        ListBox* virtualized = nullptr;
+        std::function<void(Widget*)> find = [&](Widget* w) {
+            if (!w || virtualized) return;
+            if (auto* box = dynamic_cast<ListBox*>(w)) {
+                if (box->Virtualized()) virtualized = box;
+            }
+            for (auto& c : w->Children()) find(c.get());
+        };
+        find(root);
+        Expect(virtualized != nullptr, "found the virtualized ListBox");
+        if (virtualized != nullptr) {
+            const size_t model = virtualized->ItemCount();
+            Expect(model == static_cast<size_t>(vm->LogCount.Get()), "the list sees every model row");
+            Expect(model == 1000, "1000 rows were seeded");
+            // The claim of the whole section: widgets follow the viewport, not the data.
+            Expect(virtualized->RealizedCount() < model / 10,
+                   "far fewer row widgets exist than model rows");
+            Expect(virtualized->RealizedCount() >= 10, "but the viewport is covered");
+            Expect(vm->LogVirtualized.Get(), "the page was told it is virtualized");
+            Expect(vm->LogRealized.Get() == static_cast<int>(virtualized->RealizedCount()),
+                   "and the published count matches the control");
+
+            // Scrolling moves the window, and the page's labels follow.
+            const size_t firstBefore = virtualized->RealizedFirst();
+            const double offsetBefore = vm->LogScroll.Get();
+            virtualized->ScrollTo(2000);
+            root->ForceLayout(Size{700, 2400});
+            Expect(virtualized->RealizedFirst() > firstBefore, "the window moved down");
+            Expect(vm->LogScroll.Get() > offsetBefore, "the scroll offset wrote back to the VM");
+            Expect(vm->LogRealized.Get() == static_cast<int>(virtualized->RealizedCount()),
+                   "the window stayed a window after scrolling");
+            // The row at the top of the window shows ITS model row: a window that
+            // slides without re-binding renders the wrong items after every scroll.
+            // The template root is a Grid, so the text lives one level down.
+            Widget* top = virtualized->ItemWidgetAt(virtualized->RealizedFirst());
+            Expect(top != nullptr, "the top row is realized");
+            if (top != nullptr) {
+                std::wstring firstCell;
+                std::function<void(Widget*)> gather = [&](Widget* w) {
+                    if (!w || !firstCell.empty()) return;
+                    const int slot = w->SlotOf("Text");
+                    if (slot >= 0) {
+                        const std::wstring v = w->Get<std::wstring>(slot);
+                        if (!v.empty()) firstCell = v;
+                    }
+                    for (auto& c : w->Children()) gather(c.get());
+                };
+                gather(top);
+                const std::wstring expected =
+                    L"#" + std::to_wstring(virtualized->RealizedFirst() + 1);
+                Expect(firstCell == expected, "and it shows its own model row, not a stale one");
+                if (firstCell != expected) {
+                    std::printf("    expected '%ls' got '%ls'\n", expected.c_str(),
+                                firstCell.c_str());
+                }
+            }
+
+            // End has to reach the last MODEL item, which is outside the window.
+            virtualized->OnKeyDown(KeyEnd);
+            root->ForceLayout(Size{700, 2400});
+            Expect(virtualized->SelectedIndex() == 999, "End selected the last model row");
+            Expect(virtualized->ItemWidgetAt(999) != nullptr, "and scrolled it into the window");
+        }
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }

@@ -241,6 +241,74 @@
       </Border>
 
 
+      <!-- ================= 8. Virtualized ListBox ================= -->
+      <!--
+        The one section on this page that is about COST rather than arrangement.
+
+        A ListBox given a bounded height (Height= here, or any finite height from a
+        parent) becomes a VIEWPORT: it keeps widgets for the rows inside it and frees
+        the rest. 1000 rows below; the counter under it is written by the control
+        through RealizedCount, so it shows how many row widgets actually exist.
+
+        Without a bounded height the same list would materialize all 1000 -- that is
+        the non-virtualized path every other list on this page uses, because each one
+        sits inside the page's ScrollViewer, which measures with unbounded height.
+      -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="8 · Virtualized ListBox — a window, not a copy" FontSize="17"
+                     FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <TextBlock Text="1000 rows, 260 pixels of viewport. Scroll it: the row widgets are created and destroyed as they enter and leave, so the cost follows the viewport, not the data. RealizedCount is written BY the control and read here — that number is the claim."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Border Background="ControlFill" CornerRadius="6" BorderBrush="CardBorder"
+                  BorderThickness="1">
+            <StackPanel Orientation="Vertical" Spacing="0">
+              <!--
+                Height is what turns virtualisation on. ItemHeight must be declared
+                too: the control computes which rows are visible from a fixed row
+                height, without measuring the rows above them.
+              -->
+              <ListBox ItemsSource="{Binding LogItems}" ItemHeight="26" Height="260"
+                       RealizedCount="{Binding LogRealized, Mode=TwoWay}"
+                       IsVirtualized="{Binding LogVirtualized, Mode=TwoWay}"
+                       FirstVisibleIndex="{Binding LogFirstVisible, Mode=TwoWay}"
+                       ScrollOffset="{Binding LogScroll, Mode=TwoWay}"
+                       ScrollMax="{Binding LogScrollMax, Mode=TwoWay}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="72,1*,auto" ColumnSpacing="8">
+                      <TextBlock Grid.Column="0" Text="{Binding Seq, StringFormat='#{0}'}"
+                                 FontSize="12" Foreground="TextSecondary"/>
+                      <TextBlock Grid.Column="1" Text="{Binding Line}" FontSize="12"
+                                 Foreground="TextPrimary"/>
+                      <TextBlock Grid.Column="2" Text="{Binding Level}" FontSize="11"
+                                 Foreground="TextSecondary"/>
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+          </Border>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Add 1000" Command="{Binding AddManyLogsCommand}"/>
+            <Button Content="Scroll +400" Command="{Binding ScrollLogsCommand}"/>
+            <Button Content="Clear" Command="{Binding ClearLogsCommand}"/>
+            <TextBlock Text="{Binding LogCount, StringFormat='{0} rows in the model'}"
+                       FontSize="12" Foreground="TextSecondary"/>
+          </StackPanel>
+
+          <TextBlock Text="{Binding LogSummary}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+
+          <TextBlock Text="The rows you can click still select, arrow keys still reach row 1000, and nothing leaks: a row that scrolls out of the window detaches its bindings before it is freed."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+
       <!-- ================= Footer ================= -->
       <TextBlock Text="ScrollViewer wraps the whole page — that is why this content can exceed the window."
                  FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap" Padding="0,4,0,16"/>

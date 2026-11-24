@@ -840,6 +840,23 @@ protected:
     bool settingIndex_ = false; // Guards the index <-> item echo.
 };
 
+// A vertical list of templated rows, with a FIXED row height.
+//
+// Virtualisation (0.11): when the list is given a bounded viewport -- an explicit
+// Height, or a parent that offers a finite height -- only the rows inside the
+// viewport (plus a small overscan) exist as widgets. Rows outside it are freed, and
+// their bindings with them, so a 10 000-item list costs the same as a 20-item one.
+//
+// Two consequences worth stating up front, because both are contract, not
+// implementation detail:
+//
+//  * Rows are fixed-height (`ItemHeight`). Windowing needs to know where row N is
+//    without measuring rows 0..N-1; a variable-height row breaks that arithmetic.
+//  * `ItemWidgetAt(i)` returns null for a row outside the window. It asks "is this
+//    row realized", not "does this item exist" -- the item exists in the model and
+//    `ItemAt(i)` still returns it. Anything that needs every row at once has to be
+//    non-virtualized (put the list inside a ScrollViewer, which offers unbounded
+//    height: the list then materializes every row and the OUTER scroller scrolls).
 class ListBox : public Selector, public IListObserver {public:
     ListBox();
     ~ListBox() override;
@@ -848,10 +865,14 @@ class ListBox : public Selector, public IListObserver {public:
     void Arrange(const Rect& finalRect) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
     Widget* HitTest(const Point& p) override;
+    bool OnPointerWheel(float deltaLines) override;
 
     void OnListChanged(const ListChange& change) override;
     void OnSlotChanged(int slot, const Value& value) override;
 
+    // Number of items in the MODEL, realized or not. Selection clamping and
+    // keyboard navigation work against this, so a virtualized list still lets you
+    // arrow to row 9 999.
     size_t ItemCount() const override;
     RefPtr ItemAt(size_t index) const override;
     void OnSelectionChanged() override;
@@ -860,20 +881,73 @@ class ListBox : public Selector, public IListObserver {public:
     void OnPointerUp(const Point& local) override;
     bool Focusable() const override { return true; }
 
-    Widget* ItemWidgetAt(size_t i) const { return i < itemWidgets_.size() ? itemWidgets_[i].get() : nullptr; }
+    // The widget for MODEL index `i`, or null when that row is not realized.
+    Widget* ItemWidgetAt(size_t i) const;
+    // Model index of a realized row, or size_t(-1) when there is no such widget.
+    size_t RealizedIndexAt(size_t i) const { return i < itemWidgets_.size() ? realizedFirst_ + i : size_t(-1); }
     void RebuildItems(ITextService* text);
+    // --- virtualisation state (read by tests, tools and the sample page) ------
+    bool Virtualized() const { return virtualized_; }
+    size_t RealizedCount() const { return itemWidgets_.size(); }
+    size_t RealizedFirst() const { return realizedFirst_; }
+    // First model index that is fully or partially visible in the viewport.
+    size_t FirstVisibleIndex() const;
+    float ScrollOffset() const { return offset_; }
+    float MaxScroll() const { return maxScroll_; }
+    float ViewportHeight() const { return viewportH_; }
+    // Clamped to [0, MaxScroll()].
+    void ScrollTo(float offset);
+    // Scrolls the minimum amount that brings `index` fully into view. Does
+    // nothing when the list is not virtualized: its viewport is then the page's,
+    // and who scrolls that is not the list's business.
+    void ScrollIntoView(int index);
+
+protected:
+    // Clips to the viewport and shifts the rows up by offset_, exactly like
+    // ScrollViewer, so the rows' own Arrange stays in unscrolled coordinates.
+    void PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) override;
+    float ScrollShiftForPointers() const override { return offset_; }
 
 private:
     void SubscribeSource();
     void UnsubscribeSource();
+    // Number of rows a single PageUp/PageDown moves: one viewport.
+    int PageStep() const;
+    // Content box (viewport) in the coordinates bounds_ currently has.
+    Rect ViewportRect() const;
+    WidgetPtr CreateItemWidget(size_t index);
+    // Makes the realized rows exactly the model range [first, last).
+    void SetWindow(size_t first, size_t last);
+    // Recomputes the window from offset_, viewportH_ and the model count.
+    void UpdateWindow();
+    void ClampScroll();
+    // Publishes the two read-only outputs (RealizedCount / Virtualized) for
+    // anything bound to them. Written as target-side writes, like CloseRequested.
+    void PublishState();
 
     ObservableListBase* list_ = nullptr;
     RefPtr listRef_;
     std::shared_ptr<DataTemplate> template_;
+    // Realized rows, aligned with model indices [realizedFirst_, ...).
     std::vector<WidgetPtr> itemWidgets_;
+    size_t realizedFirst_ = 0;
+    size_t modelCount_ = 0;
+    float itemHeight_ = 26.0f;
+    float offset_ = 0;
+    float maxScroll_ = 0;
+    float viewportH_ = 0;
+    bool virtualized_ = false;
     ITextService* text_ = nullptr;
     int slotItems_ = -1;
     int slotTemplate_ = -1;
+    int slotRealized_ = -1;
+    int slotVirtualized_ = -1;
+    int slotFirstVisible_ = -1;
+    int slotScrollOffset_ = -1;
+    int slotScrollMax_ = -1;
+    // True while PublishState writes ScrollOffset, so the write is not read back as
+    // a scroll request.
+    bool writingScrollOffset_ = false;
 };
 
 // ---------------------------------------------------------------------------

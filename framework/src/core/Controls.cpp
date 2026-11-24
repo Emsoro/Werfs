@@ -1825,6 +1825,11 @@ ListBox::ListBox() {
     slotTemplate_ = SlotOf("ItemTemplate");
     slotSelectedIndex_ = SlotOf("SelectedIndex");
     slotSelectedItem_ = SlotOf("SelectedItem");
+    slotRealized_ = SlotOf("RealizedCount");
+    slotVirtualized_ = SlotOf("IsVirtualized");
+    slotFirstVisible_ = SlotOf("FirstVisibleIndex");
+    slotScrollOffset_ = SlotOf("ScrollOffset");
+    slotScrollMax_ = SlotOf("ScrollMax");
 }
 
 ListBox::~ListBox() { UnsubscribeSource(); }
@@ -1849,20 +1854,51 @@ void ListBox::UnsubscribeSource() {
 void ListBox::OnSlotChanged(int slot, const Value& value) {
     if (slot == slotItems_) SubscribeSource();
     if (slot == slotTemplate_) RebuildItems(text_);
+    // A different row height moves every row, so the window has to be recomputed
+    // as well as re-measured.
+    if (slot == SlotOf("ItemHeight")) {
+        itemHeight_ = std::max(1.0f, Get<float>(slot));
+        ClampScroll();
+        UpdateWindow();
+        Invalidate(AffectsMeasure | AffectsRender);
+    }
+    // ScrollOffset is the one virtualisation property that is also an input: a
+    // ViewModel may scroll the list by setting it. Writing it from inside ScrollTo
+    // would otherwise echo straight back here and fight the value we just applied.
+    if (slot == slotScrollOffset_ && !writingScrollOffset_) {
+        ScrollTo(static_cast<float>(value.num));
+    }
     Selector::OnSlotChanged(slot, value);
 }
 
-size_t ListBox::ItemCount() const { return itemWidgets_.size(); }
+size_t ListBox::ItemCount() const {
+    // The MODEL count, not the realized count: a virtualized list reports 10 000
+    // items while holding twenty widgets. Reporting the widget count would make
+    // selection clamp at the end of the window, so arrowing past the bottom of the
+    // viewport would silently stop.
+    return modelCount_;
+}
 
 RefPtr ListBox::ItemAt(size_t index) const {
     if (!list_ || index >= list_->Count()) return nullptr;
     return list_->ItemAt(index);
 }
 
+Widget* ListBox::ItemWidgetAt(size_t i) const {
+    // `i` is a MODEL index, not an offset into the realized window: callers ask
+    // "row 4 000", and a virtualized list has no widget for it. Returning null is
+    // the answer -- see the contract in Controls.h.
+    if (i < realizedFirst_) return nullptr;
+    const size_t local = i - realizedFirst_;
+    return local < itemWidgets_.size() ? itemWidgets_[local].get() : nullptr;
+}
+
 void ListBox::OnSelectionChanged() {
     // Keep the visual highlight and any scroll position consistent with the
     // selection: a selection the user cannot see is indistinguishable from no
-    // selection at all.
+    // selection at all. On a virtualized list the selected row may not even be
+    // realized yet, so this is also what brings it into the window.
+    ScrollIntoView(selectedIndex_);
     Invalidate(AffectsRender);
 }
 
@@ -1882,19 +1918,36 @@ bool ListBox::OnKeyDown(int vk) {
     case KeyEnd:
         SetSelectedIndex(count - 1);
         return true;
+    case KeyPageDown:
+        SetSelectedIndex(PageStep());
+        return true;
+    case KeyPageUp:
+        SetSelectedIndex(std::max(0, selectedIndex_ - PageStep()));
+        return true;
     default:
         return Widget::OnKeyDown(vk);
     }
 }
 
+int ListBox::PageStep() const {
+    // At least 1: a viewport shorter than one row would otherwise make PageDown a
+    // no-op, which reads as "the key is broken".
+    const float usable = viewportH_ > 0 ? viewportH_ : 0.0f;
+    return std::max(1, static_cast<int>(usable / std::max(1.0f, itemHeight_)));
+}
+
 void ListBox::OnPointerDown(const Point& local) {
     // Selection happens on press, matching how lists behave everywhere else --
     // press-and-drag-off still leaves the row selected.
-    const size_t count = ItemCount();
-    for (size_t i = 0; i < count; ++i) {
-        Widget* item = ItemWidgetAt(i);
+    //
+    // `local` is already in CONTENT space: Widget::ToLocal adds back every scroll
+    // shift between the root and here, and HitTest did the same on the way down.
+    // Rows are arranged in that same space, so no further adjustment belongs here
+    // -- adding offset_ a second time would offset the click by twice the scroll.
+    for (size_t i = 0; i < itemWidgets_.size(); ++i) {
+        Widget* item = itemWidgets_[i].get();
         if (item && item->Bounds().Contains(local)) {
-            SetSelectedIndex(static_cast<int>(i));
+            SetSelectedIndex(static_cast<int>(realizedFirst_ + i));
             break;
         }
     }
@@ -1902,83 +1955,308 @@ void ListBox::OnPointerDown(const Point& local) {
 
 void ListBox::OnPointerUp(const Point&) {}
 
-void ListBox::OnListChanged(const ListChange&) { RebuildItems(text_); }
+void ListBox::OnListChanged(const ListChange& change) {
+    RebuildItems(text_);
+    // Reselecting through the model keeps SelectedIndex valid after a removal in
+    // front of it; without this the highlight would stay on whatever row now
+    // occupies the old index.
+    (void)change;
+}
 
 void ListBox::RebuildItems(ITextService* text) {
     text_ = text;
     for (auto& w : itemWidgets_) w->DetachBindings();
     itemWidgets_.clear();
     ClearChildren();
-    if (!list_) return;
-    auto tmpl = std::dynamic_pointer_cast<DataTemplate>(Get<RefPtr>(slotTemplate_));
-    template_ = tmpl;
-    for (size_t i = 0; i < list_->Count(); ++i) {
-        RefPtr item = list_->ItemAt(i);
-        WidgetPtr w;
-        if (template_ && template_->instantiate) w = template_->instantiate();
-        if (!w) {
-            auto tb = std::make_shared<TextBlock>();
-            tb->BindType(TypeRegistry::Instance().Find("wui/TextBlock"));
-            tb->SetSlotValue(tb->SlotOf("Text"), Value::Text(FormatValueText(Value::Ref(item))));
-            w = tb;
-        }
-        w->SetDataContext(item);
-        w->AttachBindings(text_);
-        itemWidgets_.push_back(w);
-        AddChild(w);
-    }
+    realizedFirst_ = 0;
+    modelCount_ = list_ ? list_->Count() : 0;
+    template_ = std::dynamic_pointer_cast<DataTemplate>(Get<RefPtr>(slotTemplate_));
+    itemHeight_ = std::max(1.0f, Get<float>(SlotOf("ItemHeight")));
+    // The window cannot be computed before there is a viewport; UpdateWindow()
+    // falls back to "realize everything" until one is known, which is what keeps
+    // a list that has never been laid out (the common case in tests) usable.
+    ClampScroll();
+    UpdateWindow();
     Invalidate(AffectsMeasure | AffectsRender);
 }
 
+WidgetPtr ListBox::CreateItemWidget(size_t index) {
+    RefPtr item = list_ ? list_->ItemAt(index) : nullptr;
+    WidgetPtr w;
+    if (template_ && template_->instantiate) w = template_->instantiate();
+    if (!w) {
+        // No template: show the item itself. A list with no template is still a
+        // list, and a blank row would be a hole rather than a fallback.
+        auto tb = std::make_shared<TextBlock>();
+        tb->BindType(TypeRegistry::Instance().Find("wui/TextBlock"));
+        tb->SetSlotValue(tb->SlotOf("Text"), Value::Text(FormatValueText(Value::Ref(item))));
+        w = tb;
+    }
+    w->SetDataContext(item);
+    w->AttachBindings(text_);
+    return w;
+}
+
+void ListBox::SetWindow(size_t first, size_t last) {
+    first = std::min(first, modelCount_);
+    last = std::min(std::max(last, first), modelCount_);
+    // Nothing to do for the overwhelmingly common case: the window did not move.
+    if (first == realizedFirst_ && last - first == itemWidgets_.size()) return;
+
+    for (auto& w : itemWidgets_) w->DetachBindings();
+    itemWidgets_.clear();
+    ClearChildren();
+    realizedFirst_ = first;
+    itemWidgets_.reserve(last - first);
+    for (size_t i = first; i < last; ++i) {
+        WidgetPtr w = CreateItemWidget(i);
+        itemWidgets_.push_back(w);
+        AddChild(w);
+    }
+    PublishState();
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+void ListBox::UpdateWindow() {
+    if (!virtualized_) {
+        // Not windowed: every row exists. Rebuild items also lands here when the
+        // viewport is unknown.
+        SetWindow(0, modelCount_);
+        return;
+    }
+    if (modelCount_ == 0) {
+        SetWindow(0, 0);
+        return;
+    }
+    constexpr size_t kOverscan = 1;
+    const float rowH = std::max(1.0f, itemHeight_);
+    const size_t firstVisible = static_cast<size_t>(offset_ / rowH);
+    const size_t visible = static_cast<size_t>((viewportH_ > 0 ? viewportH_ : rowH) / rowH) + 1;
+    size_t first = firstVisible >= kOverscan ? firstVisible - kOverscan : 0;
+    size_t last = std::min(modelCount_, firstVisible + visible + kOverscan);
+    SetWindow(first, last);
+}
+
+void ListBox::ClampScroll() {
+    const float rowH = std::max(1.0f, itemHeight_);
+    const float contentH = rowH * static_cast<float>(modelCount_);
+    maxScroll_ = std::max(0.0f, contentH - viewportH_);
+    if (offset_ > maxScroll_) offset_ = maxScroll_;
+    if (offset_ < 0) offset_ = 0;
+}
+
+void ListBox::PublishState() {
+    // Published to whoever binds them. These are diagnostics surfaces for the sample
+    // page and the tests: the control is the source of truth for "where is my window
+    // and how big is it", so it writes them, not the ViewModel.
+    auto publish = [this](int slot, const Value& v) {
+        if (slot < 0) return;
+        if (RawSlot(slot).Equals(v)) return;
+        SetSlotValue(slot, v, true);
+    };
+    publish(slotRealized_, Value::Number(static_cast<double>(itemWidgets_.size())));
+    publish(slotVirtualized_, Value::Bool(virtualized_));
+    publish(slotFirstVisible_, Value::Number(static_cast<double>(FirstVisibleIndex())));
+    publish(slotScrollMax_, Value::Number(static_cast<double>(maxScroll_)));
+    // Guarded: this write must not come back as a scroll request (see OnSlotChanged).
+    if (slotScrollOffset_ >= 0) {
+        const Value v = Value::Number(static_cast<double>(offset_));
+        if (!RawSlot(slotScrollOffset_).Equals(v)) {
+            writingScrollOffset_ = true;
+            SetSlotValue(slotScrollOffset_, v, true);
+            writingScrollOffset_ = false;
+        }
+    }
+}
+
+size_t ListBox::FirstVisibleIndex() const {
+    if (!virtualized_) return 0;
+    const float rowH = std::max(1.0f, itemHeight_);
+    const size_t first = static_cast<size_t>(offset_ / rowH);
+    return std::min(first, modelCount_);
+}
+
+void ListBox::ScrollTo(float offset) {
+    const float target = std::min(std::max(0.0f, offset), maxScroll_);
+    if (target == offset_) return;
+    offset_ = target;
+    UpdateWindow();
+    Invalidate(AffectsRender);
+}
+
+void ListBox::ScrollIntoView(int index) {
+    if (!virtualized_ || index < 0) return;
+    const float rowH = std::max(1.0f, itemHeight_);
+    const float top = rowH * static_cast<float>(index);
+    const float bottom = top + rowH;
+    float target = offset_;
+    if (top < offset_) target = top;
+    else if (bottom > offset_ + viewportH_) target = bottom - viewportH_;
+    ScrollTo(target);
+}
+
+bool ListBox::OnPointerWheel(float deltaLines) {
+    // Only a windowed list scrolls itself. A non-virtualized one has no viewport of
+    // its own (its height is its content), so the wheel belongs to the scroller
+    // around it -- bubbling up is what makes a page with a long list scroll.
+    if (!virtualized_) return Widget::OnPointerWheel(deltaLines);
+    if (maxScroll_ <= 0) return Widget::OnPointerWheel(deltaLines);
+    constexpr float kLineHeight = 48.0f;
+    ScrollTo(offset_ - deltaLines * kLineHeight);
+    return true;
+}
+
 Size ListBox::Measure(const Size& available) {
-    const float itemHeight = Get<float>(SlotOf("ItemHeight"));
-    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float marginH = Get<Thickness>(SlotOf("Margin")).H();
+    const float marginV = Get<Thickness>(SlotOf("Margin")).V();
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
-    if (itemWidgets_.empty()) RebuildItems(text_);
-    const Size inner{std::max(0.0f, available.w - margin.H() - pad.H()), available.h};
+    itemHeight_ = std::max(1.0f, Get<float>(SlotOf("ItemHeight")));
+    if (list_) modelCount_ = list_->Count();
+
+    // A bounded height means "I am the viewport": window the rows. An unbounded
+    // one (a ScrollViewer measures its child at 1e6) means "grow to fit": realize
+    // everything and let the outer scroller do the scrolling. Deriving this from
+    // the constraint rather than from a flag is what keeps existing pages working
+    // unchanged -- list inside a ScrollViewer, as every sample is, still shows
+    // every row.
+    constexpr float kUnbounded = 1.0e6f;
+    const float offeredH = std::max(0.0f, available.h - marginV - pad.V());
+    const float explicitH = Get<float>(SlotOf("Height"));
+    const bool bounded = explicitH > 0 || (available.h > 0 && available.h < kUnbounded * 0.5f);
+    const Size inner{std::max(0.0f, available.w - marginH - pad.H()),
+                     bounded ? offeredH : available.h};
+
+    if (bounded) {
+        // The viewport is what the parent offered, so there is no need to measure
+        // an unknowable number of rows: measure the representative rows that are
+        // realized (the window is refreshed from the new viewport right after).
+        viewportH_ = explicitH > 0 ? explicitH : offeredH;
+        virtualized_ = true;
+        ClampScroll();
+        UpdateWindow();
+    } else {
+        viewportH_ = 0;
+        const bool wasVirtualized = virtualized_;
+        virtualized_ = false;
+        if (wasVirtualized) UpdateWindow();
+    }
+
     float maxW = 0;
     for (auto& w : itemWidgets_) maxW = std::max(maxW, w->Measure(inner).w);
-    const float h = itemHeight * static_cast<float>(itemWidgets_.size());
-    desired_ = Size{std::max(200.0f, maxW + margin.H() + pad.H()), h + margin.V() + pad.V()};
+    if (virtualized_) {
+        // Windowed: the height the parent offered IS the viewport, and the width is
+        // the offered width rather than the widest realized row. Measuring only what
+        // is realized would otherwise make the list's width (and therefore every
+        // row's) jump as different rows scroll through the window.
+        const float h = explicitH > 0 ? explicitH : offeredH;
+        const float w = inner.w > 0 ? inner.w : maxW;
+        desired_ = Size{std::max(200.0f, w + marginH + pad.H()), h + marginV + pad.V()};
+    } else {
+        // Not windowed: report the honest content height (every row's height), not
+        // just the rows that happen to exist. The rows do all exist here, but saying
+        // "rowHeight * modelCount" is the same statement without depending on the
+        // window having been refreshed first.
+        const float h = itemHeight_ * static_cast<float>(modelCount_);
+        desired_ = Size{std::max(200.0f, maxW + marginH + pad.H()), h + marginV + pad.V()};
+    }
     ApplySizeConstraints();
+    if (virtualized_) {
+        // The viewport is the CONTENT box, so an explicit Height still leaves room
+        // for margin and padding; reading it back from desired_ keeps the two in step
+        // when ApplySizeConstraints clamped the height.
+        viewportH_ = std::max(0.0f, desired_.h - marginV - pad.V());
+        ClampScroll();
+        UpdateWindow();
+    }
+    PublishState();
     return desired_;
 }
 
 void ListBox::Arrange(const Rect& finalRect) {
     bounds_ = finalRect;
+    // An explicit Height declares the VIEWPORT. A parent is free to hand a taller
+    // slot (a Grid star row, the last child of a Page, a host that fills the
+    // window), and honouring that instead would silently turn Height="300" into
+    // "300 requested, as tall as you like" -- the window would then hold twice the
+    // rows and MaxScroll would be wrong by the difference. ScrollViewer already
+    // does exactly this, for the same reason.
+    if (virtualized_ && desired_.h > 0 && desired_.h < bounds_.h) bounds_.h = desired_.h;
+    const Rect content = ViewportRect();
+    viewportH_ = content.h;
+    ClampScroll();
+    // Refresh before arranging: the viewport height is only known now, so a list
+    // whose first layout happens here must still get the right rows.
+    UpdateWindow();
+    const float rowH = std::max(1.0f, itemHeight_);
+    for (size_t i = 0; i < itemWidgets_.size(); ++i) {
+        // Rows are laid out in unscrolled coordinates; paint and hit testing move
+        // them by offset_, the same split ScrollViewer uses.
+        const float y = content.y + rowH * static_cast<float>(realizedFirst_ + i);
+        itemWidgets_[i]->Arrange(Rect{content.x, y, content.w, rowH});
+    }
+}
+
+Rect ListBox::ViewportRect() const {
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
-    const float itemHeight = Get<float>(SlotOf("ItemHeight"));
-    const Rect content{finalRect.x + margin.l + pad.l, finalRect.y + margin.t + pad.t,
-                       std::max(0.0f, finalRect.w - margin.H() - pad.H()),
-                       std::max(0.0f, finalRect.h - margin.V() - pad.V())};
-    float cursor = content.y;
-    for (auto& w : itemWidgets_) {
-        w->Arrange(Rect{content.x, cursor, content.w, itemHeight});
-        cursor += itemHeight;
-    }
+    return Rect{bounds_.x + margin.l + pad.l, bounds_.y + margin.t + pad.t,
+                std::max(0.0f, bounds_.w - margin.H() - pad.H()),
+                std::max(0.0f, bounds_.h - margin.V() - pad.V())};
 }
 
 void ListBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
     const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
     if (bg.a > 0) ctx.FillRect(bounds_, bg);
-    ctx.PushClip(bounds_);
-    // Selection highlight goes UNDER the row content so text stays readable.
-    if (selectedIndex_ >= 0 && static_cast<size_t>(selectedIndex_) < itemWidgets_.size()) {
-        const Rect row = itemWidgets_[static_cast<size_t>(selectedIndex_)]->Bounds();
-        const Color accent = palette.colors[static_cast<int>(Token::Accent)];
-        ctx.FillRoundRect(row, 4.0f, Color{accent.r, accent.g, accent.b, 0.18f});
+    const Rect viewport = ViewportRect();
+    ctx.PushClip(viewport);
+    // Selection highlight goes UNDER the row content so text stays readable. On a
+    // virtualized list the row may have left the window, in which case there is
+    // nothing to draw -- the selection is still correct, it is simply elsewhere.
+    if (selectedIndex_ >= 0) {
+        const size_t local = static_cast<size_t>(selectedIndex_) - realizedFirst_;
+        if (local < itemWidgets_.size()) {
+            const Rect row = itemWidgets_[local]->Bounds();
+            const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+            ctx.FillRoundRect(Rect{row.x, row.y - offset_, row.w, row.h}, 4.0f,
+                              Color{accent.r, accent.g, accent.b, 0.18f});
+        }
     }
-    for (auto& w : itemWidgets_) w->PaintTree(ctx, palette);
+    ctx.PopClip();
+
+    // Rows are drawn by PaintChildrenAt (below), so that the scroll shift is
+    // applied once to the whole window and the clip is installed in one place.
+}
+
+void ListBox::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
+    const Rect viewport = ViewportRect();
+    if (viewport.w <= 0 || viewport.h <= 0) return;
+    if (maxScroll_ <= 0) {
+        // Nothing to scroll: skip the clip, which also keeps the non-virtualized
+        // path pixel-identical to what it was before virtualisation existed.
+        Widget::PaintChildrenAt(ctx, palette, shift);
+        return;
+    }
+    ctx.PushClip(viewport);
+    Widget::PaintChildrenAt(ctx, palette, Point{shift.x, shift.y - offset_});
     ctx.PopClip();
 }
 
 Widget* ListBox::HitTest(const Point& p) {
+    const Rect viewport = ViewportRect();
+    if (!viewport.Contains(p)) return nullptr;
+
+    // Rows live at content coordinates, so a point in screen space has to move
+    // DOWN by the scroll amount before descending -- exactly the inverse of what
+    // PaintChildrenAt does going up.
+    const Point inContent{p.x, p.y + offset_};
     for (auto it = itemWidgets_.rbegin(); it != itemWidgets_.rend(); ++it) {
-        if (Widget* hit = (*it)->HitTest(p)) return hit;
+        if (Widget* hit = (*it)->HitTest(inContent)) return hit;
     }
-    return bounds_.Contains(p) ? this : nullptr;
+    // Inside the viewport but between/after the rows: claim it, so a click in the
+    // empty area past the last row does not fall through to whatever is behind the
+    // list -- and so the wheel over blank space still reaches this scroller.
+    return this;
 }
 
 

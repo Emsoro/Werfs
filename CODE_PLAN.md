@@ -1,7 +1,7 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.10.0.0
-> 日期：2026-11-23
+> 版本：0.11.0.0
+> 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
 > 参考项目（**不提交**）：`WinUI-Gallery-3.0.4/`（控件设计）、`microsoft-ui-xaml-winui3-release-2.7.0/`（XAML 解析）
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.10.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、两种渲染后端、**220 个测试**全绿，并交付 **5 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming`）共用一套宿主。
+当前 0.11.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**47 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个，以及 P1 的 `ComboBox`/`Flyout`/`ToolTip`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、两种渲染后端、**232 个测试**全绿，并交付 **6 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol`）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,9 +50,10 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 220 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 232 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
+| **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
 | **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
 | **Grid 行列布局**：`ColumnDefinitions="1*,2*,auto"` + `Grid.Row/Column/RowSpan/ColumnSpan` + 间距 | ✅ | 5 个测试锁定星号分配、固定混合、跨列、间距、auto 自适应 |
 | **WrapPanel / VariableSizedWrapGrid**：换行流式 + 跨行列贴片（占用网格算法） | ✅ | 2 个测试锁定换行与跨行不重叠 |
@@ -84,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 220 个单元/集成用例 |
+| `waml_tests.exe` | 232 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -113,9 +114,9 @@ build.ps1  CMakeLists.txt
 | 软件光栅 1280×800 一帧 | ≤ 6 ms | **0.41 ms** | 通过 |
 | 快照确定性 | 逐字节一致 | **两次渲染 SHA 相同** | 通过 |
 
-**不建议**在 v0.5 提前引入 codegen（`wamlc`）或虚拟化：当前数据远未触及预算。
+**不建议**在 v0.5 提前引入 codegen（`wamlc`）：当前数据远未触及预算。
 
-**范围调整**：不虚拟化的 `ListBox` 在 ~500 项时接近交互可接受边界（100 项 288 µs，线性外推 500 项约 1.4 ms），文档需明确「≤ 500 项」上限。
+**范围调整（v0.11 已解除）**：原先「不虚拟化的 `ListBox` 在 ~500 项时接近交互可接受边界（100 项 288 µs，线性外推 500 项约 1.4 ms），文档需明确「≤ 500 项」上限」。0.11 实现了纵向、固定行高的窗口化（§7.29），有界高度的列表只实例化视口内的行，因此这个上限不再存在；无界高度的列表（放在 `ScrollViewer` 里）仍按全量实例化，行为与之前一致。
 
 ## 5. 逐条假设
 
@@ -363,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.10.0.0         [ ok ]
+file version: 0.11.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -759,9 +760,38 @@ if (editing_.empty()) editing_ = Get<std::wstring>(SlotOf("Text"));
 - **新功能会点亮旧代码的暗角**。IME 之前没有任何路径会在"缓冲非空且槽位被外部改过"时提交，所以这个分支从没被执行过；IME 带来了这种时序。
 - 断言要落在**最终值**上。`[I2]` 若只检查"长度变长了"就会通过；检查 `after == before + 确认字符` 才抓住了它。
 
+## 7.29 列表虚拟化：三个「看起来对」的错法
+
+v0.11 给 `ListBox` 加了纵向、固定行高的窗口化。实现过程中撞到的三个问题都不是崩溃，而是**数字对、画面也对、就是含义不对**，属于本项目最反复出现的那一类。
+
+**7.29.1 视口高度被父面板改写，`Height` 形同虚设**
+
+第一版 `Arrange` 直接采用 `finalRect` 的高度。放进 `ScrollViewer` 的 `StackPanel` 里时，父面板给的是它算出来的槽位高度，于是 `Height="260"` 得到了一个更高的矩形：`MaxScroll` 少算了差值，窗口多实现了行，而页面上一切正常。测试先抓到的是 `MaxScroll` 差 500 而不是「少了 500 高度」——**数字错得很小，像是精度问题**。
+
+修复：`Arrange` 里，虚拟化状态下显式 `Height` 就是视口高度，父面板给得更高也不采纳（`ScrollViewer` 早就是这么做的，理由相同）。教训是**「我声明的高度」与「父面板给我的高度」是两件事**，前者是意图，后者是空间，只有明确要求拉伸时才相等。
+
+**7.29.2 `ItemWidgetAt(i)` 的 `i` 是什么**
+
+原实现里它直接索引 `itemWidgets_`，窗口化之后这个向量的 0 号是「第 realizedFirst_ 行」。于是 `ItemWidgetAt(1)` 在滚到第 500 行时会返回第 501 行，而所有既有调用方（`interact` 的断言、`Tests` 的列表用例）写的都是**模型下标**。改用模型下标换算，窗口外的返回空。这个改动让「返回空」第一次成为合法答案，所以调用方必须知道自己问的是什么——见 `Controls.h` 的契约注释。
+
+**7.29.3 摘要标签读到了过期的另一半**
+
+`samples/list` 第 8 节把控件发布的四个值印在页面上。第一版 ViewModel 只订阅了 `RealizedCount` 与 `FirstVisibleIndex`，忘了 `IsVirtualized`，截图于是显示：
+
+```
+model = 1000 rows · realized widgets = 12 · virtualized = no (no bounded height)
+```
+
+两句话来自同一个控件，互相矛盾。原因很直接：`RealizedCount` 到达时刷新标签，那时 `IsVirtualized` 还是旧值；等 `IsVirtualized` 自己到达时没有人再刷新。**这比不显示更糟——它看起来像证据。**
+
+修复是把 `IsVirtualized` 也加进订阅列表。真正的教训是：**只要一个标签由多个来源拼成，就必须订阅全部来源**，而不是订阅「看起来会变的那几个」。
+
+**验证**：8 个单元用例（覆盖窗口、滚动对齐、选中跨窗口、End 到模型末项、滚动后点击、绑定释放、无界高度不虚拟化、四属性发布）+ `interact` 的 14 条断言 + 双主题快照确定性。
+
+---
+
 # 第四部分：目标架构
 ## 8. 分层
-
 ```
 ┌─────────────────────────────────────────────────┐
 │ samples/   每个示例自带 WAML + ViewModel + 资源      │
@@ -862,7 +892,7 @@ samples/
 
 ### 10a.4 `samples/list/` — 集合与模板
 
-**目的**：列表是真实应用最常见的结构，也是 §7.1 缺陷的现场。
+**目的**：列表是真实应用最常见的结构，也是 §7.1 缺陷的现场。v0.11 起它同时是**虚拟化的验收现场**（§7.29）。
 
 | 示例 | 内容 | 教什么 |
 |---|---|---|
@@ -870,8 +900,10 @@ samples/
 | 每项独立 | 每行显示**自己的** Index 与 Title | 数据上下文隔离（回归 §7.1） |
 | 动态增删 | 按钮 Add/Remove 改 `ObservableList` | 集合变更通知 |
 | 空列表 | 0 项时的表现 | 边界情况 |
+| **虚拟化列表**（第 8 节） | 1000 行装进 `Height="260"` 的 `ListBox`，页面上直接显示 `RealizedCount` | 窗口化：控件数跟着**视口**走，不跟着数据走 |
+| 静态面板对照 | 非虚拟化列表（在 `ScrollViewer` 里）与虚拟化列表同页 | 两条路径的差别是**约束**，不是开关 |
 
-**验收**：每行内容互不相同（直接对应曾经「所有行渲染同一份数据」的缺陷）。
+**验收**：每行内容互不相同（直接对应曾经「所有行渲染同一份数据」的缺陷）；虚拟化列表在 1000 行模型下只持有十几个行控件，且滚动后首行仍显示它自己的模型行（`interact` 的 14 条断言）。
 
 ### 10a.5 `samples/theming/` — 主题与 token
 
@@ -962,7 +994,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 |---|---|---|---|
 | **P0 必做** | **23**（✅ 全部完成） | 日常界面几乎必用、且**不需要新子系统** | ✅ |
 | P1 常用增强 | 16（**3 已完成**） | 共同卡在「浮层/弹出」这一层 | ✅ `ComboBox` `Flyout` `ToolTip`；其余浮层完成后解锁 |
-| P2 长尾 | 51 | 虚拟化集合、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
+| P2 长尾 | 51 | 其余虚拟化集合形态、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
 
 **P0 清单**（23 个全部 ✅ 完成）：
 
@@ -1015,7 +1047,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 > **P1 已部分提前**：`MenuBar`、`MenuFlyout`、`CommandBar` 及其按钮，加上 P2 里的 `TabView`，已合并进 **§10c** 单独规划——真实编辑器界面离不开它们，且共享同一套浮层与单选模型。分四批交付（§10c.4），第一批 `Visibility` 最便宜、可立刻做。
 
-**P2 — 按需，不承诺（51 个）**：虚拟化集合（`ListView`/`GridView`/`TreeView`/`ItemsRepeater`/`FlipView`/`ItemsView`/`TableView`/`PullToRefresh`）、日期时间（4 个）、动画过渡（7 个）、导航容器（`NavigationView`/`TabView`/`Pivot`/`SelectorBar`）、分割按钮（3 个）、`ColorPicker`、`RichEditBox`、滚动增强（`PipsPager`/`PagerControl`/`SemanticZoom`/`AnnotatedScrollBar`/`ScrollView`）、画刷（`AcrylicBrush`/`RadialGradientBrush`）、`ThemeShadow`、`IconElement`/`AnimatedIcon`、`Compact Sizing`、`Clipboard`、`Chart`、`InkCanvas`、`AnimatedVisualPlayer`、`TitleBar`、`Window`、`LayoutPanel`、命令对象（`StandardUICommand`/`XamlUICommand`）
+**P2 — 按需，不承诺（51 个）**：虚拟化集合的其余形态（`ListView`/`GridView`/`TreeView`/`ItemsRepeater`/`FlipView`/`ItemsView`/`TableView`/`PullToRefresh` —— `ListBox` 的纵向窗口化已在 v0.11 落地，见 §7.29）、日期时间（4 个）、动画过渡（7 个）、导航容器（`NavigationView`/`TabView`/`Pivot`/`SelectorBar`）、分割按钮（3 个）、`ColorPicker`、`RichEditBox`、滚动增强（`PipsPager`/`PagerControl`/`SemanticZoom`/`AnnotatedScrollBar`/`ScrollView`）、画刷（`AcrylicBrush`/`RadialGradientBrush`）、`ThemeShadow`、`IconElement`/`AnimatedIcon`、`Compact Sizing`、`Clipboard`、`Chart`、`InkCanvas`、`AnimatedVisualPlayer`、`TitleBar`、`Window`、`LayoutPanel`、命令对象（`StandardUICommand`/`XamlUICommand`）
 
 **为什么这样切**：P0 覆盖「写一个真实窗口界面」的绝大部分，且除 `RelativePanel`/`Image`/画线/组互斥外都是低风险增量。P1 被浮层统一卡住，集中攻克一次即可解锁一批。P2 里的虚拟化与动画是另一个量级（见 R4、§10b.2），混进 P0 会拖垮进度。
 
@@ -1681,7 +1713,7 @@ headless 文本服务让等宽族名用 **0.6 em** 而不是 0.55 em 的字宽�
 
 **`ComboBox`：字符串列表，不是模板集合**
 
-一项就是一行字符串，所以 `Items` 是 `;` 分隔的文本。为什么不是逗号：真实数据里就有「Paris, France」，一个会撞上数据的分隔符比一个不好看的分隔符糟糕得多。真正的项模板需要虚拟化集合子系统（P2），在这里假装支持只会得到一个"模板被静默忽略"的控件。
+一项就是一行字符串，所以 `Items` 是 `;` 分隔的文本。为什么不是逗号：真实数据里就有「Paris, France」，一个会撞上数据的分隔符比一个不好看的分隔符糟糕得多。真正的项模板（`ItemsSource` + `DataTemplate`）需要的是模板集合而非字段集合——`ListBox` 在 v0.11 已经有了窗口化版本（§7.29），但 `ComboBox` 的弹出列表还没接上去，在这里假装支持只会得到一个"模板被静默忽略"的控件。
 
 `SelectedText` 从 `SelectedIndex` **派生**并写回槽位，所以绑哪个都不会矛盾。方向键在收起状态下直接改选中项（Windows 惯例）——必须先展开才能改值的下拉框会被认为反应迟钝。
 
@@ -1938,7 +1970,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 | R1 | 无 Grid 导致版面僵硬 | 卡片布局难看 | 迭代 2 优先做 |
 | R2 | 无样式系统导致 WAML 冗长 | 示例可读性差 | 迭代 2 做 Setter |
 | R3 | ListBox 无选中 | 导航只能按钮 | 迭代 3.3 |
-| R4 | 不虚拟化，列表 >500 项卡顿 | 大规模示例受限 | 文档明确上限；v1.1 虚拟化 |
+| R4 | ~~不虚拟化，列表 >500 项卡顿~~ **已关闭** | 大规模示例受限 | **v0.11 已实现纵向固定行高窗口化**（§7.29）：有界高度的 `ListBox` 只保留视口内的行 |
 | R5 | 页面切换绑定泄漏 | 内存增长 | 切换时强制 detach + 测试 |
 | R6 | 代码片段与真实 WAML 漂移 | 文档失信 | 迭代 4.1 自动提取 |
 | R8 | 每控件 7.7 行注册样板 | 30 控件时约 230 行重复 | v0.6 引入聚合式 `PropList` |
@@ -1966,7 +1998,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 |---|---|---|
 | IME 组字（自绘 TextBox） | **✅ 已实现** | 走 `WM_IME_*`：组字为预览、确认才写值、取消无需撤销；候选窗随光标 |
 | 选区、剪贴板、鼠标点选定位 | **未实现** | 仍需方向键定位；无 Ctrl+C/V/X |
-| 虚拟化列表 | 未实现 | 计划 v1.1 |
+| 虚拟化列表 | **✅ 已实现（纵向 + 固定行高）** | 见 §7.29。横向、可变行高、行复用均未做 |
 | `VisualState` / `FontFamily` / 等宽字体 | 未实现 | 样式、资源字典与 `Trigger` 已落地（§13.1–13.3）；`VisualState` 需要状态机与过渡，与动画一起做 |
 | 无障碍（UIA Provider） | 未实现 | 仅保留 `AutomationRole` 属性位 |
 | 原生孤岛（`NativeHost`） | 未实现 | 类型注册表预留了命名空间 |
@@ -2013,7 +2045,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（220 用例）
+## A. 测试清单（232 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
@@ -2025,6 +2057,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 | instantiate | 3 | 树结构、默认值、绑定附加、DataContext 继承 |
 | binding | 20 | 4 模式、默认模式、StringFormat、类型转换、嵌套路径、缺失路径、**`FallbackValue` 应用与恢复**、LostFocus 延迟与**失焦提交**、回声抑制、重绑、生命周期、诊断 sink、失败恢复 |
 | list | 3 | 模板实例化、数据上下文隔离（回归）、订阅泄漏 |
+| virtual | 8 | 有界高度只实现视口内的行、滚动后窗口移动且行数据对齐、选中跨窗口进出、End 到模型末项并滚入视口、滚动后点击命中正确行、行滚出窗口释放绑定、无界高度保持全量实例化、`RealizedCount`/`IsVirtualized` 发布到 ViewModel |
 | layout | 6 | 垂直/水平排列、**Border padding（含边框占位）**、**边框单边厚度**、**Page 多子节点堆叠与弹性填充**、失效冒泡、显式尺寸 |
 | grid | 5 | 星号分配、固定+星号混合、跨列、间距、auto 列自适应 |
 | wrappanel / viewbox / expander | 3 | 换行、等比缩放、两态高度 |

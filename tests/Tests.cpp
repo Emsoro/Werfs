@@ -939,6 +939,259 @@ TEST("list: item binding updates do not leak") {
 }
 
 // ===========================================================================
+// List virtualisation
+//
+// The contract being tested: a bounded list realizes a WINDOW of rows instead of
+// all of them, the window follows the scroll offset, and everything that used to
+// work against "all rows exist" (selection, keyboard, hits, the model count) still
+// works. A virtualized list that reports the wrong count is worse than a slow one:
+// selection and keyboard navigation silently stop at the end of the window.
+// ===========================================================================
+namespace {
+
+// One row of a fixed height plus a template, so every assertion can point at a
+// concrete widget rather than at a number that happens to be right.
+struct VirtualListFixture {
+    std::unique_ptr<CompiledDocument> doc;
+    WidgetPtr root;
+    std::shared_ptr<ListVm> vm;
+    std::shared_ptr<wui::ObservableList<ListItem>> list;
+    ListBox* lb = nullptr;
+
+    explicit VirtualListFixture(int itemCount, const char* listAttrs = "") {
+        InstallText();
+        DiagnosticBag bag;
+        const std::string src = std::string("<ListBox ItemsSource=\"{Binding Items}\"") +
+                                listAttrs + ">" +
+                                "<ListBox.ItemTemplate><DataTemplate>"
+                                "<TextBlock Text=\"{Binding Title}\"/>"
+                                "</DataTemplate></ListBox.ItemTemplate></ListBox>";
+        doc = Compile(src, bag);
+        if (!doc) return;
+        root = doc->Instantiate(&g_fakeText);
+        vm = std::make_shared<ListVm>();
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        list = std::make_shared<wui::ObservableList<ListItem>>();
+        for (int i = 0; i < itemCount; ++i) list->Add(std::make_shared<ListItem>(i));
+        vm->Items.Set(std::static_pointer_cast<RefObject>(list));
+        lb = dynamic_cast<ListBox*>(root.get());
+    }
+    // Lays out into a viewport of `height`, i.e. bounds the list.
+    void Layout(float height) {
+        if (root) root->ForceLayout(Size{400, height});
+    }
+    std::wstring RowText(size_t modelIndex) const {
+        Widget* w = lb ? lb->ItemWidgetAt(modelIndex) : nullptr;
+        if (!w) return L"<not realized>";
+        const int slot = w->SlotOf("Text");
+        return slot >= 0 ? w->Get<std::wstring>(slot) : std::wstring();
+    }
+};
+
+} // namespace
+
+TEST("virtual: a bounded list realizes only the visible window") {
+    VirtualListFixture f(1000, " Height=\"300\" ItemHeight=\"20\"");
+    CHECK(f.lb != nullptr);
+    if (!f.lb) return;
+    f.Layout(800);
+
+    CHECK(f.lb->Virtualized());
+    CHECK_EQ(f.lb->ItemCount(), size_t(1000));      // the MODEL count
+    // 300px / 20px = 15 visible rows, plus a little overscan. Far fewer than 1000,
+    // but enough to cover the viewport.
+    CHECK(f.lb->RealizedCount() < 30);
+    CHECK(f.lb->RealizedCount() >= 15);
+    // The rows that exist are the first ones, and they carry their own data.
+    CHECK_EQ(f.lb->RealizedFirst(), size_t(0));
+    CHECK(f.RowText(0) == L"Item 0");
+    CHECK(f.RowText(1) == L"Item 1");
+    // A row past the window has no widget -- that is the answer, not a failure.
+    CHECK(f.lb->ItemWidgetAt(999) == nullptr);
+}
+
+TEST("virtual: scrolling moves the window and keeps row data aligned") {
+    VirtualListFixture f(1000, " Height=\"300\" ItemHeight=\"20\"");
+    CHECK(f.lb != nullptr);
+    if (!f.lb) return;
+    f.Layout(800);
+    const size_t before = f.lb->RealizedFirst();
+    const size_t realizedBefore = f.lb->RealizedCount();
+
+    // 400px in = 20 rows down, well past the overscan.
+    const float contentH = 20.0f * 1000.0f;
+    CHECK_NEAR(f.lb->MaxScroll(), contentH - 300.0f, 1.0f);
+    f.lb->ScrollTo(400);
+    f.Layout(800);
+
+    CHECK(f.lb->RealizedFirst() > before);
+    // Still a window, not the whole list: this is the property that matters.
+    CHECK(f.lb->RealizedCount() <= realizedBefore + 2);
+    // The first realized row must show the model row it claims to: a window that
+    // slides but keeps stale data renders the wrong items after every scroll.
+    const size_t first = f.lb->RealizedFirst();
+    CHECK(f.RowText(first) == L"Item " + std::to_wstring(first));
+    CHECK(f.RowText(first + 1) == L"Item " + std::to_wstring(first + 1));
+}
+
+TEST("virtual: selection survives leaving and re-entering the window") {
+    VirtualListFixture f(1000, " Height=\"300\" ItemHeight=\"20\"");
+    CHECK(f.lb != nullptr);
+    if (!f.lb) return;
+    f.Layout(800);
+
+    // Select row 2, scroll away until it is gone, then come back.
+    f.lb->SetSelectedIndex(2);
+    f.lb->ScrollTo(1000);
+    f.Layout(800);
+    CHECK(f.lb->SelectedIndex() == 2);
+    CHECK(f.lb->ItemWidgetAt(2) == nullptr);   // not realized, still selected
+    f.lb->ScrollTo(0);
+    f.Layout(800);
+    CHECK(f.RowText(2) == L"Item 2");          // re-realized with the right data
+    CHECK(f.lb->SelectedIndex() == 2);         // and the highlight came back with it
+}
+
+TEST("virtual: End selects the last model item and scrolls it into view") {
+    VirtualListFixture f(1000, " Height=\"300\" ItemHeight=\"20\"");
+    CHECK(f.lb != nullptr);
+    if (!f.lb) return;
+    f.Layout(800);
+    f.lb->OnKeyDown(KeyEnd);
+    f.Layout(800);
+    // Keyboard navigation must run against the MODEL count. Clamping to the
+    // realized window would make End select row ~16 of 1000.
+    CHECK(f.lb->SelectedIndex() == 999);
+    CHECK(f.lb->ScrollOffset() > 0.0f);
+    CHECK(f.RowText(999) == L"Item 999");
+    // PageUp is one viewport, and never zero.
+    f.lb->OnKeyDown(KeyPageUp);
+    const int afterPageUp = f.lb->SelectedIndex();
+    CHECK(afterPageUp < 999);
+    CHECK(afterPageUp > 999 - 100);
+}
+
+TEST("virtual: a click selects the row under the pointer after scrolling") {
+    VirtualListFixture f(1000, " Height=\"300\" ItemHeight=\"20\"");
+    CHECK(f.lb != nullptr);
+    if (!f.lb) return;
+    f.Layout(800);
+    f.lb->ScrollTo(200);
+    f.Layout(800);
+    // Walk the hit-test path the host uses, then press where row N actually is on
+    // screen. Clicking by model bounds would test arithmetic, not the mapping.
+    const size_t first = f.lb->RealizedFirst();
+    CHECK(first > 0);
+    Widget* row = f.lb->ItemWidgetAt(first);
+    CHECK(row != nullptr);
+    if (!row) return;
+    const Rect b = row->Bounds();
+    const Point screen{b.x + 4.0f, b.y - f.lb->ScrollOffset() + b.h * 0.5f};
+    // The point must be inside the viewport: the whole point of this test is that
+    // a visible row is clickable at its visible position. The first realized row is
+    // the overscan row ABOVE the viewport, so aim at the second one.
+    const Point visibleScreen{screen.x, screen.y + 20.0f};
+    CHECK(visibleScreen.y > 0.0f);
+    Widget* hit = f.root->HitTest(visibleScreen);
+    CHECK(hit != nullptr);
+    f.lb->OnPointerDown(f.lb->ToLocal(visibleScreen));
+    CHECK(f.lb->SelectedIndex() == static_cast<int>(first + 1));
+}
+
+TEST("virtual: rows do not keep bindings once they leave the window") {
+    VirtualListFixture f(1000, " Height=\"300\" ItemHeight=\"20\"");
+    CHECK(f.lb != nullptr);
+    if (!f.lb) return;
+    f.Layout(800);
+    // Row 0 is realized right now, so it is subscribed to its item.
+    auto item0 = f.list->At(0);
+    CHECK(item0->Title.ObserverCount() > 0);
+    f.lb->ScrollTo(2000);
+    f.Layout(800);
+    // Scrolled far away: the widget is gone and so is its subscription. A window
+    // that frees widgets but not their bindings leaks one observer per row.
+    CHECK(f.lb->ItemWidgetAt(0) == nullptr);
+    CHECK_EQ(item0->Title.ObserverCount(), size_t(0));
+}
+
+TEST("virtual: unbounded height keeps every row (list inside a page scroller)") {
+    // The samples all nest their list inside a ScrollViewer, which measures with an
+    // unbounded height. That must stay non-virtualized: the OUTER scroller owns the
+    // scrolling, so a nested list with its own offset would have two of them.
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><ScrollViewer><ListBox ItemsSource=\"{Binding Items}\" ItemHeight=\"20\">"
+        "<ListBox.ItemTemplate><DataTemplate><TextBlock Text=\"{Binding Title}\"/>"
+        "</DataTemplate></ListBox.ItemTemplate></ListBox></ScrollViewer></Page>",
+        bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    auto vm = std::make_shared<ListVm>();
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto list = std::make_shared<wui::ObservableList<ListItem>>();
+    for (int i = 0; i < 200; ++i) list->Add(std::make_shared<ListItem>(i));
+    vm->Items.Set(std::static_pointer_cast<RefObject>(list));
+    root->ForceLayout(Size{400, 600});
+    auto* lb = dynamic_cast<ListBox*>(root->Children()[0]->Children()[0].get());
+    CHECK(lb != nullptr);
+    if (!lb) return;
+    CHECK(!lb->Virtualized());
+    CHECK_EQ(lb->ItemCount(), size_t(200));
+    CHECK_EQ(lb->RealizedCount(), size_t(200));
+    // The page scroller, not the list, reports the overflow.
+    auto* sv = dynamic_cast<ScrollViewer*>(root->Children()[0].get());
+    CHECK(sv != nullptr);
+    if (sv) CHECK(sv->MaxScroll() > 0.0f);
+}
+
+TEST("virtual: RealizedCount and IsVirtualized are published to the ViewModel") {
+    // The sample page binds these to show the windowing happening; if the control
+    // never writes them the page silently displays zeros under a heading that
+    // claims otherwise.
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<ListBox ItemsSource=\"{Binding Items}\" Height=\"200\" ItemHeight=\"20\""
+        " RealizedCount=\"{Binding Realized, Mode=TwoWay}\""
+        " IsVirtualized=\"{Binding IsVirt, Mode=TwoWay}\">"
+        "<ListBox.ItemTemplate><DataTemplate><TextBlock Text=\"{Binding Title}\"/>"
+        "</DataTemplate></ListBox.ItemTemplate></ListBox>",
+        bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    class ProbeVm final : public ObservableObject {
+    public:
+        ProbeVm() {
+            Make("Items", Items);
+            Make("Realized", Realized);
+            Make("IsVirt", IsVirt);
+            Items.Set(std::static_pointer_cast<RefObject>(
+                std::make_shared<wui::ObservableList<ListItem>>()));
+        }
+        ObservableProperty<RefPtr> Items{"Items"};
+        ObservableProperty<int> Realized{"Realized", -1};
+        ObservableProperty<bool> IsVirt{"IsVirt", false};
+    };
+    auto vm = std::make_shared<ProbeVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    auto list = std::make_shared<wui::ObservableList<ListItem>>();
+    for (int i = 0; i < 500; ++i) list->Add(std::make_shared<ListItem>(i));
+    vm->Items.Set(std::static_pointer_cast<RefObject>(list));
+    root->ForceLayout(Size{400, 600});
+    auto* lb = dynamic_cast<ListBox*>(root.get());
+    CHECK(lb != nullptr);
+    if (!lb) return;
+    CHECK(vm->IsVirt.Get());
+    CHECK(vm->Realized.Get() > 0);
+    CHECK(vm->Realized.Get() < 50);
+    CHECK(vm->Realized.Get() == static_cast<int>(lb->RealizedCount()));
+}
+
+// ===========================================================================
 // Layout
 // ===========================================================================
 TEST("layout: vertical stack arranges sequentially") {
