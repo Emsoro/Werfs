@@ -745,10 +745,15 @@ int RunInternal(HINSTANCE instance, const HostOptions& options, std::shared_ptr<
         if (selfTest) std::printf("system dpi=%u, scale=%.2f\n", dpi, g.scale);
     }
 
-    // Markup delivery: an explicit path wins, then the build configuration.
+    // Markup delivery: an explicit option wins, then a command-line path,
+    // then the build configuration. The Python sample needs the first branch:
+    // in `python main.py` the command line's first non-switch argument is
+    // main.py itself, not a markup file.
     const std::string explicitPath = ExplicitPathArgument();
     WamlLoadResult loaded;
-    if (!explicitPath.empty()) {
+    if (!options.markupPath.empty()) {
+        loaded = LoadWamlFile(options.markupPath);
+    } else if (!explicitPath.empty()) {
         const std::string resolved = ResolveWamlPath(explicitPath);
         loaded = LoadWamlFile(resolved.empty() ? explicitPath : resolved);
     } else {
@@ -894,6 +899,25 @@ int RunSample(HINSTANCE instance, const HostOptions& options,
 
 int RunSample(HINSTANCE instance, const HostOptions& options, std::shared_ptr<RefObject> vm) {
     return RunInternal(instance, options, std::move(vm));
+}
+
+void Shutdown() {
+    // Order matters: bindings in the tree hold raw pointers into the ViewModel's
+    // property sources, so the tree goes first.
+    g.root.reset();
+    g_accelerators.clear();
+    g.vm.reset();
+    g.hovered = nullptr;
+    g.pressed = nullptr;
+    g.focused = nullptr;
+    g.overlayCapture = false;
+    g.target.Reset();
+    g.d2d.Reset();
+    g.dwrite.Reset();
+    g.brushes.clear();
+    g.formats.clear();
+    g.text = nullptr;
+    g.hwnd = nullptr;
 }
 
 } // namespace sample

@@ -22,6 +22,10 @@
 *.so
 *.dylib
 *.dll
+*.pyd
+
+# Python bytecode
+__pycache__/
 
 # Fortran module files
 *.mod

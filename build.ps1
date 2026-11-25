@@ -72,7 +72,8 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
-                 'basic', 'list', 'binding', 'theming', 'usercontrol', 'editor')]
+                 'basic', 'list', 'binding', 'theming', 'usercontrol', 'editor',
+                 'basic_py')]
     [string]$Target = 'samples',
 
     [switch]$Clean,
@@ -184,7 +185,7 @@ function Get-VersionPart {
 }
 
 $VersionMajor = Get-VersionPart 'MAJOR' '0'
-$VersionMinor = Get-VersionPart 'MINOR' '11'
+$VersionMinor = Get-VersionPart 'MINOR' '13'
 $VersionPatch = Get-VersionPart 'PATCH' '0'
 $VersionBuild = Get-VersionPart 'BUILD' '0'
 $VersionString = "$VersionMajor.$VersionMinor.$VersionPatch.$VersionBuild"
@@ -458,6 +459,20 @@ function Build-Probe {
     return $exe
 }
 
+# basic_py is deliberately a CMake-only sample: it produces a stable-ABI
+# extension plus a system-Python launcher, neither of which fits the C++
+# $SampleRegistry (which expects a wWinMain and an RCDATA payload).
+function Build-PythonSample {
+    param([string]$Config = 'Release')
+    $cmakeBuild = Join-Path $OutDir 'basic_py\cmake'
+    New-Item -ItemType Directory -Force -Path $cmakeBuild | Out-Null
+    $pyOut = Join-Path $OutDir 'basic_py'
+    Invoke-Tool 'cmake' @('-S', $ProjectDir, '-B', $cmakeBuild, "-DWUI_PY_OUT=$pyOut")
+    Invoke-Tool 'cmake' @('--build', $cmakeBuild, '--config', $Config,
+                          '--target', '_wui', 'waml_basic_py')
+    Write-Host "  basic_py -> $pyOut" -ForegroundColor DarkGray
+}
+
 function Build-Sample {
     param(
         [Parameter(Mandatory)][string]$ExeName,  # waml_list
@@ -594,6 +609,7 @@ try {
         { $_ -in ($SampleRegistry | ForEach-Object { $_.Name }) } {
             Build-RegisteredSample -Entry (Get-SampleEntry $Target) -Config 'release' | Out-Null
         }
+        'basic_py' { Build-PythonSample -Config 'Release' }
         'tests'   { Build-Resource; Build-Tests }
         'bench'   { Build-Resource; Build-Bench }
         'snapshot' { Build-Resource; Build-Snapshot }

@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.11.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.13.0.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -96,6 +96,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `theming` | `waml_theming.exe` | 只构主题示例（token + 实时 Light/Dark） |
 | `usercontrol` | `waml_usercontrol.exe` | 只构组件作用域示例（一份模板、三份数据源） |
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
+| `basic_py` | `_wui.pyd` `waml_basic_py.exe` | Python 驱动 MVVM 示例（经 CMake 构建，详见下文） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
 | `tests` | `waml_tests.exe` | 232 个用例 |
@@ -129,7 +130,7 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.11.0.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.13.0.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
 $env:WUI_VERSION_PATCH = '1'
@@ -150,6 +151,33 @@ pwsh -File build.ps1 all
 现在参数以数组传递，不再经过任何命令行解析。
 
 CMake 仍然可用（`CMakeLists.txt` 已同步），适合常规开发机；本仓库以 `build.ps1` 为主路径。
+
+### Python 驱动的示例：`basic_py`
+
+ViewModel 用 Python 写，WAML 与渲染引擎仍是 C++。原生扩展 `_wui.pyd` 把 Python 对象的属性注册成 `IPropertySource`、把方法注册成 `ICommand`；exe 只是嵌入式 CPython 启动器。**不携带 Python 运行时**：两个产物都链接 `python3.lib`（稳定 ABI 导入库），运行时从系统安装的 CPython 加载 `python3.dll`，要求机器上装有 Python 3.8+（开发头文件/导入库）。
+
+两种运行方式共用同一份 `main.py`、`wui.py`、`BasicPy.waml` 和 `_wui.pyd`：
+
+```powershell
+pwsh -File build.ps1 basic_py                  # 或直接用 CMake：cmake --build <build> --config Release --target waml_basic_py
+
+cd samples\basic_py
+python main.py                                  # 系统 Python 直接跑
+python main.py --selftest                       # 无窗口自检（结果写入 selftest.log）
+
+cd ..\..\build\basic_py
+.\waml_basic_py.exe                             # GUI 启动器，同样跑 main.py
+.\waml_basic_py.exe --selftest                  # Python 错误写入 python_error.log
+```
+
+Python 侧约定（见 `samples/basic_py/wui.py`）：
+
+- ViewModel 继承 `wui.ObservableObject`，在 `_wui_props` 里声明属性类型：`text` / `int` / `float` / `bool` / `command`；
+- 属性赋值经 `__setattr__` → native `_notify` → binding，OneWay 标签会跟随；
+- View 的写入（TextBox / CheckBox / Slider）回写 Python 属性后调用 `on_changed(name, value)`，派生文本留在 ViewModel 里；
+- callable 属性映射为按钮的 `Command`，可选 `fn.can_execute()` 决定 `CanExecute()`。
+
+`msvcrt`/`pybind11` 均未使用：桥接只依赖 CPython 稳定 ABI（`Py_LIMITED_API=0x03080000`），因此一个 `_wui.pyd` 可被任意 3.8+ 的 CPython 加载。该示例不进入 `$SampleRegistry`——它产出的不是带 `wWinMain`/RCDATA 的普通 C++ sample。
 
 ---
 
@@ -174,6 +202,7 @@ samples/                ← 示例，单向依赖框架
     theming/               **已实现** Light/Dark 实时切换与 token 面板
     usercontrol/           （规划）父子组件、两个独立数据源   ← 需先补 DataContext 可绑定
     animation/             （规划）隐式过渡与缓动            ← 需先补帧时钟
+    basic_py/              **已实现** Python ViewModel 驱动 UI（main.py / wui.py / native 桥接 / exe 启动器）
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
 ```
@@ -197,6 +226,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 5 | `theming` | **主题**：12 个 token 面板、Light/Dark 实时切换、字面量对照 | **已实现** |
 | 6 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
 | 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
+| 8 | `basic_py` | **Python 驱动 MVVM**：ViewModel 用 Python 写，C++ 只做 UI 引擎 | **已实现**（经 CMake 构建） |
 
 六个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动），`usercontrol` 是**数据源分层**（一份模板三份数据，卡片内嵌的徽章读卡片而不是页面）。
 
