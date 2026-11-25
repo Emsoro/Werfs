@@ -107,8 +107,9 @@ std::unique_ptr<OverlayLayer> MakeDialogLayer(std::wstring title, std::wstring m
 // clipped by any ScrollViewer above it.
 // ---------------------------------------------------------------------------
 struct FlyoutRequest {
-    // The content to host. Ownership transfers to the layer.
-    WidgetPtr content;
+    // The content to host. BORROWED: the popup control owns it for its whole life,
+    // so the same tree can be shown again after the layer closes. Must outlive the layer.
+    Widget* content = nullptr;
     // Window-space top-left the caller wants. The layer flips or clamps it to fit, so a
     // flyout opened near the right edge does not run off it.
     Point anchor;

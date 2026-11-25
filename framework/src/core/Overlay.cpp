@@ -805,10 +805,20 @@ void SetMenuHoverOnOpen(OverlayLayer* layer, bool on) {
 class FlyoutLayer final : public OverlayLayer {
 public:
     explicit FlyoutLayer(FlyoutRequest request)
-        : content_(std::move(request.content)), anchor_(request.anchor),
+        : content_(request.content), anchor_(request.anchor),
           fixedSize_(request.size), lightDismiss_(request.lightDismiss),
           onClosed_(std::move(request.onClosed)), placement_(request.placement) {
         bounds_ = Rect{anchor_.x, anchor_.y, 0, 0};
+        if (content_ == nullptr) {
+            // An empty card beats silently doing nothing: a missing child is visible.
+            fallback_ = CreateWidget("wui/StackPanel");
+            content_ = fallback_.get();
+        }
+    }
+
+    void DetachContent() override {
+        content_ = nullptr;
+        active_ = false;
     }
 
     void SetAvailable(Size available) {
@@ -879,7 +889,7 @@ public:
             // No focus subsystem for overlays: the first focusable control in the content
             // takes the key. That covers a one-input flyout (the common case) without
             // inventing a focus stack the host would have to maintain.
-            if (Widget* focus = FirstFocusable(content_.get())) {
+            if (Widget* focus = FirstFocusable(content_)) {
                 if (focus->OnKeyDown(vk)) return true;
             }
         }
@@ -897,10 +907,17 @@ private:
             active_ = false;
             return;
         }
-        const Size want = fixedSize_.w > 0 || fixedSize_.h > 0
-                              ? fixedSize_
-                              : content_->Measure(Size{available_.w, available_.h});
-        const Size size{want.w > 0 ? want.w : 160.0f, want.h > 0 ? want.h : 40.0f};
+        const bool measured = !(fixedSize_.w > 0 || fixedSize_.h > 0);
+        const Size want = measured ? content_->Measure(Size{available_.w, available_.h})
+                                   : fixedSize_;
+        Size size{want.w > 0 ? want.w : 160.0f, want.h > 0 ? want.h : 40.0f};
+        // A measured size is the CONTENT's size. The card adds padding around it,
+        // so the padding has to be added to the card as well -- arranging the
+        // content into size - 2*kPad squeezed its last row out of the card.
+        if (measured) {
+            size.w += kPad * 2;
+            size.h += kPad * 2;
+        }
 
         // Placement: below by default, flipping above when there is no room, which is what
         // every OS popup does and what makes a flyout near the bottom edge usable.
@@ -942,7 +959,8 @@ private:
     static constexpr float kGap = 6.0f;
     static constexpr float kPad = 8.0f;
 
-    WidgetPtr content_;
+    WidgetPtr fallback_;  // only when the caller supplied no content
+    Widget* content_ = nullptr;  // borrowed; owned by the popup control
     Point anchor_;
     Size fixedSize_;
     Size available_{1280.0f, 720.0f};

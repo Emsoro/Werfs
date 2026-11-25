@@ -5845,6 +5845,97 @@ TEST("popup: an overlay opened in a scrolled page anchors to the visible control
     CHECK(std::abs(card.y - (visibleBottom + 6.0f)) < 4.0f);
 }
 
+TEST("flyout: the card leaves room for the content it measured") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Flyout x:Name=\"fo\" Content=\"Go\">"
+        "<Button x:Name=\"inner\" Content=\"Press\" Height=\"60\"/>"
+        "</Flyout>",
+        "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    Widget* inner = f.root->FindByName("inner");
+    CHECK(inner != nullptr);
+    if (!inner) return;
+
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    const Rect card = layer->Bounds();
+    const Rect child = inner->Bounds();
+    std::printf("    card bottom=%.0f, content bottom=%.0f\n",
+                card.y + card.h, child.y + child.h);
+    // Measured content is arranged INSIDE the card's padding. If the card is
+    // sized to the content without adding that padding back, the last row is
+    // pushed outside the card and looks crushed.
+    CHECK(card.y + card.h >= child.y + child.h + 4.0f);
+}
+
+TEST("flyout: content survives a close and a reopen") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Flyout x:Name=\"fo\" Content=\"Go\">"
+        "<Button x:Name=\"inner\" Content=\"PressMe\"/>"
+        "</Flyout>",
+        "fo", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr && layer->Active());
+    if (!layer) return;
+    const Rect lb = layer->Bounds();
+    // Click a control INSIDE the card, then dismiss it. That is the path that
+    // used to destroy the declared tree: the next open showed an empty card.
+    const Point inside{lb.x + 12.0f, lb.y + 12.0f};
+    CHECK(layer->OnPointerDown(inside));
+    layer->OnPointerUp(inside);
+    CHECK(layer->OnPointerDown(Point{lb.x - 20.0f, lb.y - 20.0f}));
+    CHECK(!layer->Active());
+    CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
+
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* reopened = f.root->Overlay();
+    CHECK(reopened != nullptr && reopened->Active());
+    if (!reopened) return;
+    RecordingPaintContext log;
+    f.root->PaintTree(log, MakePalette(ThemeKind::Light));
+    CHECK(log.Text().find("PressMe") != std::string::npos);
+}
+
+TEST("popup primitive: content survives a close and a reopen") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<Popup x:Name=\"po\" Content=\"Open\">"
+        "<Button x:Name=\"inner\" Content=\"PrimitivePayload\"/>"
+        "</Popup>",
+        "po", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr && layer->Active());
+    if (!layer) return;
+    const Rect lb = layer->Bounds();
+    const Point inside{lb.x + 12.0f, lb.y + 12.0f};
+    CHECK(layer->OnPointerDown(inside));
+    layer->OnPointerUp(inside);
+    CHECK(layer->OnPointerDown(Point{lb.x - 20.0f, lb.y - 20.0f}));
+    CHECK(!layer->Active());
+
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    CHECK(f.root->Overlay() != nullptr && f.root->Overlay()->Active());
+    RecordingPaintContext log;
+    f.root->PaintTree(log, MakePalette(ThemeKind::Light));
+    CHECK(log.Text().find("PrimitivePayload") != std::string::npos);
+}
+
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : "";
     const int failures = test::RunAll(filter);

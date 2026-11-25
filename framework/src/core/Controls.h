@@ -381,6 +381,10 @@ protected:
 
 private:
     bool ownLayer_ = false;
+    // The declared card stays owned by the control for its whole life. The layer
+    // only borrows it, so closing does not destroy it and reopening shows it again.
+    WidgetPtr savedContent_;
+    OverlayLayer* layer_ = nullptr;  // last installed layer; detached when replaced
 };
 
 // A bare popup: a button-like surface that shows whatever content you declare in it.

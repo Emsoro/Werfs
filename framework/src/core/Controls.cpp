@@ -4655,13 +4655,15 @@ void PopupBase::OpenWith(WidgetPtr content, Size size, int placement) {
     Widget* root = Root();
     if (root == nullptr || root == this) return;
 
+    // A reopen arrives with no freshly extracted child (the tree left the control
+    // on the first open). Reuse the saved one instead of showing an empty card.
+    if (content == nullptr) content = savedContent_;
+    if (content == nullptr) content = CreateWidget("wui/StackPanel");
+    savedContent_ = content;
+    if (layer_ != nullptr) layer_->DetachContent();
+
     FlyoutRequest request;
-    request.content = std::move(content);
-    if (request.content == nullptr) {
-        // An empty card beats silently doing nothing: a missing child is then visible
-        // instead of mysterious.
-        request.content = CreateWidget("wui/StackPanel");
-    }
+    request.content = content.get();  // borrowed; savedContent_ owns it
     request.anchor = AnchorPoint();
     request.size = size.w > 0.0f || size.h > 0.0f ? size : PopupSize();
     request.placement = placement;
@@ -4681,6 +4683,7 @@ void PopupBase::OpenWith(WidgetPtr content, Size size, int placement) {
 
     auto layer = MakeFlyoutLayer(std::move(request));
     ownLayer_ = true;
+    layer_ = layer.get();
     root->SetOverlay(layer.release());
     const int slot = SlotOf("IsOpen");
     if (slot >= 0 && !Get<bool>(slot)) SetSlotValue(slot, Value::Bool(true), true);
@@ -4780,14 +4783,10 @@ void Popup::OnPointerUp(const Point& local) {
         ClosePopup();
         return;
     }
-    // The declared children ARE the card. Copy before clearing: ClearChildren would destroy
-    // the very widget being handed to the layer.
-    WidgetPtr content;
-    if (!Children().empty()) {
-        content = Children().front();
-        ClearChildren();
-    }
-    OpenWith(std::move(content));
+    // The declared children ARE the card. One extraction path for clicks and for
+    // ViewModel-driven opens; on a reopen there is no child left, and OpenWith
+    // reuses the one the control kept alive.
+    OpenWith(BuildContentForSlotOpen());
 }
 
 bool Popup::OnKeyDown(int vk) {
@@ -4882,14 +4881,9 @@ void Flyout::Toggle() {
         ClosePopup();
         return;
     }
-    // The declared child IS the card. Copy before clearing: ClearChildren would destroy the
-    // widget being handed to the layer.
-    WidgetPtr content;
-    if (!Children().empty()) {
-        content = Children().front();
-        ClearChildren();
-    }
-    OpenWith(std::move(content));
+    // Same extraction as the slot-driven path; on a reopen OpenWith reuses the
+    // saved card instead of an empty one.
+    OpenWith(BuildContentForSlotOpen());
 }
 
 // ---------------------------------------------------------------------------

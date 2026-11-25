@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**245 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**248 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 245 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 248 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 245 个单元/集成用例 |
+| `waml_tests.exe` | 248 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -902,6 +902,22 @@ value.type == VType::Number ? ... : /* 默认值 */
 **回归测试**：把 Flyout 放在 400 px 高的填充之后、滚动到它只离视口顶端 20 px，再打开；断言卡片顶端落在控件可见底边 + 6 px，而不是窗口底部。修复前实测 `y=437`（贴底），修复后 `y=206`。
 
 **教训**：一套坐标只能有一种含义。指针进来时 `ToLocal()` 把窗口坐标变成内容坐标，弹层出去时必须有对应的 `ToWindow()`；任何"拿 `bounds_` 直接用"的代码都要先问它在哪个坐标系。
+
+---
+
+## 7.32 弹层内容：卡片尺寸与第二次打开
+
+`basic` 页 Popups 的第二项（Flyout）里内容被挤到卡片外；点一下里面的控件、关掉再打开，卡片就空了。第三项（Popup primitive）同样。
+
+**根因 1**：`FlyoutLayer` 先让内容 `Measure()`，再把内容 `Arrange()` 进 `size - 2*kPad` 的矩形。测量值是**内容本身**的尺寸，卡片还要在四周加内边距；少加这 16 px 就让最后一行被挤出卡片，看起来像被压扁。
+
+**根因 2**：声明的子控件在打开时从控件树里取出、所有权转给 layer；关闭时 layer 被丢弃，子控件随之销毁。第二次打开时控件树已经没有子控件，于是显示一个空 StackPanel。ComboBox/AutoSuggestBox 每次重建列表所以看不出来，Flyout/Popup 的静态子树一关就没了。
+
+**修复**：卡片按测量尺寸**加上**两侧内边距；layer 只**借用**内容树（`FlyoutRequest::content` 改为裸指针），控件用 `savedContent_` 长期持有它，关闭后仍在，重新打开时直接复用。点击与 `IsOpen=true` 两条路径统一走 `BuildContentForSlotOpen()`，消除重复取出逻辑。
+
+**回归测试**：一条断言卡片底边至少比内容底边低 4 px；两条分别在 Flyout 和 Popup 里点击内容、关闭、再打开，用绘制日志确认 `PressMe`/`PrimitivePayload` 仍在。
+
+**教训**：把所有权"转出去"之前先问"关掉以后谁还拥有它"。一个可重复打开的弹层，内容的所有者必须是控件，不是某一次打开的 layer。
 
 ---
 
@@ -2187,7 +2203,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（245 用例）
+## A. 测试清单（248 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

@@ -295,6 +295,9 @@ public:
     virtual bool Active() const = 0;
     // False for a modal: presses outside are swallowed rather than dismissing it.
     virtual bool LightDismiss() const { return true; }
+    // Stops hosting a borrowed widget tree. A reused popup keeps its content in the
+    // control (not in the layer) so closing and reopening can show the same tree.
+    virtual void DetachContent() {}
 };
 
 // ---------------------------------------------------------------------------
