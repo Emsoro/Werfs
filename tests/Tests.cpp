@@ -5796,6 +5796,55 @@ TEST("chart: axis labels are drawn after the plot, with the scroll shift") {
     }
 }
 
+TEST("popup: an overlay opened in a scrolled page anchors to the visible control") {
+    DiagnosticBag bag;
+    InstallText();
+    auto doc = CompileWaml(
+        "<Page><ScrollViewer Height=\"200\"><StackPanel>"
+        "<Border Height=\"400\" Background=\"CardBackground\"/>"
+        "<Flyout x:Name=\"fo\" Content=\"Go\"><Border Width=\"120\" Height=\"40\"/></Flyout>"
+        "</StackPanel></ScrollViewer></Page>",
+        ParseOptions{"popup-scroll.waml"}, bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    static std::vector<WidgetPtr> keep;
+    keep.clear();
+    keep.push_back(doc->Instantiate(&g_fakeText));
+    WidgetPtr root = keep.back();
+    // Two passes: the first arranges the content, the second lets the scroller
+    // discover how much of it is actually taller than the viewport.
+    root->ForceLayout(Size{600, 300});
+    root->ForceLayout(Size{600, 300});
+
+    ScrollViewer* scroller = nullptr;
+    auto findScroller = [&](auto& self, Widget* w) -> void {
+        if (!w) return;
+        if (auto* sv = dynamic_cast<ScrollViewer*>(w)) scroller = sv;
+        for (auto& child : w->Children()) self(self, child.get());
+    };
+    findScroller(findScroller, root.get());
+    Widget* fo = root->FindByName("fo");
+    CHECK(scroller != nullptr && fo != nullptr);
+    if (!scroller || !fo) return;
+    CHECK(scroller->MaxScroll() > 100.0f);
+
+    // Bring the flyout to 20 px below the top of the viewport. In window space its
+    // bottom edge is then 20 + its height, NOT its unscrolled layout position.
+    scroller->ScrollTo(380.0f);
+    const Rect b = fo->Bounds();
+    const float visibleBottom = b.y - scroller->ScrollOffset() + b.h;
+    CHECK(visibleBottom > 0.0f && visibleBottom < 300.0f);
+
+    fo->OnPointerUp(Point{b.x + 5.0f, b.y + 5.0f});
+    OverlayLayer* layer = root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    const Rect card = layer->Bounds();
+    std::printf("    popup card y=%.0f (visible control ends at %.0f)\n",
+                card.y, visibleBottom);
+    CHECK(std::abs(card.y - (visibleBottom + 6.0f)) < 4.0f);
+}
+
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : "";
     const int failures = test::RunAll(filter);

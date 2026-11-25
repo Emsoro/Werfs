@@ -2780,7 +2780,7 @@ void MenuBar::OpenMenu(size_t index) {
     if (model.empty()) return;
 
     const Rect title = TitleBounds(index);
-    auto layer = MakeMenuLayer(std::move(model), Point{title.x, title.y + title.h},
+    auto layer = MakeMenuLayer(std::move(model), ToWindow(Point{title.x, title.y + title.h}),
                                [this] { CloseMenu(); });
     SetMenuHoverOnOpen(layer.get(), true);
     // Release the previous layer only NOW, at a safe point: the previous close
@@ -3181,7 +3181,7 @@ void CommandBar::OpenOverflow() {
     RefreshMenuEnabled(model);
 
     const Rect box = OverflowBounds();
-    auto layer = MakeMenuLayer(std::move(model), Point{box.x, box.y + box.h}, [this] {
+    auto layer = MakeMenuLayer(std::move(model), ToWindow(Point{box.x, box.y + box.h}), [this] {
         if (Widget* root = Root()) {
             if (ownedLayer_ && root->Overlay() == ownedLayer_.get()) root->SetOverlay(nullptr);
         }
@@ -4608,7 +4608,9 @@ bool PopupBase::IsOpen() const {
 }
 
 Point PopupBase::AnchorPoint() const {
-    return Point{bounds_.x, bounds_.y + bounds_.h};
+    // bounds_ is layout geometry; the page may be scrolled. The overlay lives in
+    // window space, so convert before handing it the anchor.
+    return ToWindow(Point{bounds_.x, bounds_.y + bounds_.h});
 }
 
 Widget* PopupBase::HitTest(const Point& p) {
@@ -5147,7 +5149,7 @@ WidgetPtr ComboBox::BuildContentForSlotOpen() {
 Point ComboBox::AnchorPoint() const {
     const Rect drop = DropDownBounds();
     // One pixel of overlap with the box, so the list reads as attached to it.
-    return Point{drop.x, drop.y - 2.0f};
+    return ToWindow(Point{drop.x, drop.y - 2.0f});
 }
 
 Size ComboBox::PopupSize() const {
@@ -5323,7 +5325,7 @@ WidgetPtr AutoSuggestBox::BuildContentForSlotOpen() {
 }
 
 Point AutoSuggestBox::AnchorPoint() const {
-    return Point{bounds_.x, bounds_.y + bounds_.h + 2.0f};
+    return ToWindow(Point{bounds_.x, bounds_.y + bounds_.h + 2.0f});
 }
 
 Size AutoSuggestBox::PopupSize() const {

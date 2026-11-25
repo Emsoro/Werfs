@@ -393,6 +393,18 @@ Point Widget::ToLocal(const Point& p) const {
     return Point{p.x, p.y + scrolled};
 }
 
+Point Widget::ToWindow(const Point& p) const {
+    // Exactly the inverse of ToLocal. bounds_ holds unscrolled layout coordinates;
+    // painting temporarily shifts them up by the scroll amount. An overlay is
+    // positioned in window space, so its anchor has to undo that shift -- using
+    // bounds_ directly put popups in a scrolled page at the bottom of the window.
+    float scrolled = 0.0f;
+    for (const Widget* w = this; w != nullptr; w = w->parent_) {
+        scrolled += w->ScrollShiftForPointers();
+    }
+    return Point{p.x, p.y - scrolled};
+}
+
 Widget* Widget::HitTest(const Point& p) {
     if (!IsVisible()) return nullptr;   // A hidden widget cannot be clicked.
     // Scrolled content: `p` arrives in this widget's unscrolled space, so undo

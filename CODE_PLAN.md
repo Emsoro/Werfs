@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**244 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**245 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 244 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 245 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 244 个单元/集成用例 |
+| `waml_tests.exe` | 245 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -888,6 +888,20 @@ value.type == VType::Number ? ... : /* 默认值 */
 2. 改用「底边」测量，标签 delta 变成 0 —— 因为次要文字色在整页范围内也匹配了卡片外的其他文字，行的上下界被污染。
 
 最后用 `RecordingPaintContext` 记录的 **DrawText 矩形**直接读坐标才得到干净结果：`249 → 49`，delta 恰好 200。**教训**：像素颜色统计适合回答「有没有变化」，不适合回答「变化了多少」——后者要么有精确的几何记录，要么测不准。
+
+---
+
+## 7.31 弹层锚点：控件在页面里，弹层在窗口里
+
+`basic` 页滚到 Popups 一节后点 ComboBox / Flyout / Popup，卡片出现在窗口最底部而不是控件旁边。
+
+**根因**：控件把 `bounds_.x/y` 直接当作弹层锚点，但 `bounds_` 是 Arrange 时的**未滚动**布局坐标；绘制时框架才临时把它平移 `-scroll`。弹层由根单独绘制、位于窗口坐标系，于是锚点比控件实际位置低了整个滚动量；再被 `FlyoutLayer` 的边界夹取，就贴到了窗口底边。这和 §7.30.6 的图表是同一个坐标系错误，只是这次错在输入事件里而不是绘制里。
+
+**修复**：`Widget::ToWindow()` 是 `ToLocal()` 的逆——沿祖先链累加各滚动器的位移并减去，把控件坐标变成窗口坐标。所有弹层锚点（ComboBox、Flyout/Popup、AutoSuggestBox、MenuBar、CommandBar 溢出菜单）统一走它。
+
+**回归测试**：把 Flyout 放在 400 px 高的填充之后、滚动到它只离视口顶端 20 px，再打开；断言卡片顶端落在控件可见底边 + 6 px，而不是窗口底部。修复前实测 `y=437`（贴底），修复后 `y=206`。
+
+**教训**：一套坐标只能有一种含义。指针进来时 `ToLocal()` 把窗口坐标变成内容坐标，弹层出去时必须有对应的 `ToWindow()`；任何"拿 `bounds_` 直接用"的代码都要先问它在哪个坐标系。
 
 ---
 
@@ -2173,7 +2187,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（244 用例）
+## A. 测试清单（245 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

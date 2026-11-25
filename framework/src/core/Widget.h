@@ -209,6 +209,12 @@ public:
     // scrolled, so nothing needs to be pushed down into the tree.
     Point ToLocal(const Point& p) const;
 
+    // Inverse of ToLocal: a point in this widget's (unscrolled) bounds space is
+    // moved UP by every scroller between here and the root, giving the position
+    // where it actually appears in the window. Overlays live in window space, so
+    // a popup anchored to a control inside a ScrollViewer must use this.
+    Point ToWindow(const Point& p) const;
+
     // --- invalidation counters (for tests / profiling) -----------------------
     static inline uint64_t LayoutCount = 0;
     static inline uint64_t PaintCount = 0;
