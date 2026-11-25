@@ -5275,16 +5275,30 @@ void AutoSuggestBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 
     const std::wstring text = Get<std::wstring>(SlotOf("Text"));
     const float fontSize = Get<float>(SlotOf("FontSize"));
-    if (text.empty()) {
+    const Rect textBox{box.x + kSuggestPadX, box.y,
+                       std::max(0.0f, box.w - kSuggestPadX * 2 - 20.0f), box.h};
+    if (text.empty() && composition_.empty()) {
         ctx.DrawText(Get<std::wstring>(SlotOf("PlaceholderText")),
                      Rect{box.x + kSuggestPadX, box.y, box.w - kSuggestPadX * 2, box.h},
                      palette.colors[static_cast<int>(Token::TextSecondary)], fontSize,
                      WeightNormal, TextAlign::Left);
     } else {
-        ctx.DrawText(text,
-                     Rect{box.x + kSuggestPadX, box.y, box.w - kSuggestPadX * 2 - 20.0f, box.h},
-                     palette.colors[static_cast<int>(Token::TextPrimary)], fontSize, WeightNormal,
-                     TextAlign::Left);
+        // The composition preview is drawn but never written into Text: cancelling
+        // must leave the model untouched, and suggestions must not react to a
+        // half-finished candidate.
+        if (!text.empty()) {
+            ctx.DrawText(text, textBox,
+                         palette.colors[static_cast<int>(Token::TextPrimary)], fontSize,
+                         WeightNormal, TextAlign::Left);
+        }
+        if (!composition_.empty()) {
+            float x = textBox.x;
+            if (ITextService* svc = TextSystem::Get()) x += svc->Measure(text, fontSize, WeightNormal).w;
+            ctx.DrawText(composition_, Rect{x, textBox.y, std::max(0.0f, textBox.w - (x - textBox.x)),
+                                            textBox.h},
+                         palette.colors[static_cast<int>(Token::Accent)], fontSize,
+                         WeightNormal, TextAlign::Left);
+        }
     }
     // A search glyph on the right: the box has to say it suggests, not just accept input.
     ctx.DrawText(L"\u2315", Rect{box.Right() - 22.0f, box.y, 16.0f, box.h},
@@ -5397,6 +5411,55 @@ bool AutoSuggestBox::OnKeyDown(int vk) {
         return true;
     }
     return false;
+}
+
+// IME: this control has no caret model, so the preview is shown at the end of the
+// text and a committed result is appended there. The host forwards WM_CHAR only
+// when Composing() is false, so without these overrides an IME (Chinese, Japanese,
+// even Latin input in a Chinese IME) could never reach the Text slot at all.
+void AutoSuggestBox::SetComposition(const std::wstring& text) {
+    if (composition_ == text) return;
+    composition_ = text;
+    Invalidate(AffectsRender);
+}
+
+void AutoSuggestBox::CommitComposition(const std::wstring& finalText) {
+    if (composition_.empty() && finalText.empty()) return;
+    composition_.clear();
+    // Re-read the slot: a binding may have replaced the text while the user was
+    // composing. Appending to a stale buffer would resurrect a value nobody typed.
+    editing_ = Get<std::wstring>(SlotOf("Text"));
+    if (!finalText.empty()) {
+        editing_ += finalText;
+        SetSlotValue(SlotOf("Text"), Value::Text(editing_));
+        Refresh();  // new text means new suggestions
+    }
+    Invalidate(AffectsRender);
+}
+
+void AutoSuggestBox::CancelComposition() {
+    if (composition_.empty()) return;
+    composition_.clear();
+    Invalidate(AffectsRender);
+}
+
+CompositionCaret AutoSuggestBox::ImeCaret() const {
+    // Candidate window at the end of the visible text, reusing the same padding
+    // and font metrics as OnPaint so it lands on the field, not at its corner.
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const float lineH =
+        TextSystem::Get() ? TextSystem::Get()->LineHeight(fontSize) : fontSize * 1.33f;
+    float x = bounds_.x + margin.l + pad.l + kSuggestPadX;
+    if (ITextService* svc = TextSystem::Get()) {
+        x += svc->Measure(Get<std::wstring>(SlotOf("Text")), fontSize, WeightNormal).w;
+    }
+    CompositionCaret caret;
+    caret.x = x;
+    caret.y = bounds_.y + margin.t + pad.t;
+    caret.lineHeight = lineH;
+    return caret;
 }
 
 void AutoSuggestBox::Refresh() {

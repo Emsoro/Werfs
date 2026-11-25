@@ -4440,6 +4440,49 @@ TEST("autosuggest: typing opens the list and Enter commits the highlight") {
     CHECK(!f.target->Get<bool>(f.target->SlotOf("IsOpen")));
 }
 
+TEST("autosuggest: IME composition commits into Text and opens the list") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Seattle;Seoul;柏林\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    // This is what the host sends while an IME is composing: a preview, then a
+    // result. A text entry that does not implement the composition hooks silently
+    // drops both, so with a Chinese IME active nothing is ever typed at all.
+    box->SetComposition(L"s");
+    CHECK(box->Composing());
+    box->SetComposition(L"se");
+    box->CommitComposition(L"se");
+    CHECK(!box->Composing());
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")) == L"se");
+    CHECK(f.root->Overlay() != nullptr);  // suggestions follow the committed text
+    CHECK(box->OnKeyDown(KeyDown));
+    CHECK(box->Highlighted() == 1);
+    CHECK(box->OnKeyDown(KeyReturn));
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")) == L"Seoul");
+}
+
+TEST("autosuggest: cancelling an IME composition leaves Text untouched") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Seattle\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+    box->OnChar(L'S');
+    box->SetComposition(L"e");
+    CHECK(box->Composing());
+    box->CancelComposition();
+    CHECK(!box->Composing());
+    CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")) == L"S");
+}
+
 TEST("autosuggest: Escape dismisses without undoing the typing") {
     DiagnosticBag bag;
     PopupFixture f = MakePopup(

@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**248 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**250 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 248 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 250 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 248 个单元/集成用例 |
+| `waml_tests.exe` | 250 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -918,6 +918,20 @@ value.type == VType::Number ? ... : /* 默认值 */
 **回归测试**：一条断言卡片底边至少比内容底边低 4 px；两条分别在 Flyout 和 Popup 里点击内容、关闭、再打开，用绘制日志确认 `PressMe`/`PrimitivePayload` 仍在。
 
 **教训**：把所有权"转出去"之前先问"关掉以后谁还拥有它"。一个可重复打开的弹层，内容的所有者必须是控件，不是某一次打开的 layer。
+
+---
+
+## 7.33 AutoSuggestBox 与输入法：没有接线的 IME 契约
+
+`basic` 页的 AutoSuggest 用中文输入法打不进字；英文在中文输入法状态下上下键没反应、Enter 也选不中候选。
+
+**根因**：宿主的输入法消息（预览 / 提交 / 取消 / 候选窗位置）只转发给实现了 `SetComposition` / `CommitComposition` / `CancelComposition` / `Composing` / `ImeCaret` 的控件，只有 `TextBox` 实现了它们。`AutoSuggestBox` 虽然继承 `Widget` 且可聚焦，但没重写这一组虚函数——宿主把候选发给它，全部落到默认空实现。于是一个中文 IME 吃掉英文字母、又无处交付结果：`Text` 槽永远是空的，没有候选项，上下键和 Enter 自然"没反应"。这不是键盘处理写错，而是文本控件只接了一半的输入协议。
+
+**修复**：`AutoSuggestBox` 实现完整 IME 契约。预览只存在 `composition_` 里、画出但不写进 `Text`；提交时从槽重读文本、把结果追加到末尾，再 `Refresh()` 打开候选项；取消只丢预览。`ImeCaret()` 用与 `OnPaint` 相同的外边距和字体测量把候选窗放到文字末尾。
+
+**回归测试**：模拟 `SetComposition` → `CommitComposition`，断言 `Text` 更新、候选项出现、Down + Enter 选中第二项；另一条断言取消预览后 `Text` 不变。此前两条分别 9 处和 1 处失败。
+
+**教训**：一个控件"能打字"不等于它支持输入法。WM_CHAR 和 IME 结果串是两条独立路径，只接了前者，在有中文输入法的机器上就是不可用的控件。
 
 ---
 
@@ -2203,7 +2217,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（248 用例）
+## A. 测试清单（250 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

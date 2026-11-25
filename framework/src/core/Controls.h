@@ -588,6 +588,16 @@ public:
     bool OnChar(wchar_t ch) override;
     bool Focusable() const override { return true; }
 
+    // A suggest box takes text, so it must speak the whole IME contract: without
+    // these the host's composition messages are no-ops and a Chinese IME can
+    // never put a character into the box (and with nothing typed there is no
+    // list for Up/Down/Enter to act on).
+    void SetComposition(const std::wstring& text) override;
+    void CommitComposition(const std::wstring& finalText) override;
+    void CancelComposition() override;
+    bool Composing() const override { return !composition_.empty(); }
+    CompositionCaret ImeCaret() const override;
+
     // The suggestions for the current Text.
     std::vector<std::wstring> Filtered() const;
     // Index of the highlighted row, or -1.
@@ -607,6 +617,7 @@ private:
     void Commit(int index);
 
     std::wstring editing_;
+    std::wstring composition_;  // preview only; never written into the Text slot
     int highlighted_ = -1;
 };
 
