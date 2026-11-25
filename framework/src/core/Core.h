@@ -298,6 +298,9 @@ public:
     // Stops hosting a borrowed widget tree. A reused popup keeps its content in the
     // control (not in the layer) so closing and reopening can show the same tree.
     virtual void DetachContent() {}
+    // The hosted widget tree, when this layer has one. Used by a control that
+    // needs to keep a list's visual selection in sync with its own highlight.
+    virtual Widget* Content() { return nullptr; }
 };
 
 // ---------------------------------------------------------------------------

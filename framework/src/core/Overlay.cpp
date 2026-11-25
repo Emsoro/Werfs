@@ -821,6 +821,8 @@ public:
         active_ = false;
     }
 
+    Widget* Content() override { return content_; }
+
     void SetAvailable(Size available) {
         available_ = available;
         Relayout();

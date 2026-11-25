@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**250 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**252 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 250 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 252 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 250 个单元/集成用例 |
+| `waml_tests.exe` | 252 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -932,6 +932,8 @@ value.type == VType::Number ? ... : /* 默认值 */
 **回归测试**：模拟 `SetComposition` → `CommitComposition`，断言 `Text` 更新、候选项出现、Down + Enter 选中第二项；另一条断言取消预览后 `Text` 不变。此前两条分别 9 处和 1 处失败。
 
 **教训**：一个控件"能打字"不等于它支持输入法。WM_CHAR 和 IME 结果串是两条独立路径，只接了前者，在有中文输入法的机器上就是不可用的控件。
+
+**同一个 hook 的第二处遗漏**：接上 IME 后用户又反馈上下键"选不动"，而 Enter 已经正常。原因是控件只改了自己的 `highlighted_`，弹层里的 `FlyoutList` 在创建时把 `selected_` 固定成 0，绘制读的是它自己的值——Enter 用控件的索引所以提交正确，屏幕上却一直高亮第一行。现在 `OverlayLayer::Content()` 让控件拿回弹层里的列表，方向键和 ComboBox 的 `ApplySelection()` 都会把可见行同步过去。两条回归测试分别断言控件索引与列表 `Selected()` 一致；此前只断言 `Highlighted()` 的测试精确地绕过了用户看到的东西。
 
 ---
 
@@ -2217,7 +2219,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（250 用例）
+## A. 测试清单（252 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

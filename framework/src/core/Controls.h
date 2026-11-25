@@ -469,6 +469,10 @@ public:
 
     // Index the pointer is over, or -1.
     int HoveredIndex() const { return hovered_; }
+    // The row painted as selected. A keyboard highlight must update this too,
+    // otherwise Enter commits one row while the list keeps painting another.
+    int Selected() const { return selected_; }
+    void SetSelected(int index) { selected_ = index; Invalidate(AffectsRender); }
 
 private:
     int IndexAt(const Point& local) const;

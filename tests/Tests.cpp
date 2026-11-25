@@ -4466,6 +4466,54 @@ TEST("autosuggest: IME composition commits into Text and opens the list") {
     CHECK(f.target->Get<std::wstring>(f.target->SlotOf("Text")) == L"Seoul");
 }
 
+TEST("combobox: arrows update the row painted in an open drop-down") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<ComboBox x:Name=\"c\" Items=\"A;B;C\" SelectedIndex=\"0\"/>", "c", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    const Rect b = f.target->Bounds();
+    f.target->OnPointerUp(Point{b.x + 10.0f, b.y + 10.0f});
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    auto* list = dynamic_cast<FlyoutList*>(layer->Content());
+    CHECK(list != nullptr && list->Selected() == 0);
+    if (!list) return;
+    CHECK(f.target->OnKeyDown(KeyDown));
+    CHECK(f.target->Get<int>(f.target->SlotOf("SelectedIndex")) == 1);
+    CHECK(list->Selected() == 1);
+}
+
+TEST("autosuggest: arrow keys move the highlighted row in the visible list") {
+    DiagnosticBag bag;
+    PopupFixture f = MakePopup(
+        "<AutoSuggestBox x:Name=\"s\" Items=\"Seattle;Seoul;Berlin\"/>", "s", bag);
+    CHECK(f.target != nullptr);
+    if (!f.target) return;
+    auto* box = dynamic_cast<AutoSuggestBox*>(f.target);
+    CHECK(box != nullptr);
+    if (!box) return;
+
+    box->OnChar(L's');
+    box->OnChar(L'e');
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    auto* list = dynamic_cast<FlyoutList*>(layer->Content());
+    CHECK(list != nullptr);
+    if (!list) return;
+    CHECK(list->Selected() == 0);
+
+    CHECK(box->OnKeyDown(KeyDown));
+    CHECK(box->Highlighted() == 1);
+    // This is what the user actually SEES. A control-only highlight passes every
+    // existing test while the card keeps painting the first row.
+    CHECK(list->Selected() == 1);
+    CHECK(box->OnKeyDown(KeyUp));
+    CHECK(list->Selected() == 0);
+}
+
 TEST("autosuggest: cancelling an IME composition leaves Text untouched") {
     DiagnosticBag bag;
     PopupFixture f = MakePopup(

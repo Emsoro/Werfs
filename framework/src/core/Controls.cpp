@@ -5096,6 +5096,17 @@ void ComboBox::ApplySelection() {
                                   ? items[static_cast<size_t>(index)]
                                   : std::wstring();
     if (Get<std::wstring>(slotText) != text) SetSlotValue(slotText, Value::Text(text));
+    // The open drop-down paints its own selected row. Keyboard arrows change the
+    // slot while the list stays up, so keep that row in step with the value.
+    if (IsOpen()) {
+        if (Widget* root = Root()) {
+            if (OverlayLayer* layer = root->Overlay()) {
+                if (auto* list = dynamic_cast<FlyoutList*>(layer->Content())) {
+                    list->SetSelected(index);
+                }
+            }
+        }
+    }
     Invalidate(AffectsRender);
 }
 
@@ -5388,18 +5399,26 @@ bool AutoSuggestBox::OnKeyDown(int vk) {
     }
 
     const std::vector<std::wstring> matches = Filtered();
-    if (vk == KeyDown) {
+    if (vk == KeyDown || vk == KeyUp) {
         if (matches.empty()) return false;
-        // Opening on the first Down is what makes the list reachable by keyboard alone.
+        highlighted_ = vk == KeyDown
+                           ? std::min(highlighted_ + 1, static_cast<int>(matches.size()) - 1)
+                           : std::max(highlighted_ - 1, 0);
+        // Opening on the first arrow key is what makes the list reachable by
+        // keyboard alone. Open AFTER moving so the freshly built list starts on
+        // the row the user just selected.
         if (!IsOpen()) OpenSuggestions();
-        highlighted_ = std::min(highlighted_ + 1, static_cast<int>(matches.size()) - 1);
-        Invalidate(AffectsRender);
-        return true;
-    }
-    if (vk == KeyUp) {
-        if (matches.empty()) return false;
-        if (!IsOpen()) OpenSuggestions();
-        highlighted_ = std::max(highlighted_ - 1, 0);
+        // The list paints its OWN selected_ row, set when the layer was built.
+        // Without this sync the highlight moves internally while the card keeps
+        // painting row 0 -- Enter then commits a different row than the one the
+        // user saw highlighted.
+        if (Widget* root = Root()) {
+            if (OverlayLayer* layer = root->Overlay()) {
+                if (auto* list = dynamic_cast<FlyoutList*>(layer->Content())) {
+                    list->SetSelected(highlighted_);
+                }
+            }
+        }
         Invalidate(AffectsRender);
         return true;
     }
