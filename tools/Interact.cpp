@@ -975,6 +975,42 @@ int RunBindingChecks(Widget* root, const std::shared_ptr<sample::BindingVm>& vm)
         if (echo) Expect(TextOf(echo) == L"Committed value: Ada Lovelace!", "the echo followed");
     }
 
+    std::printf("\n[7] IME composition reaches every text box\n");
+    {
+        Widget* boxes[] = {oneTime, oneWay, twoWay, toSource, lostFocus};
+        const char* names[] = {"OneTime", "OneWay", "TwoWay", "OneWayToSource", "LostFocus"};
+        for (int i = 0; i < 5; ++i) {
+            auto* tb = dynamic_cast<TextBox*>(boxes[i]);
+            Expect(tb != nullptr, names[i]);
+            if (!tb) continue;
+            tb->SetFocused(true);
+            tb->SetCaretToEnd();
+            // A preview must be visible while composing, and a result must land
+            // in Text. Without the IME hooks both are silent no-ops.
+            tb->SetComposition(L"中");
+            Expect(tb->Composing(), "composition is in progress");
+            Expect(tb->CompositionText() == L"中", "the preview is available to paint");
+            tb->CommitComposition(L"中");
+            Expect(!tb->Composing(), "the preview ended");
+            Expect(TextOf(boxes[i]).find(L"中") != std::wstring::npos,
+                   "the committed Chinese text is in the box");
+        }
+    }
+
+    std::printf("\n[8] no field is squeezed below one line\n");
+    {
+        Widget* boxes[] = {oneTime, oneWay, twoWay, toSource, lostFocus};
+        for (Widget* box : boxes) {
+            if (!box) continue;
+            Expect(box->Bounds().h >= 30.0f, "a single-line box stays tall enough to show text");
+        }
+        Widget* renameBtn = ButtonWithText(root, L"Rename the source");
+        Widget* resetBtn = ButtonWithText(root, L"Reset");
+        Expect(renameBtn != nullptr && resetBtn != nullptr, "both action buttons exist");
+        if (renameBtn) Expect(renameBtn->Bounds().h >= 28.0f, "the rename button has a usable height");
+        if (resetBtn) Expect(resetBtn->Bounds().h >= 28.0f, "the reset button has a usable height");
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }

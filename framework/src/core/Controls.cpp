@@ -693,7 +693,11 @@ Size TextBox::Measure(const Size& available) {
     if (text.empty()) text = Get<std::wstring>(SlotOf("PlaceholderText"));
     Size t{static_cast<float>(text.size()) * fontSize * 0.55f, fontSize * 1.33f};
     if (ITextService* svc = TextSystem::Get()) t = svc->Measure(text, fontSize, WeightNormal);
-    desired_ = Size{std::max(160.0f, t.w + pad.H() + margin.H()), std::max(30.0f, t.h + pad.V() + margin.V())};
+    // A text box always needs at least ONE visible line. The natural height below
+    // can be many lines for a document, but the floor is one line + padding.
+    const float oneLine = std::max(30.0f, fontSize * 1.33f + pad.V() + margin.V());
+    desired_ = Size{std::max(160.0f, t.w + pad.H() + margin.H()),
+                    std::max(oneLine, t.h + pad.V() + margin.V())};
     // Apply the caller's width, so a text box fills the column it is given instead
     // of sizing to its own text: a single-line measurement of a long paragraph is
     // metres wide, which made every dialog containing a text box overflow.
@@ -706,7 +710,10 @@ Size TextBox::Measure(const Size& available) {
     // overrides.
     if (available.h > 0 && available.h < 1.0e6f) {
         const float explicitH = SlotOf("Height") >= 0 ? Get<float>(SlotOf("Height")) : 0.0f;
-        if (explicitH <= 0) desired_.h = std::min(desired_.h, available.h);
+        // Clamp a many-line document to what the parent offers, but NEVER below
+        // one line: a tight StackPanel used to squeeze a single-line box to 23 px
+        // and clip its placeholder/typed text, which looked like an empty field.
+        if (explicitH <= 0) desired_.h = std::max(oneLine, std::min(desired_.h, available.h));
     }
     ApplySizeConstraints();
     // MinHeight is re-applied after the clamp above: ApplySizeConstraints already did

@@ -34,7 +34,7 @@
                            Foreground="TextPrimary"/>
                 <TextBlock Text="Read once at load. Later VM changes never arrive, and typing never writes back."
                            FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
-                <TextBox Text="{Binding Name, Mode=OneTime}" PlaceholderText="OneTime"/>
+                <TextBox Text="{Binding Name, Mode=OneTime}" PlaceholderText="OneTime" Height="32"/>
               </StackPanel>
             </Border>
 
@@ -44,7 +44,7 @@
                            Foreground="TextPrimary"/>
                 <TextBlock Text="VM changes flow in, but typing stays in the box: the target is read-only to the source."
                            FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
-                <TextBox Text="{Binding Name, Mode=OneWay}" PlaceholderText="OneWay"/>
+                <TextBox Text="{Binding Name, Mode=OneWay}" PlaceholderText="OneWay" Height="32"/>
               </StackPanel>
             </Border>
 
@@ -54,7 +54,7 @@
                            Foreground="TextPrimary"/>
                 <TextBlock Text="Both directions. Typing here changes the VM, which updates every other live column."
                            FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
-                <TextBox Text="{Binding Name, Mode=TwoWay}" PlaceholderText="TwoWay"/>
+                <TextBox Text="{Binding Name, Mode=TwoWay}" PlaceholderText="TwoWay" Height="32"/>
               </StackPanel>
             </Border>
 
@@ -65,7 +65,7 @@
                 <TextBlock Text="Starts empty by design: only the box may write. Typing changes the VM but VM changes never come back."
                            FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
                 <TextBox Text="{Binding Name, Mode=OneWayToSource}"
-                         PlaceholderText="OneWayToSource"/>
+                         PlaceholderText="OneWayToSource" Height="32"/>
               </StackPanel>
             </Border>
           </Grid>
@@ -107,7 +107,7 @@
                      FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
 
           <TextBox Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                   PlaceholderText="Type, then click outside"/>
+                   PlaceholderText="Type, then click outside" Height="32"/>
           <TextBlock Text="{Binding Name, StringFormat='Committed value: {0}'}" FontSize="13"
                      Foreground="TextSecondary" TextWrapping="Wrap"/>
           <TextBlock Text="The echo above binds the VM, not the box, so it is the honest read-out of when the write actually happened."
