@@ -595,6 +595,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g.overlayCapture) {
             g.overlayCapture = false;
             ReleaseCapture();
+            // The press went to the overlay, so the release must go there too. Flyout
+            // layers (ComboBox / AutoSuggestBox) commit the chosen row in OnPointerUp;
+            // dropping this event left the suggestion list selectable only with the
+            // keyboard -- a mouse click highlighted a row but never selected it.
+            if (OverlayLayer* layer = CurrentOverlay()) {
+                layer->OnPointerUp(LocalPoint(nullptr, x, y));
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
