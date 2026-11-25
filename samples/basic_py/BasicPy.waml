@@ -1,0 +1,74 @@
+<?waml version="0.1"?>
+<!--
+  samples/basic_py — a deliberately small page that exercises the Python bridge:
+    * Button.Command  -> Python method (one way out of the View)
+    * TextBlock       -> OneWay read of a Python attribute
+    * TextBox / CheckBox / Slider -> TwoWay writes into Python state
+    * on_changed()    -> derived text computed in Python, pushed back to the UI
+
+  The ViewModel lives in main.py; nothing here knows it is not C++.
+-->
+<Page Background="AppBackground" Padding="0">
+  <ScrollViewer>
+    <StackPanel Orientation="Vertical" Margin="24" Spacing="14">
+
+      <TextBlock Text="{Binding heading}" FontSize="28" FontWeight="SemiBold"
+                 Foreground="TextPrimary"/>
+      <TextBlock Text="This ViewModel is a Python class in main.py. Every binding below goes through the _wui bridge; no C++ ViewModel is involved."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+      <!-- Command + OneWay number -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="1 · Command and OneWay" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Click me" Command="{Binding click}"/>
+            <Button Content="Reset" Command="{Binding reset}"/>
+            <TextBlock Text="{Binding click_count, StringFormat='clicks: {0}'}"
+                       FontSize="13" Foreground="TextSecondary"/>
+          </StackPanel>
+          <TextBlock Text="{Binding summary}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- TwoWay text -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="2 · TextBox with TwoWay" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBox Text="{Binding greeting, Mode=TwoWay}" PlaceholderText="Type something…"/>
+          <TextBlock Text="{Binding echo}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- TwoWay bool + derived text -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="3 · CheckBox" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <CheckBox Content="Agreed?" IsChecked="{Binding agreed}"/>
+          <TextBlock Text="{Binding agreement_text}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- TwoWay float -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="8">
+          <TextBlock Text="4 · Slider and float property" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <Slider Minimum="0" Maximum="1" Value="{Binding volume}"/>
+          <TextBlock Text="{Binding volume_text}" FontSize="12" Foreground="TextSecondary"/>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</Page>

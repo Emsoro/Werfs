@@ -214,6 +214,15 @@ public:
         index_.clear();
     }
 
+    // A source does not have to be an ObservableProperty<T>: foreign runtimes
+    // (the Python bridge in samples/basic_py) can supply their own
+    // IPropertySource implementation. Ownership stays with the caller, exactly
+    // as it does for the templated overload.
+    void Add(std::string name, IPropertySource* source) {
+        entries_.push_back(Entry{std::move(name), source});
+        index_.clear();
+    }
+
     const Entry* Find(std::string_view name) const {
         if (index_.empty())
             for (const auto& e : entries_) index_.emplace(e.name, &e);

@@ -59,6 +59,9 @@ struct HostOptions {
     int resourceId = 0;
     // Relative path used in loose-file mode, e.g. "samples\\list\\List.waml".
     std::string relativePath;
+    // Explicit markup file, bypassing the resource/loose-file switch. Used by
+    // the Python sample: its markup travels next to main.py in both run modes.
+    std::string markupPath;
     // Shown in the title bar next to the version.
     std::wstring title = L"Werfs sample";
     // Initial window size in DIPs. Sizing in DIPs keeps the layout the same
@@ -105,5 +108,11 @@ int RunSample(HINSTANCE instance,
 int RunSample(HINSTANCE instance,
               const HostOptions& options,
               std::shared_ptr<wui::RefObject> vm);
+
+// Releases the host's long-lived globals (widget tree, ViewModel, D2D objects).
+// An embedded interpreter needs this before Py_FinalizeEx: a ViewModel bridge
+// can hold PyObject references, and those must be dropped while Python lives.
+// Ordinary samples never need it -- process exit reclaims everything.
+void Shutdown();
 
 } // namespace sample

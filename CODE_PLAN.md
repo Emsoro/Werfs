@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.12.0.0
+> 版本：0.13.0.0
 > 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.12.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、两种渲染后端、**244 个测试**全绿，并交付 **7 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts`）共用一套宿主。
+当前 0.13.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**244 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -67,7 +67,7 @@ build.ps1  CMakeLists.txt
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 7 个示例（basic / list / editor / binding / theming / usercontrol / charts）共用同一 Win32+D2D 宿主 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 8 个示例（basic / list / editor / binding / theming / usercontrol / charts / basic_py）共用同一 Win32+D2D 宿主 |
 | **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
 | **文件选择器**（打开 / 保存 / 选文件夹） | ✅ **已接入示例** | `IFileDialogService` + Win32 实现；`editor` 的 File ▸ Open / Save as 真实可弹（§10b.1） |
 | **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
@@ -364,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.12.0.0         [ ok ]
+file version: 0.13.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -1659,6 +1659,32 @@ public:
 | 标签浮动成独立窗口 | 需要多窗口管理，另一个量级 |
 | 撤销/重做栈 | 这是文档模型（`UndoStack`）而非 UI 能力，可由示例自己实现 |
 | 富文本编辑 | `RichEditBox` 属 P2，与 GUI 框架层无关 |
+
+---
+
+## 10d. Python 驱动的示例（`samples/basic_py`）
+
+**目标**：验证「ViewModel 可以由外部运行时提供」这一架构边界——UI 引擎、WAML、绑定全部留在 C++，ViewModel 用 Python 写。两种运行方式共用同一份实现：
+
+| 方式 | 进程 | 入口 |
+|---|---|---|
+| `python main.py` | 系统 CPython | Python 加载 `_wui.pyd`，宿主在 Python 线程上跑消息循环 |
+| `waml_basic_py.exe` | C++ 启动器 | 嵌入系统 CPython → `import main` → `main()`；不复制任何 Python DLL |
+
+**桥接契约**：Python VM 在 `_wui_props` 里声明每个绑定属性的种类（`text`/`int`/`float`/`bool`/`command`）；native 侧为每个属性生成一个 `IPropertySource`、为每个 callable 生成一个 `ICommand`。Python 写入经 `ObservableObject.__setattr__` → `_wui._notify` → `NotifyFromPython()` 通知 binding；View 写入经 `WriteFromView()` 写回 Python 属性并调用 `on_changed(name, value)`，派生文本留在 ViewModel。`updating_` 标志是回声抑制，与 `Binding` 内部同构。
+
+**为支持外部源而对框架做的两处小改动**：
+1. `PropertyTable::Add(name, IPropertySource*)` 重载——原模板只接受 `ObservableProperty<T>&`，外国运行时的源无法注册；
+2. `HostOptions::markupPath` + `sample::Shutdown()`——前者避开「`python main.py` 下命令行首参是 main.py 而非 WAML」的误判；后者保证 PyObject 引用在 `Py_FinalizeEx()` 之前释放。
+
+**踩到的坑（都已固化在代码注释里）**：
+- CMakeLists 当时 `add_test(NAME unit ...)` 重复，configure 直接失败；框架源文件列表也落后于 `build.ps1`（缺 Animation/VisualStates/TextInput/TextInputWin32）。本次同步。
+- `Python3::Module`/`Python3::Python` 在 Windows 上链接的是 `pythonXY.lib`；稳定 ABI 必须显式链接 `python3.lib`，并且**包含 Python.h 的翻译单元也要定义 `Py_LIMITED_API`**，否则 `pyconfig.h` 的 `#pragma comment(lib,"python311.lib")` 会悄悄把它拉回来。
+- 本机 CPython 3.11 的 `EXTENSION_SUFFIXES` 只有 `.cp311-win_amd64.pyd` 和 `.pyd`，**没有 `.abi3.pyd`**；模块文件名因此用 `_wui.pyd`，「稳定 ABI」由编译宏而非文件名表达。
+- `PyMem_RawFree` 不在稳定 ABI 中，`Py_DecodeLocale` 的缓冲区按进程生命周期保留；`PyConfig` 也不在 `python3.lib` 里，启动器用 `Py_SetProgramName` + `Py_InitializeEx`。
+- GUI 子系统没有 stderr，启动器把 Python 的 `sys.stderr` 指向 exe 旁的 `python_error.log`，否则导入失败完全不可见。
+
+**验证**：`python main.py --selftest` 与 `waml_basic_py.exe --selftest` 均输出 `SELFTEST OK`、`binding errors: 0`，且 exe 目录中没有 Python DLL。
 
 ---
 # 第五部分：迭代路线
