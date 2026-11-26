@@ -43,7 +43,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
 | **主题** | Light/Dark 双主题，12 个语义 token；`HostOptions::themeProperty` 让页面用一个 bool 实时切换 |
-| **应用外壳** | 菜单栏（二级 + 三级子菜单，编辑器可从 View ▸ Appearance ▸ Font size 调标签内容字号）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
+| **应用外壳** | 菜单栏（二级 + 三级子菜单，编辑器可从 View ▸ Text &amp; font size ▸ Content font size 调标签内容字号）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
 | **文件对话框** | 打开 / 另存为 / 选文件夹，`IFileDialogService` 可注入假实现供无窗口测试 |
 | **快捷键** | `Ctrl+N` `Ctrl+O` `Ctrl+S` `Ctrl+W`；菜单上显示的提示与真正生效的按键是同一个字符串 |
 | **单文件分发** | 图标、清单、版本信息、WAML 全部打包进 exe |
@@ -102,7 +102,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `basic_py` | `_wui.pyd` `waml_basic_py.exe` | Python 驱动 MVVM 示例（经 CMake 构建，详见下文） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 255 个用例 |
+| `tests` | `waml_tests.exe` | 256 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -259,7 +259,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 255 个单元/集成用例 |
+| `waml_tests.exe` | 256 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -281,12 +281,12 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | File ▸ Open | 弹真实文件对话框，选中的文本文件成为新标签 |
 | File ▸ Save as | 弹真实保存对话框，写入磁盘并把当前内容设为「干净基准」 |
 | 缩窄窗口 | 工具栏尾部按钮收进 `⋯`，点 `⋯` 展开成菜单 |
-| View ▸ Appearance ▸ Font size ▸ 12/14/16/18 pt | 三级菜单：只改**标签内容**字号，标签与工具栏不变 |
+| View ▸ Text &amp; font size ▸ Content font size ▸ 12/14/16/18 pt | 三级菜单：只改**标签内容**字号，标签与工具栏不变 |
 | `Ctrl+N/O/S/W` | 新建 / 打开 / 保存 / 关闭当前标签 |
 
 菜单里的 **Save 在没有文档时是灰的** —— 打开 File 菜单按下「无文档」状态看一眼，就能确认菜单项启用状态是**打开菜单时**读的，不是加载界面时写死的。
 
-`View ▸ Appearance ▸ Font size` 是三级菜单：菜单层保存一条「打开到第几层、每层停在哪一行」的路径，因此每一层都有相同的悬停高亮、箭头与点击处理；`Esc` 每次只退回一层。字号只绑在编辑区那个 `TextBox` 的 `FontSize` 上，调用 `SetFontSize` 的四条命令与菜单行一一对应。
+`View ▸ Text &amp; font size ▸ Content font size` 是三级菜单：菜单层保存一条「打开到第几层、每层停在哪一行」的路径，因此每一层都有相同的悬停高亮、箭头与点击处理；`Esc` 每次只退回一层。字号只绑在编辑区那个 `TextBox` 的 `FontSize` 上，调用 `SetFontSize` 的四条命令与菜单行一一对应。
 
 ### 写法示例：菜单 / 工具栏 / 模态
 
@@ -309,7 +309,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
     </MenuBarItem>
     <MenuBarItem Title="View">
       <MenuFlyout>
-        <MenuFlyoutSubItem Text="Appearance">
+        <MenuFlyoutSubItem Text="Text &amp; font size">
           <MenuFlyout>
             <MenuFlyoutSubItem Text="{Binding FontSizeLabel}">
               <MenuFlyout>

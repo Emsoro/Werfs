@@ -5073,6 +5073,21 @@ TEST("shell: a third-level submenu opens and runs its command") {
     CHECK(!layer->Active());
 }
 
+TEST("shell: an unopened dialog does not swallow menu clicks") {
+    ShellFixture f(kShellMarkup);
+    CHECK(f.menu != nullptr);
+    if (!f.menu) return;
+    const Rect title = f.menu->TitleBounds(0);
+    const Point p{title.x + title.w * 0.5f, title.y + title.h * 0.5f};
+    // The dialog is declared LAST and covers the page in layout, but it is shown
+    // as a root overlay. A closed dialog must not be a hit target at all.
+    CHECK(f.root->HitTest(p) == f.menu);
+    if (Widget* hit = f.root->HitTest(p)) {
+        hit->OnPointerDown(hit->ToLocal(p));
+        CHECK(f.menu->OpenIndex() == 0);
+    }
+}
+
 TEST("shell: the command bar overflows instead of clipping") {
     ShellFixture f(kShellMarkup);
     CHECK(f.bar != nullptr);

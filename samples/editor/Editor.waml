@@ -114,13 +114,14 @@
         </MenuFlyout>
       </MenuBarItem>
       <!--
-        File ▸ Close is a SECOND-level submenu. View ▸ Appearance ▸ Font size is a
-        THIRD-level one: the menu layer keeps a path of open rows, so every level
-        gets the same hover, chevron and click handling as the top level.
+        File ▸ Close is a SECOND-level submenu. View ▸ Text &amp; font size ▸ Content
+        font size is a THIRD-level one: the menu layer keeps a path of open rows,
+        so every level gets the same hover, chevron and click handling as the
+        top level.
       -->
       <MenuBarItem Title="View">
         <MenuFlyout>
-          <MenuFlyoutSubItem Text="Appearance">
+          <MenuFlyoutSubItem Text="Text &amp; font size">
             <MenuFlyout>
               <MenuFlyoutSubItem Text="{Binding FontSizeLabel}">
                 <MenuFlyout>

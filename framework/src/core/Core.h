@@ -301,6 +301,12 @@ public:
     // The hosted widget tree, when this layer has one. Used by a control that
     // needs to keep a list's visual selection in sync with its own highlight.
     virtual Widget* Content() { return nullptr; }
+    // Menu layers expose how deep the open chain is and where each panel sits.
+    // The host does not need this to dispatch input, but a headless driver (or a
+    // debugger) can now click a third-level row using the same coordinates a
+    // reader sees, instead of guessing at submenu geometry.
+    virtual int MenuOpenDepth() const { return 0; }
+    virtual Rect MenuBoundsAt(int /*depth*/) const { return Bounds(); }
 };
 
 // ---------------------------------------------------------------------------

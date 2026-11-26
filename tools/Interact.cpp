@@ -646,26 +646,60 @@ int RunEditorChecks(Widget* root, const std::shared_ptr<sample::EditorVm>& vm) {
                 Expect(root->Overlay() == nullptr, "the overlay slot was released");
             }
 
+            // Real pointer path, all three panels: click the first row of each
+            // open menu at the position a reader actually sees it. This is the
+            // check that "clicking the top-level menu opens the next level".
+            const Rect viewTitle = menu->TitleBounds(2);
+            const Point viewClick{viewTitle.x + viewTitle.w * 0.5f,
+                                  viewTitle.y + viewTitle.h * 0.5f};
+            Widget* hit = root->HitTest(viewClick);
+            Expect(hit == menu, "the View title hit-tests to the MenuBar");
+            if (hit) hit->OnPointerDown(hit->ToLocal(viewClick));
+            Expect(menu->OpenIndex() == 2, "clicking the View title actually opened its menu");
+            if (OverlayLayer* pointerLayer = root->Overlay()) {
+                auto clickFirstRow = [&](int depth) {
+                    const Rect box = pointerLayer->MenuBoundsAt(depth);
+                    const Point p{box.x + box.w * 0.5f, box.y + 6.0f + 15.0f};
+                    pointerLayer->OnPointerMove(p);
+                    pointerLayer->OnPointerDown(p);
+                    pointerLayer->OnPointerUp(p);
+                };
+                Expect(pointerLayer->MenuOpenDepth() == 0, "the View panel is the only one open");
+                clickFirstRow(0); // Text & font size
+                Expect(pointerLayer->MenuOpenDepth() == 1,
+                       "clicking Text & font size opened the second panel");
+                clickFirstRow(1); // Content font size
+                Expect(pointerLayer->MenuOpenDepth() == 2,
+                       "clicking Content font size opened the third panel");
+                clickFirstRow(2); // 12 pt
+                Expect(!pointerLayer->Active(), "choosing 12 pt closed the chain");
+                Expect(vm->EditorFontSize.Get() == 12,
+                       "the pointer, not just the keyboard, changed the font size");
+            }
+
             // View ▸ Appearance ▸ Font size is three panels deep. Drive it with
             // keys: Down picks a row, Return opens the child or runs the command.
             menu->OpenMenu(2);
             OverlayLayer* viewLayer = root->Overlay();
             Expect(viewLayer != nullptr && viewLayer->Active(), "the View menu is open");
             if (viewLayer) {
-                Expect(vm->EditorFontSize.Get() == 14, "the editor starts at 14 pt");
+                Expect(vm->EditorFontSize.Get() == 12, "the pointer left the size at 12 pt");
                 viewLayer->OnKeyDown(KeyDown, 0);
-                viewLayer->OnKeyDown(KeyReturn, 0); // Appearance
+                viewLayer->OnKeyDown(KeyReturn, 0); // Text & font size
                 viewLayer->OnKeyDown(KeyDown, 0);
-                viewLayer->OnKeyDown(KeyReturn, 0); // Font size
+                viewLayer->OnKeyDown(KeyReturn, 0); // Content font size
                 viewLayer->OnKeyDown(KeyDown, 0);
-                viewLayer->OnKeyDown(KeyReturn, 0); // 12 pt
+                viewLayer->OnKeyDown(KeyDown, 0);
+                viewLayer->OnKeyDown(KeyDown, 0);
+                viewLayer->OnKeyDown(KeyDown, 0);
+                viewLayer->OnKeyDown(KeyReturn, 0); // 18 pt
                 Expect(!viewLayer->Active(), "choosing a size closes the chain");
-                Expect(vm->EditorFontSize.Get() == 12, "the third-level item set the size");
-                Expect(vm->FontSizeLabel.Get().find(L"12") != std::wstring::npos,
+                Expect(vm->EditorFontSize.Get() == 18, "the third-level item set the size");
+                Expect(vm->FontSizeLabel.Get().find(L"18") != std::wstring::npos,
                        "the menu label follows the chosen size");
                 Widget* box = FindFirst(root, "wui/TextBox");
                 if (box) {
-                    Expect(box->Get<int>(box->SlotOf("FontSize")) == 12,
+                    Expect(box->Get<int>(box->SlotOf("FontSize")) == 18,
                            "the tab content TextBox picked up the new size");
                 }
             }

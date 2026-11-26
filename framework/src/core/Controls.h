@@ -1412,6 +1412,10 @@ public:
     void OnPaint(PaintCtx&, const ThemePalette&) override {}
     Size Measure(const Size& available) override;
     void OnSlotChanged(int slot, const Value& value) override;
+    // The dialog is shown as a ROOT overlay, never as an in-tree control. Its
+    // layout box is not a hit target: without this override an unopened dialog
+    // declared at the end of a page swallows every click on the page above it.
+    Widget* HitTest(const Point&) override { return nullptr; }
 
     bool IsOpen() const { return open_; }
     void Show();

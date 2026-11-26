@@ -171,7 +171,8 @@ public:
     // Text size of the tab CONTENT, not of the UI chrome. Bound OneWay to the
     // editor TextBox; the View menu reaches it through third-level submenus.
     wui::ObservableProperty<int> EditorFontSize{"EditorFontSize", 14};
-    wui::ObservableProperty<std::wstring> FontSizeLabel{"FontSizeLabel", L"Font size (14 pt)"};
+    wui::ObservableProperty<std::wstring> FontSizeLabel{"FontSizeLabel",
+                                                        L"Content font size (14 pt)"};
 
     // Commands.
     wui::ObservableProperty<wui::RefPtr> NewCommand{"NewCommand"};

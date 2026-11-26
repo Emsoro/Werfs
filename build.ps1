@@ -59,9 +59,14 @@
     Diagnose with:  icacls <file>.exe | findstr /i "S-1-4"
 
 .EXAMPLE
-    pwsh -File build.ps1
-    pwsh -File build.ps1 all
+    pwsh -File build.ps1 editor      # only waml_editor.exe, incremental
+    pwsh -File build.ps1 charts      # only waml_charts.exe, incremental
+    pwsh -File build.ps1             # every sample
+    pwsh -File build.ps1 all         # samples + tools + tests
     pwsh -File build.ps1 debug -Clean
+
+    A single-sample target only recompiles sources that changed (a header edit
+    rebuilds that target's objects; a .waml edit only recompiles its .res).
 
 .EXAMPLE
     # Keep artifacts out of the repository (recommended in automated sessions).
@@ -86,7 +91,8 @@ $ErrorActionPreference = 'Stop'
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BuildScript = $MyInvocation.MyCommand.Path
+$ProjectDir = Split-Path -Parent $BuildScript
 $Framework  = Join-Path $ProjectDir 'framework'
 $SamplesRoot = Join-Path $ProjectDir 'samples'
 $IconSourceDir = Join-Path $SamplesRoot 'basic\resources'
@@ -294,6 +300,56 @@ function Get-ConfigFlags {
     return $script:ReleaseFlags
 }
 
+# ---------------------------------------------------------------------------
+# Incremental build support
+#
+# A target owns one object directory. We keep a signature of every header it can
+# include plus the build script itself: if that signature changes, all objects
+# are stale (a header edit can change any translation unit). Otherwise only
+# sources newer than their own .obj are recompiled. Without this, "build.ps1
+# editor" recompiled the entire framework for a one-line sample edit.
+# ---------------------------------------------------------------------------
+function Get-FileStamp {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return 'missing' }
+    $item = Get-Item -LiteralPath $Path
+    return "$($item.LastWriteTimeUtc.Ticks):$($item.Length)"
+}
+
+function Get-TextHash {
+    param([Parameter(Mandatory)][string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '')
+    } finally { $sha.Dispose() }
+}
+
+function Get-HeaderSignature {
+    param([string[]]$Dirs = @())
+    $text = New-Object System.Text.StringBuilder
+    [void]$text.Append((Get-FileStamp $script:BuildScript)).Append('|')
+    foreach ($dir in $Dirs) {
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { continue }
+        Get-ChildItem -LiteralPath $dir -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.h', '.hpp', '.inl') } |
+            Sort-Object FullName |
+            ForEach-Object { [void]$text.Append($_.FullName).Append((Get-FileStamp $_.FullName)).Append('|') }
+    }
+    return Get-TextHash $text.ToString()
+}
+
+function Test-SignatureStamp {
+    param([Parameter(Mandatory)][string]$StampPath, [Parameter(Mandatory)][string]$Signature)
+    if (-not (Test-Path -LiteralPath $StampPath)) { return $false }
+    return ((Get-Content -LiteralPath $StampPath -Raw).Trim() -eq $Signature)
+}
+
+function Set-SignatureStamp {
+    param([Parameter(Mandatory)][string]$StampPath, [Parameter(Mandatory)][string]$Signature)
+    Set-Content -LiteralPath $StampPath -Value $Signature -NoNewline
+}
+
 # Compiles and links one executable.
 #
 # Each configuration keeps its own object directory so switching between
@@ -330,21 +386,63 @@ function Build-Executable {
     $compileArgs = @('/nologo', '/c', '/std:c++20', '/EHsc', '/utf-8', '/W4',
                      '/permissive-', '/MP', '/FS', '/Zc:__cplusplus', '/Zc:preprocessor') +
                    $CommonDefs + $includeFlags + $flags +
-                   @("/Fo$objDir\", "/Fd$objDir\vc140.pdb") + $Sources
-    Invoke-Tool 'cl' $compileArgs
+                   @("/Fo$objDir\", "/Fd$objDir\vc140.pdb")
 
-    $objects = Get-ChildItem -LiteralPath $objDir -Filter '*.obj' |
-        ForEach-Object { $_.FullName }
-    if ($objects.Count -eq 0) {
-        throw "No object files were produced in $objDir"
+    $headerDirs = @($Includes + $ExtraIncludes | ForEach-Object {
+        if ($_ -like '/I*') { $_.Substring(2) } else { $_ }
+    } | Where-Object { Test-Path -LiteralPath $_ })
+    $signature = Get-TextHash ($Config + '|' + ($flags -join '|') + '|' +
+                                (Get-HeaderSignature -Dirs $headerDirs))
+    $compileStamp = Join-Path $objDir '.signature'
+    $headersStale = -not (Test-SignatureStamp $compileStamp $signature)
+
+    $objectFor = @{}
+    foreach ($src in $Sources) {
+        $objectFor[$src] = Join-Path $objDir ([System.IO.Path]::GetFileNameWithoutExtension($src) + '.obj')
+    }
+    $stale = @()
+    foreach ($src in $Sources) {
+        $obj = $objectFor[$src]
+        if ($headersStale -or -not (Test-Path -LiteralPath $obj) -or
+            ((Get-Item -LiteralPath $src).LastWriteTimeUtc -gt
+             (Get-Item -LiteralPath $obj).LastWriteTimeUtc)) {
+            $stale += $src
+        }
+    }
+
+    if ($stale.Count -gt 0) {
+        Write-Host "    compiling $($stale.Count)/$($Sources.Count) sources" -ForegroundColor DarkGray
+        Invoke-Tool 'cl' ($compileArgs + $stale)
+        Set-SignatureStamp $compileStamp $signature
+    } else {
+        Write-Host "    up to date ($($Sources.Count) sources)" -ForegroundColor DarkGray
+    }
+
+    $objects = @($Sources | ForEach-Object { $objectFor[$_] })
+    $missing = @($objects | Where-Object { -not (Test-Path -LiteralPath $_) })
+    if ($missing.Count -gt 0) {
+        throw "No object files were produced in $objDir (missing: $($missing -join ', '))"
     }
 
     $exePath = Join-Path $OutDir "$Config\$ExeName.exe"
-    $linkArgs = @(
-        '/nologo', '/DEBUG', "/OUT:$exePath", '/INCREMENTAL:NO',
-        '/MANIFEST:EMBED', "/MANIFESTINPUT:$ManifestPath"
-    ) + $objects + @($ResourceObj) + $Libs + $ExtraLink
-    Invoke-Tool 'link' $linkArgs
+    # Relink when any input is newer than the exe, or when the build signature
+    # changed (version stamping lives in build.ps1, not in a header).
+    $inputs = @($objects) + @($ResourceObj, $ManifestPath) |
+        Where-Object { Test-Path -LiteralPath $_ }
+    $newestInput = ($inputs | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } |
+        Measure-Object -Maximum).Maximum
+    $linkStamp = Join-Path $objDir '.link-signature'
+    $needLink = (-not (Test-Path -LiteralPath $exePath)) -or
+                ((Get-Item -LiteralPath $exePath).LastWriteTimeUtc -lt $newestInput) -or
+                (-not (Test-SignatureStamp $linkStamp $signature))
+    if ($needLink) {
+        $linkArgs = @(
+            '/nologo', '/DEBUG', "/OUT:$exePath", '/INCREMENTAL:NO',
+            '/MANIFEST:EMBED', "/MANIFESTINPUT:$ManifestPath"
+        ) + $objects + @($ResourceObj) + $Libs + $ExtraLink
+        Invoke-Tool 'link' $linkArgs
+        Set-SignatureStamp $linkStamp $signature
+    }
 
     return $exePath
 }
@@ -364,6 +462,15 @@ function Build-Resource {
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ResObj) | Out-Null
 
+    $resSignature = Get-TextHash ($VersionString + '|' +
+        ((@($ResourceScript, $IconFile, $script:BuildScript) |
+            ForEach-Object { Get-FileStamp $_ }) -join '|'))
+    $resStamp = "$ResObj.sig"
+    if ((Test-Path -LiteralPath $ResObj) -and
+        (Test-SignatureStamp $resStamp $resSignature)) {
+        return
+    }
+
     $rcArgs = @(
         '/nologo'
         "/fo$ResObj"
@@ -374,6 +481,7 @@ function Build-Resource {
         $ResourceScript
     )
     Invoke-Tool 'rc' $rcArgs
+    Set-SignatureStamp $resStamp $resSignature
     Write-Host "  resources -> $ResObj" -ForegroundColor DarkGray
 }
 
@@ -575,6 +683,25 @@ function Build-SampleResource {
     }
     $resObj = Join-Path $OutDir "objres\$Name.res"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resObj) | Out-Null
+
+    # Marking a .res as up to date matters for linking too: rc.exe rewriting it
+    # on every build would make every sample relink even when nothing changed.
+    $inputs = @($rc, $ico, $script:BuildScript)
+    $header = Get-ChildItem -LiteralPath (Join-Path $Dir 'resources') -Filter '*Resource.h' |
+        Select-Object -First 1
+    if ($header) { $inputs += $header.FullName }
+    $match = [regex]::Match((Get-Content -LiteralPath $rc -Raw), 'WAML_DOC\s+"([^"]+)"')
+    if ($match.Success) {
+        $inputs += Join-Path (Split-Path -Parent $rc) $match.Groups[1].Value
+    }
+    $resSignature = Get-TextHash ($VersionString + '|' +
+        (($inputs | ForEach-Object { Get-FileStamp $_ }) -join '|'))
+    $resStamp = "$resObj.sig"
+    if ((Test-Path -LiteralPath $resObj) -and
+        (Test-SignatureStamp $resStamp $resSignature)) {
+        return $resObj
+    }
+
     $rcArgs = @(
         '/nologo'
         "/fo$resObj"
@@ -585,6 +712,7 @@ function Build-SampleResource {
         $rc
     )
     Invoke-Tool 'rc' $rcArgs
+    Set-SignatureStamp $resStamp $resSignature
     Write-Host "  $Name resources -> $resObj" -ForegroundColor DarkGray
     return $resObj
 }

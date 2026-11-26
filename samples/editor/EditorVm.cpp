@@ -182,7 +182,7 @@ void EditorVm::SetFontSize(int size) {
     const int clamped = std::clamp(size, 10, 24);
     if (EditorFontSize.Get() == clamped) return;
     EditorFontSize.Set(clamped);
-    FontSizeLabel.Set(L"Font size (" + std::to_wstring(clamped) + L" pt)");
+    FontSizeLabel.Set(L"Content font size (" + std::to_wstring(clamped) + L" pt)");
 }
 
 void EditorVm::RefreshProperties() {

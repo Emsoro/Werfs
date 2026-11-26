@@ -136,6 +136,11 @@ public:
     }
 
     Rect Bounds() const override { return bounds_; }
+    int MenuOpenDepth() const override { return static_cast<int>(openPath_.size()); }
+    Rect MenuBoundsAt(int depth) const override {
+        if (depth < 0 || static_cast<size_t>(depth) > openPath_.size()) return Rect{};
+        return MenuBounds(static_cast<size_t>(depth));
+    }
 
     void Paint(PaintCtx& ctx, const ThemePalette& palette) override {
         // Every level uses the same row renderer. The previous version had a
