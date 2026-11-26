@@ -631,7 +631,7 @@ int RunEditorChecks(Widget* root, const std::shared_ptr<sample::EditorVm>& vm) {
         auto* menu = dynamic_cast<MenuBar*>(menuWidget);
         Expect(menu != nullptr, "MenuBar has the expected type");
         if (menu) {
-            Expect(menu->Items().size() == 3, "File / Edit / Help");
+            Expect(menu->Items().size() == 4, "File / Edit / View / Help");
             menu->OpenMenu(0);
             OverlayLayer* layer = root->Overlay();
             Expect(layer != nullptr && layer->Active(), "the File menu is open");
@@ -644,6 +644,30 @@ int RunEditorChecks(Widget* root, const std::shared_ptr<sample::EditorVm>& vm) {
                        "New from the menu created a document");
                 Expect(!layer->Active(), "and the menu closed");
                 Expect(root->Overlay() == nullptr, "the overlay slot was released");
+            }
+
+            // View ▸ Appearance ▸ Font size is three panels deep. Drive it with
+            // keys: Down picks a row, Return opens the child or runs the command.
+            menu->OpenMenu(2);
+            OverlayLayer* viewLayer = root->Overlay();
+            Expect(viewLayer != nullptr && viewLayer->Active(), "the View menu is open");
+            if (viewLayer) {
+                Expect(vm->EditorFontSize.Get() == 14, "the editor starts at 14 pt");
+                viewLayer->OnKeyDown(KeyDown, 0);
+                viewLayer->OnKeyDown(KeyReturn, 0); // Appearance
+                viewLayer->OnKeyDown(KeyDown, 0);
+                viewLayer->OnKeyDown(KeyReturn, 0); // Font size
+                viewLayer->OnKeyDown(KeyDown, 0);
+                viewLayer->OnKeyDown(KeyReturn, 0); // 12 pt
+                Expect(!viewLayer->Active(), "choosing a size closes the chain");
+                Expect(vm->EditorFontSize.Get() == 12, "the third-level item set the size");
+                Expect(vm->FontSizeLabel.Get().find(L"12") != std::wstring::npos,
+                       "the menu label follows the chosen size");
+                Widget* box = FindFirst(root, "wui/TextBox");
+                if (box) {
+                    Expect(box->Get<int>(box->SlotOf("FontSize")) == 12,
+                           "the tab content TextBox picked up the new size");
+                }
             }
         }
     }
@@ -1416,44 +1440,59 @@ int RunChartsChecks(Widget* root, const std::shared_ptr<sample::ChartsVm>& vm) {
         std::printf("    bar chart: %zu of %zu points\n", barPlot->LastDrawnPoints(), n);
     }
 
-    std::printf("\n[8] the frame measurement really measures\n");
+    std::printf("\n[8] the mixed figure and the K-line figure carry their data\n");
     {
-        // The measurement now happens at construction (it feeds the bar chart), so
-        // this asserts the RESULT rather than triggering it. A label of "None 0.00 ms"
-        // is what a measurement over an unseeded window produced, so checking that the
-        // slow case is actually slow catches that class of defect.
-        const std::wstring label = vm->FrameRateLabel.Get();
-        Expect(!label.empty(), "a frame-rate measurement was produced");
-        Expect(label.find(L"ms") != std::wstring::npos, "and it reports milliseconds");
-        Expect(label.find(L"LTTB") != std::wstring::npos, "with the modes named");
-        std::printf("    %ls\n", label.c_str());
-        Expect(label.find(L"None 0.00") == std::wstring::npos,
-               "the unreduced case was actually measured (not over an empty window)");
+        Chart* mixed = charts[1];
+        auto barSeries = std::dynamic_pointer_cast<ChartSeries>(vm->BarSeries.Get());
+        auto lineSeries = std::dynamic_pointer_cast<ChartSeries>(vm->LineSeries.Get());
+        Expect(barSeries && barSeries->Count() == 50, "the bar series has 50 points");
+        Expect(lineSeries && lineSeries->Count() == 50, "the trend series has 50 points");
+        Expect(barPlot->OverlaySeries() != nullptr, "the plot received the line overlay");
+        if (barPlot->OverlaySeries()) {
+            Expect(barPlot->OverlaySeries()->Count() == 50,
+                   "the overlay is the full 50-point line, not a downsample of it");
+        }
+        Expect(mixed->Get<bool>(mixed->SlotOf("ShowBars")), "bars start visible");
+        Expect(mixed->Get<bool>(mixed->SlotOf("ShowLine")), "the line starts visible");
 
-        auto probe = std::make_shared<ChartPlot>();
-        probe->SetStream(stream);
-        probe->SetAutoFit(true);
-        SoftwareRasterizer raster(700, 300);
-        const ThemePalette palette = MakePalette(ThemeKind::Light);
-        auto timeOnce = [&](DownsampleMode mode) {
-            probe->SetDownsampleMode(mode);
-            probe->ForceLayout(Size{700, 300});
-            // steady_clock: the tool is headless and must not assume windows.h.
-            const auto t0 = std::chrono::steady_clock::now();
-            for (int i = 0; i < 3; ++i) {
-                RasterPaintContext ctx(raster);
-                probe->PaintTree(ctx, palette);
-            }
-            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                            t0)
-                .count();
-        };
-        const double reduced = timeOnce(DownsampleMode::Lttb);
-        const double full = timeOnce(DownsampleMode::None);
-        std::printf("    reduced %.1f ms vs unreduced %.1f ms (3 frames)\n", reduced, full);
-        // The DIRECTION is the claim. Only asserted when the slow case is clearly
-        // above timer noise.
-        if (full > 20) Expect(reduced < full, "the reduced pass is faster");
+        const Color barBefore = mixed->Get<Color>(mixed->SlotOf("BarColor"));
+        vm->BarR.Set(10);
+        vm->BarG.Set(20);
+        vm->BarB.Set(30);
+        const Color barAfter = mixed->Get<Color>(mixed->SlotOf("BarColor"));
+        Expect(!(barBefore == barAfter), "the colour sliders reach the chart");
+        std::printf("    bar colour %.2f %.2f %.2f -> %.2f %.2f %.2f\n", barBefore.r, barBefore.g,
+                    barBefore.b, barAfter.r, barAfter.g, barAfter.b);
+
+        Chart* kline = charts[2];
+        auto candles = std::dynamic_pointer_cast<CandleSeries>(vm->CandleSeries.Get());
+        Expect(candles && candles->Count() == 120, "the K-line source has 120 days");
+        Expect(kline->Plot()->Candles() != nullptr, "the chart owns the candle series");
+        vm->RangeStart.Set(90);
+        vm->RangeEnd.Set(119);
+        candles = std::dynamic_pointer_cast<CandleSeries>(vm->CandleSeries.Get());
+        Expect(candles && candles->Count() == 30, "the range sliders selected 30 days");
+        Expect(vm->RangeLabel.Get().find(L"30 days") != std::wstring::npos,
+               "the range label follows the sliders");
+
+        root->ForceLayout(Size{840, 1500});
+        RecordingPaintContext everything;
+        root->PaintTree(everything, MakePalette(ThemeKind::Light));
+        const size_t allOps = everything.OpCount();
+
+        mixed->SetSlotValue(mixed->SlotOf("ShowBars"), Value::Bool(false));
+        RecordingPaintContext noBars;
+        root->PaintTree(noBars, MakePalette(ThemeKind::Light));
+        Expect(noBars.OpCount() < allOps, "hiding the bars removes drawing operations");
+        mixed->SetSlotValue(mixed->SlotOf("ShowBars"), Value::Bool(true));
+
+        kline->SetSlotValue(kline->SlotOf("Candles"), Value::Null());
+        RecordingPaintContext noCandles;
+        root->PaintTree(noCandles, MakePalette(ThemeKind::Light));
+        Expect(noCandles.OpCount() < allOps, "the candles contribute drawing operations");
+        kline->SetSlotValue(kline->SlotOf("Candles"), Value::Ref(vm->CandleSeries.Get()));
+        std::printf("    paint ops: all=%zu no-bars=%zu no-candles=%zu\n", allOps,
+                    noBars.OpCount(), noCandles.OpCount());
     }
 
     std::printf("\n[9] the chart moves with the page when it scrolls\n");
@@ -1590,6 +1629,23 @@ int RunChartsChecks(Widget* root, const std::shared_ptr<sample::ChartsVm>& vm) {
                         atTopPixels.size());
             Expect(differing > atTopPixels.size() / 10,
                    "scrolling moves a large part of the page, chart included");
+
+            // Viewport pause: the control publishes which chart is on screen, and
+            // the ViewModel honours it by not advancing the live stream.
+            root->ForceLayout(Size{840, 700});
+            scroller->ScrollTo(scroller->MaxScroll());
+            RecordingPaintContext viewportLog;
+            root->PaintTree(viewportLog, MakePalette(ThemeKind::Light));
+            Expect(!vm->Chart1Visible.Get(), "the live chart reports itself offscreen");
+            const size_t totalWhileOffscreen = stream->TotalPushed();
+            Expect(!vm->Tick(0.1f), "the stream does not advance while offscreen");
+            Expect(stream->TotalPushed() == totalWhileOffscreen, "and no samples are pushed");
+
+            scroller->ScrollTo(0.0f);
+            RecordingPaintContext topLog;
+            root->PaintTree(topLog, MakePalette(ThemeKind::Light));
+            Expect(vm->Chart1Visible.Get(), "the live chart reports itself visible again");
+            Expect(vm->Tick(0.1f), "and the stream resumes when it comes back");
             scroller->ScrollTo(0.0f);
             root->ForceLayout(Size{840, 1500});
         }

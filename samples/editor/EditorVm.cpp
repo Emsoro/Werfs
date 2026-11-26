@@ -57,6 +57,12 @@ EditorVm::EditorVm()
     CloseTabCommand.Set(std::make_shared<wui::RelayCommand>([this] { CloseActiveDocument(); }));
     ReopenCommand.Set(std::make_shared<wui::RelayCommand>(
         [this] { return lastClosed_ != nullptr; }, [this] { ReopenLastClosed(); }));
+    // Four explicit commands instead of a parameterised one: RelayCommand has no
+    // CommandParameter, and a menu item is a row with a command, not a form.
+    Font12Command.Set(std::make_shared<wui::RelayCommand>([this] { SetFontSize(12); }));
+    Font14Command.Set(std::make_shared<wui::RelayCommand>([this] { SetFontSize(14); }));
+    Font16Command.Set(std::make_shared<wui::RelayCommand>([this] { SetFontSize(16); }));
+    Font18Command.Set(std::make_shared<wui::RelayCommand>([this] { SetFontSize(18); }));
 
     Make("Documents", Documents);
     Make("ActiveIndex", ActiveIndex);
@@ -71,12 +77,18 @@ EditorVm::EditorVm()
     Make("PromptMessage", PromptMessage);
     Make("PromptResult", PromptResult);
     Make("CanSave", CanSave);
+    Make("EditorFontSize", EditorFontSize);
+    Make("FontSizeLabel", FontSizeLabel);
     Make("NewCommand", NewCommand);
     Make("OpenCommand", OpenCommand);
     Make("SaveCommand", SaveCommand);
     Make("SaveAsCommand", SaveAsCommand);
     Make("CloseTabCommand", CloseTabCommand);
     Make("ReopenCommand", ReopenCommand);
+    Make("Font12Command", Font12Command);
+    Make("Font14Command", Font14Command);
+    Make("Font16Command", Font16Command);
+    Make("Font18Command", Font18Command);
 
     SeedDocuments();
 
@@ -164,6 +176,13 @@ void EditorVm::SyncActive() {
     }
     RefreshProperties();
     syncing_ = false;
+}
+
+void EditorVm::SetFontSize(int size) {
+    const int clamped = std::clamp(size, 10, 24);
+    if (EditorFontSize.Get() == clamped) return;
+    EditorFontSize.Set(clamped);
+    FontSizeLabel.Set(L"Font size (" + std::to_wstring(clamped) + L" pt)");
 }
 
 void EditorVm::RefreshProperties() {

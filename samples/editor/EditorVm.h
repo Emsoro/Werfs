@@ -168,6 +168,11 @@ public:
     // toolbar button, which is the visible proof that menu enabled state is live.
     wui::ObservableProperty<bool> CanSave{"CanSave", false};
 
+    // Text size of the tab CONTENT, not of the UI chrome. Bound OneWay to the
+    // editor TextBox; the View menu reaches it through third-level submenus.
+    wui::ObservableProperty<int> EditorFontSize{"EditorFontSize", 14};
+    wui::ObservableProperty<std::wstring> FontSizeLabel{"FontSizeLabel", L"Font size (14 pt)"};
+
     // Commands.
     wui::ObservableProperty<wui::RefPtr> NewCommand{"NewCommand"};
     wui::ObservableProperty<wui::RefPtr> OpenCommand{"OpenCommand"};
@@ -175,6 +180,10 @@ public:
     wui::ObservableProperty<wui::RefPtr> SaveAsCommand{"SaveAsCommand"};
     wui::ObservableProperty<wui::RefPtr> CloseTabCommand{"CloseTabCommand"};
     wui::ObservableProperty<wui::RefPtr> ReopenCommand{"ReopenCommand"};
+    wui::ObservableProperty<wui::RefPtr> Font12Command{"Font12Command"};
+    wui::ObservableProperty<wui::RefPtr> Font14Command{"Font14Command"};
+    wui::ObservableProperty<wui::RefPtr> Font16Command{"Font16Command"};
+    wui::ObservableProperty<wui::RefPtr> Font18Command{"Font18Command"};
 
     // The dialog service, injectable so tests never open a real file dialog.
     void SetDialogService(wui::IFileDialogService* service) { dialogs_ = service; }
@@ -189,6 +198,7 @@ public:
     std::shared_ptr<Document> DocAt(size_t index) const;
 
 private:
+    void SetFontSize(int size);
     void RefreshProperties();
     void RemoveAt(int index);
     void SeedDocuments();

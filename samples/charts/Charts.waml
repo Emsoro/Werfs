@@ -1,20 +1,14 @@
 <?waml version="0.1"?>
 <!--
-  samples/charts — a LIVE chart, and why downsampling is not optional.
+  samples/charts — three figures, one visible at a time.
 
-  The page's subject is a moving signal, not a still picture. A ring buffer holds a
-  fixed 1,000,000 points; new samples arrive every frame and the oldest are
-  overwritten, so the window slides left across the signal while its cost stays
-  constant. The frame rate is drawn in the plot's top-right corner by the control
-  itself, measured from real paint intervals.
-
-  Everything else on the page exists to make that claim checkable:
-
-    section 2  the same window with downsampling OFF. The chart becomes a wall of
-               line segments and the fps readout drops -- on the same data, in the
-               same layout.
-    section 3  a bar chart on discrete categories: the ordinary case, where
-               nothing needs reducing.
+  The first figure is a million-point ring buffer that keeps sliding. The second
+  is fifty discrete measurements with a fifty-point trend line over them: the
+  reader decides whether bars and/or line are drawn and what colour each one is.
+  The third is an OHLC K-line chart with a range picked by the two sliders below
+  it. Chart.ViewportVisible is published by the control from its ScrollViewer
+  geometry; the page binds it back so an offscreen figure is paused rather than
+  merely clipped.
 
   Bound to sample::ChartsVm in ChartsVm.h.
 -->
@@ -23,9 +17,9 @@
     <StackPanel Orientation="Vertical" Margin="24" Spacing="18">
 
       <!-- ================= Header ================= -->
-      <TextBlock Text="Live Charts &amp; Downsampling" FontSize="30" FontWeight="SemiBold"
+      <TextBlock Text="Live Charts, Mixed Series &amp; K-Lines" FontSize="30" FontWeight="SemiBold"
                  Foreground="TextPrimary"/>
-      <TextBlock Text="A million points that keep moving. New samples arrive every frame and the oldest are dropped, so the window costs the same after an hour as it does after a second — and the frame rate in the corner is measured from the paint itself, not assumed."
+      <TextBlock Text="Only the figure inside the viewport is painted. Scroll down and the million-point window stops advancing; scroll back and it resumes from where it paused."
                  FontSize="13" Foreground="TextSecondary" TextWrapping="Wrap"/>
 
       <!-- ================= 1. The live window ================= -->
@@ -36,26 +30,18 @@
                      FontWeight="SemiBold" Foreground="TextPrimary"/>
           <TextBlock Text="{Binding ModeLabel}" FontSize="12" Foreground="TextSecondary"
                      TextWrapping="Wrap"/>
-
-          <!--
-            ShowFps draws the frame rate inside the plot, top-right. The control owns
-            this because only the control knows when a frame was painted; a page that
-            computed fps from its own timer would be reporting the timer.
-          -->
-          <Chart Series="{Binding Stream}" Height="320" AutoFit="True"
+          <Chart Series="{Binding Stream}" Height="300" AutoFit="True"
                  ShowFps="{Binding ShowFps}"
                  Downsample="{Binding DownsampleMode}"
+                 ViewportVisible="{Binding Chart1Visible, Mode=TwoWay}"
                  DrawnPoints="{Binding DrawnPoints, Mode=TwoWay}"
                  SourcePoints="{Binding SourcePoints, Mode=TwoWay}"/>
-
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="{Binding ToggleStreamText}" Command="{Binding ToggleStreamCommand}"/>
             <Button Content="Downsampling ON (LTTB)" Command="{Binding DownsampleOnCommand}"/>
             <Button Content="Downsampling OFF" Command="{Binding DownsampleOffCommand}"/>
             <Button Content="Reset window" Command="{Binding ResetCommand}"/>
           </StackPanel>
-
-          <!-- The numbers below are resolved by the chart from its budget and data. -->
           <TextBlock Text="{Binding Timing}" FontSize="13" FontWeight="SemiBold"
                      Foreground="TextPrimary" TextWrapping="Wrap"/>
           <TextBlock Text="{Binding StreamStateLabel}" FontSize="12" Foreground="TextSecondary"
@@ -67,42 +53,98 @@
         </StackPanel>
       </Border>
 
-      <!-- ================= 2. Frame measurement ================= -->
+      <!-- ================= 2. 50 bars + 50 line points ================= -->
       <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
               CornerRadius="8" Padding="16">
         <StackPanel Orientation="Vertical" Spacing="10">
-          <TextBlock Text="2 · The same window, measured both ways" FontSize="17"
+          <TextBlock Text="2 · Fifty bars, fifty points, one axis" FontSize="17"
                      FontWeight="SemiBold" Foreground="TextPrimary"/>
-          <TextBlock Text="Runs the live window through the same plot twice, reduced and not, and times a full frame into the framework's software rasterizer. The software backend is used because it needs no window or GPU, so the number is the same in CI as on a desktop — and it is the slower backend, so the ratio is conservative."
+          <TextBlock Text="The bars are discrete measurements; the line is their smoothed trend plus a seasonal term. Both series carry 50 points and share the chart's transform, so a bar and its trend always line up."
                      FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
-          <TextBlock Text="{Binding FrameRateLabel}" FontSize="13" FontWeight="SemiBold"
-                     Foreground="TextPrimary" TextWrapping="Wrap"/>
-          <TextBlock Text="{Binding FrameRateDetail}" FontSize="12" Foreground="TextSecondary"
+          <Chart Series="{Binding BarSeries}" OverlaySeries="{Binding LineSeries}"
+                 Height="260" AutoFit="True" Downsample="None" PlotKind="Bar"
+                 BarColor="{Binding BarColor}" LineColor="{Binding LineColor}"
+                 ShowBars="{Binding ShowBars}" ShowLine="{Binding ShowLine}"
+                 ViewportVisible="{Binding Chart2Visible, Mode=TwoWay}"/>
+          <StackPanel Orientation="Horizontal" Spacing="14">
+            <CheckBox Content="Show bars" IsChecked="{Binding ShowBars, Mode=TwoWay}"/>
+            <CheckBox Content="Show line" IsChecked="{Binding ShowLine, Mode=TwoWay}"/>
+            <Shape Kind="Rectangle" ShapeWidth="30" ShapeHeight="14" Fill="{Binding BarColor}"/>
+            <Shape Kind="Rectangle" ShapeWidth="30" ShapeHeight="14" Fill="{Binding LineColor}"
+                   Margin="8,0,0,0"/>
+          </StackPanel>
+          <TextBlock Text="{Binding ComparisonLabel}" FontSize="12" Foreground="TextSecondary"
                      TextWrapping="Wrap"/>
+
+          <TextBlock Text="Bar colour" FontSize="12" FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="R" Width="18" FontSize="12" Foreground="TextSecondary"
+                       VerticalAlignment="Center"/>
+            <Slider Minimum="0" Maximum="255" StepFrequency="1" Width="120"
+                    Value="{Binding BarR, Mode=TwoWay}"/>
+            <TextBlock Text="G" Width="18" FontSize="12" Foreground="TextSecondary"
+                       VerticalAlignment="Center"/>
+            <Slider Minimum="0" Maximum="255" StepFrequency="1" Width="120"
+                    Value="{Binding BarG, Mode=TwoWay}"/>
+            <TextBlock Text="B" Width="18" FontSize="12" Foreground="TextSecondary"
+                       VerticalAlignment="Center"/>
+            <Slider Minimum="0" Maximum="255" StepFrequency="1" Width="120"
+                    Value="{Binding BarB, Mode=TwoWay}"/>
+          </StackPanel>
+          <TextBlock Text="Line colour" FontSize="12" FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="R" Width="18" FontSize="12" Foreground="TextSecondary"
+                       VerticalAlignment="Center"/>
+            <Slider Minimum="0" Maximum="255" StepFrequency="1" Width="120"
+                    Value="{Binding LineR, Mode=TwoWay}"/>
+            <TextBlock Text="G" Width="18" FontSize="12" Foreground="TextSecondary"
+                       VerticalAlignment="Center"/>
+            <Slider Minimum="0" Maximum="255" StepFrequency="1" Width="120"
+                    Value="{Binding LineG, Mode=TwoWay}"/>
+            <TextBlock Text="B" Width="18" FontSize="12" Foreground="TextSecondary"
+                       VerticalAlignment="Center"/>
+            <Slider Minimum="0" Maximum="255" StepFrequency="1" Width="120"
+                    Value="{Binding LineB, Mode=TwoWay}"/>
+          </StackPanel>
         </StackPanel>
       </Border>
 
-      <!-- ================= 3. Category bar chart ================= -->
+      <!-- ================= 3. K-line chart ================= -->
       <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
               CornerRadius="8" Padding="16">
         <StackPanel Orientation="Vertical" Spacing="10">
-          <TextBlock Text="3 · Bar chart on discrete categories" FontSize="17"
+          <TextBlock Text="3 · K-line (candlestick) with a time range" FontSize="17"
                      FontWeight="SemiBold" Foreground="TextPrimary"/>
-          <TextBlock Text="{Binding CategoryLabel}" FontSize="12" Foreground="TextSecondary"
-                     TextWrapping="Wrap"/>
-          <TextBlock Text="The same one-million-point window under each mode. &quot;None&quot; is a full million segments per frame; the three reducing modes converge on roughly one point per pixel, which is why they finish and it does not."
+          <TextBlock Text="Each candle is one day: the body spans open to close, the wick spans high to low. Pick the visible range with the two sliders underneath, or use a preset."
                      FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
-          <Chart Series="{Binding CategorySeries}" Height="220" AutoFit="True"
-                 Downsample="None" PlotKind="Bar"/>
+          <Chart Candles="{Binding CandleSeries}" Height="280" AutoFit="True"
+                 CandleUpColor="{Binding CandleUpColor}"
+                 CandleDownColor="{Binding CandleDownColor}"
+                 ViewportVisible="{Binding Chart3Visible, Mode=TwoWay}"/>
+          <TextBlock Text="{Binding CandleNote}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="All" Command="{Binding RangeAllCommand}"/>
+            <Button Content="Last 30 days" Command="{Binding Range30Command}"/>
+            <Button Content="Last 7 days" Command="{Binding Range7Command}"/>
+          </StackPanel>
+          <TextBlock Text="Range start" FontSize="12" FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <Slider Minimum="0" Maximum="119" StepFrequency="1"
+                  Value="{Binding RangeStart, Mode=TwoWay}"/>
+          <TextBlock Text="Range end" FontSize="12" FontWeight="SemiBold" Foreground="TextPrimary"/>
+          <Slider Minimum="0" Maximum="119" StepFrequency="1"
+                  Value="{Binding RangeEnd, Mode=TwoWay}"/>
+          <TextBlock Text="{Binding RangeLabel}" FontSize="13" FontWeight="SemiBold"
+                     Foreground="TextPrimary" TextWrapping="Wrap"/>
         </StackPanel>
       </Border>
 
       <!-- ================= Footer ================= -->
+      <TextBlock Text="{Binding ViewportLabel}" FontSize="12" Foreground="TextPrimary"
+                 TextWrapping="Wrap"/>
       <TextBlock Text="{Binding PointsLabel}" FontSize="12" Foreground="TextSecondary"
-                 TextWrapping="Wrap" Padding="0,0,0,4"/>
-      <TextBlock Text="Every number on this page comes from the control's own counters, and the frame rate from the interval between real paints. A claim about frame cost that is not measured by the thing doing the drawing is a claim about nothing."
-                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap" Padding="0,0,0,16"/>
-
+                 TextWrapping="Wrap" Padding="0,0,0,16"/>
     </StackPanel>
   </ScrollViewer>
 </Page>

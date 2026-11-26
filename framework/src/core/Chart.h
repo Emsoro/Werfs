@@ -88,6 +88,28 @@ public:
     const std::shared_ptr<ChartStream>& Stream() const { return stream_; }
     bool IsLive() const { return stream_ != nullptr; }
 
+    // A second series drawn under/over the primary one. The bar chart uses it
+    // for the 50-point line: one x range, two different visual encodings.
+    void SetOverlaySeries(std::shared_ptr<ChartSeries> series);
+    const std::shared_ptr<ChartSeries>& OverlaySeries() const { return overlaySeries_; }
+    void SetCandles(std::shared_ptr<CandleSeries> candles);
+    const std::shared_ptr<CandleSeries>& Candles() const { return candles_; }
+
+    // --- series appearance ------------------------------------------------
+    void SetBarColor(const Color& color) { barColor_ = color; Invalidate(AffectsRender); }
+    void SetLineColor(const Color& color) { lineColor_ = color; Invalidate(AffectsRender); }
+    void SetCandleUpColor(const Color& color) { candleUpColor_ = color; Invalidate(AffectsRender); }
+    void SetCandleDownColor(const Color& color) { candleDownColor_ = color; Invalidate(AffectsRender); }
+    void SetShowBars(bool show);
+    void SetShowLine(bool show);
+    bool ShowBars() const { return showBars_; }
+    bool ShowLine() const { return showLine_; }
+
+    // Published by the enclosing ScrollViewer-aware paint path. A chart that is
+    // scrolled out of view neither paints nor (for the live series) advances.
+    void SetViewportVisible(bool visible) { viewportVisible_ = visible; }
+    bool ViewportVisible() const { return viewportVisible_; }
+
     // --- fit and transform ------------------------------------------------
     // Defaults so a plot can be created and measured with no data and no series.
     void SetAutoFit(bool enabled);
@@ -174,9 +196,19 @@ private:
                      double originX, double originY);
     void DrawAreaPlot(PaintCtx& ctx, const std::vector<ChartPoint>& pts, const Color& color,
                       double originX, double originY);
+    void DrawCandlePlot(PaintCtx& ctx, const ThemePalette& palette, double originX, double originY);
 
     std::shared_ptr<ChartSeries> series_;
     std::shared_ptr<ChartStream> stream_;
+    std::shared_ptr<ChartSeries> overlaySeries_;
+    std::shared_ptr<CandleSeries> candles_;
+    Color barColor_{0, 0, 0, 1, Token::Accent};
+    Color lineColor_{0, 0, 0, 1, Token::Accent};
+    Color candleUpColor_{0.11f, 0.62f, 0.36f, 1.0f, Token::None};
+    Color candleDownColor_{0.82f, 0.28f, 0.24f, 1.0f, Token::None};
+    bool showBars_ = true;
+    bool showLine_ = true;
+    bool viewportVisible_ = true;
     ChartBounds visible_;
     ChartBounds pinned_;
     bool autoFit_ = true;
@@ -245,6 +277,7 @@ public:
     int SlotDownsample() const { return slotDownsample_; }
     int SlotMaxPoints() const { return slotMaxPoints_; }
     int SlotPlotKind() const { return slotPlotKind_; }
+    int SlotViewportVisible() const { return slotViewportVisible_; }
     // Publishes the plot's counters and current fps back to the bound ViewModel.
     // Called from Arrange; also callable after a manual TickFrame.
     void RefreshPublishedCounters() { PublishCounts(); }
@@ -274,6 +307,7 @@ private:
     int slotDownsample_ = -1;
     int slotMaxPoints_ = -1;
     int slotPlotKind_ = -1;
+    int slotViewportVisible_ = -1;
 };
 
 } // namespace wui

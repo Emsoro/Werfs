@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.13.2.0** · MIT · Windows 10/11 x64
+> 版本 **0.13.3.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -43,7 +43,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
 | **主题** | Light/Dark 双主题，12 个语义 token；`HostOptions::themeProperty` 让页面用一个 bool 实时切换 |
-| **应用外壳** | 菜单栏（含二级子菜单）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
+| **应用外壳** | 菜单栏（二级 + 三级子菜单，编辑器可从 View ▸ Appearance ▸ Font size 调标签内容字号）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
 | **文件对话框** | 打开 / 另存为 / 选文件夹，`IFileDialogService` 可注入假实现供无窗口测试 |
 | **快捷键** | `Ctrl+N` `Ctrl+O` `Ctrl+S` `Ctrl+W`；菜单上显示的提示与真正生效的按键是同一个字符串 |
 | **单文件分发** | 图标、清单、版本信息、WAML 全部打包进 exe |
@@ -97,12 +97,12 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `binding` | `waml_binding.exe` | 只构绑定模式示例（四种模式对照） |
 | `theming` | `waml_theming.exe` | 只构主题示例（token + 实时 Light/Dark） |
 | `usercontrol` | `waml_usercontrol.exe` | 只构组件作用域示例（一份模板、三份数据源） |
-| `charts` | `waml_charts.exe` | 只构图表示例（百万点 + 降采样开关 + 帧率测量） |
+| `charts` | `waml_charts.exe` | 只构图表示例（百万点实时流 + 50 柱/50 线 + K 线时间范围 + 视口暂停） |
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `basic_py` | `_wui.pyd` `waml_basic_py.exe` | Python 驱动 MVVM 示例（经 CMake 构建，详见下文） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 252 个用例 |
+| `tests` | `waml_tests.exe` | 255 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -133,10 +133,10 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.13.2.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.13.3.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
-$env:WUI_VERSION_PATCH = '2'
+$env:WUI_VERSION_PATCH = '3'
 pwsh -File build.ps1 all
 ```
 
@@ -259,7 +259,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 252 个单元/集成用例 |
+| `waml_tests.exe` | 255 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -281,9 +281,12 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | File ▸ Open | 弹真实文件对话框，选中的文本文件成为新标签 |
 | File ▸ Save as | 弹真实保存对话框，写入磁盘并把当前内容设为「干净基准」 |
 | 缩窄窗口 | 工具栏尾部按钮收进 `⋯`，点 `⋯` 展开成菜单 |
+| View ▸ Appearance ▸ Font size ▸ 12/14/16/18 pt | 三级菜单：只改**标签内容**字号，标签与工具栏不变 |
 | `Ctrl+N/O/S/W` | 新建 / 打开 / 保存 / 关闭当前标签 |
 
 菜单里的 **Save 在没有文档时是灰的** —— 打开 File 菜单按下「无文档」状态看一眼，就能确认菜单项启用状态是**打开菜单时**读的，不是加载界面时写死的。
+
+`View ▸ Appearance ▸ Font size` 是三级菜单：菜单层保存一条「打开到第几层、每层停在哪一行」的路径，因此每一层都有相同的悬停高亮、箭头与点击处理；`Esc` 每次只退回一层。字号只绑在编辑区那个 `TextBox` 的 `FontSize` 上，调用 `SetFontSize` 的四条命令与菜单行一一对应。
 
 ### 写法示例：菜单 / 工具栏 / 模态
 
@@ -304,9 +307,23 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
         </MenuFlyoutSubItem>
       </MenuFlyout>
     </MenuBarItem>
-  </MenuBar>
+    <MenuBarItem Title="View">
+      <MenuFlyout>
+        <MenuFlyoutSubItem Text="Appearance">
+          <MenuFlyout>
+            <MenuFlyoutSubItem Text="{Binding FontSizeLabel}">
+              <MenuFlyout>
+                <MenuFlyoutItem Text="16 pt" Command="{Binding Font16Command}"/>
+              </MenuFlyout>
+            </MenuFlyoutSubItem>
+          </MenuFlyout>
+        </MenuFlyoutSubItem>
+      </MenuFlyout>
+    </MenuBarItem>
+    </MenuBar>
 
-  <CommandBar Height="44">
+    <CommandBar Height="44">
+
     <AppBarButton Icon="✚" Label="New"  Command="{Binding NewCommand}"/>
     <AppBarButton Icon="▼" Label="Save" Command="{Binding SaveCommand}"/>
   </CommandBar>
@@ -330,6 +347,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 - **`CloseRequested` 必须是 `TwoWay`**。`OneWay` 绑定会忽略目标侧写入，控件发布的关闭请求会凭空消失（`CODE_PLAN.md` §7.16）。
 - **浮层不进布局**。`MenuBar`/`CommandBar` 占位，但它们弹出的菜单、工具栏的 `⋯`、`ContentDialog` 都画在根节点上，所以放在 `ScrollViewer` 里也不会被裁掉。
 - **对话框的 `Enter` 落在主按钮、`Esc` 只落到「取消」**。丢弃数据的按钮永远不会成为默认按钮。
+- **子菜单可以任意深**。`MenuFlyoutSubItem` 里再放 `MenuFlyoutSubItem` 就是三级；它们仍属于同一个浮层，`Esc` 逐层关闭，不是再开一个 overlay。
 
 ### 写法示例：样式 / 资源 / 触发器
 
@@ -431,7 +449,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
        Downsample="{Binding DownsampleMode}"/>
 ```
 
-三种图形共用同一套坐标变换：`Line`、`Bar`、`Area`。刻度只取 **1/2/5 × 10ⁿ**，因为网格标着 0、333.3、666.7 的图没人读得下去。
+折线 / 柱状 / 面积共用同一套坐标变换：`Line`、`Bar`、`Area`；K 线用独立的 `CandleSeries`（开高低收不能塞进一个 `(x,y)` 点）。刻度只取 **1/2/5 × 10ⁿ**，因为网格标着 0、333.3、666.7 的图没人读得下去。
 
 **实时流用环形缓冲，不是不断增长的数组**。`ChartStream` 容量固定，新样本挤掉最旧的，所以窗口的成本在一小时后和下一秒完全一样。x 值是**绝对样本序号**——样本 N 永远是值 N，于是窗口在信号上向左滑过，而不是每秒把所有点重新编号（那样看起来永远不动）。
 
@@ -444,7 +462,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 | `MinMax` | 每桶取最小/最大 | 保留包络，尖峰丢不掉 |
 | `LTTB` | 保留构成最大三角形的点 | 轮廓最接近原图（默认） |
 
-100 万点实时窗口、700×300 软件光栅实测（`samples/charts` 第 2、3 节，数字由渲染路径本身产生）：
+100 万点实时窗口、700×300 软件光栅实测（数字由渲染路径本身产生）：
 
 | 模式 | 帧时间 | 绘制点数 |
 |---|---|---|
@@ -452,6 +470,8 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 | `MinMax` | **5.36 ms** | 560 |
 | `Uniform` | **5.60 ms** | 560 |
 | `None` | **37.2 ms** | 1,000,000 |
+
+`samples/charts` 现在是三张图：百万点实时流、**50 柱 + 50 点折线**（RGB 滑块调色、CheckBox 分别开关柱/线）、**K 线 + 下方时间范围滑块**（含近 7/30 天与全部预设）。`Chart.ViewportVisible` 由控件结合 `ScrollViewer` 几何发布回 ViewModel：视口外的图不画，实时流也停止推进，滚回来才恢复。
 
 **三条契约**：
 
@@ -615,7 +635,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **动画只覆盖视觉状态过渡**：`VisualState` 的 `Transition` 会插值颜色/数值/Thickness，但没有关键帧、没有嵌套时间轴，也不对布局属性做动画（改尺寸的过渡会触发重排，目前只让绘制属性动）。
 - **`Source=` 仍不支持**：`DataContext` 已成为可绑定属性（`usercontrol` 示例即依赖它），但属性级换数据源（一个属性读 A、另一个读 B）仍不可用。真实需求已被 `DataContext` 覆盖，故暂不实现。
 - **`TextBox` 有 IME，但仍无选区与剪贴板**：中文输入走 `WM_IME_*`，组字时是预览、确认后才写入值。仍未实现的是**选区**、**剪贴板**（Ctrl+C/V/X）与**鼠标点选定位光标**。见 `CODE_PLAN.md` R10。
-- **浮层只有一层**：菜单能在自己内部递归画子菜单，但「浮层里再开浮层」（例如对话框里的下拉框）不支持。
+- **浮层只有一层**：菜单能在自己内部递归画任意深度的子菜单（二/三级都已验证），但「浮层里再开浮层」（例如对话框里的下拉框）仍不支持。
 - **关窗口不拦截**：关闭整个窗口时不检查未保存文档。单标签的提示流程已完整，批量流程见 `CODE_PLAN.md` §10c.5。
 - **虚拟化只做纵向、只做固定行高**：`ListBox` 在拿到有界高度时窗口化行（见性能基线）。不支持的方向与形态：横向虚拟化、行高可变、以及把窗口化行「回收复用」成不同数据 —— 滚出去的行会被释放并重新创建，而不是改绑数据。后者的代价是一次实例化，收益是不会有「复用的行还带着上一个数据的绑定」这类缺陷。
 

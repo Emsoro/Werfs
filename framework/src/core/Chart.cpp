@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "Chart.h"
+#include "Controls.h"
 
 #include <algorithm>
 #include <chrono>
@@ -20,6 +21,28 @@ double NowUs() {
 // is what decides that.
 constexpr float kAxisFontSize = 11.0f;
 constexpr float kLabelGap = 4.0f;
+
+// A chart is "being seen" when its painted rect intersects the nearest
+// enclosing ScrollViewer's viewport. Rects are compared in the shifted space
+// used during paint: ScrollViewer passes shift - offset_ to its children while
+// its own bounds_ stay in window space, so both sides are already comparable.
+// With no scroller ancestor the widget is assumed visible (headless tests,
+// dialogs, and standalone ChartPlots all take this path).
+bool InViewport(const Widget* widget) {
+    const Widget* scroller = nullptr;
+    for (const Widget* p = widget->Parent(); p != nullptr; p = p->Parent()) {
+        if (dynamic_cast<const ScrollViewer*>(p) != nullptr) {
+            scroller = p;
+            break;
+        }
+    }
+    if (scroller == nullptr) return true;
+    const Rect viewport = scroller->Bounds();
+    const Rect r = widget->Bounds();
+    if (viewport.w <= 0 || viewport.h <= 0 || r.w <= 0 || r.h <= 0) return false;
+    return !(r.x + r.w <= viewport.x || r.x >= viewport.x + viewport.w ||
+             r.y + r.h <= viewport.y || r.y >= viewport.y + viewport.h);
+}
 
 } // namespace
 
@@ -109,6 +132,30 @@ void ChartPlot::SetStream(std::shared_ptr<ChartStream> stream) {
     Invalidate(AffectsMeasure | AffectsRender);
 }
 
+void ChartPlot::SetOverlaySeries(std::shared_ptr<ChartSeries> series) {
+    overlaySeries_ = std::move(series);
+    Fit();
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+void ChartPlot::SetCandles(std::shared_ptr<CandleSeries> candles) {
+    candles_ = std::move(candles);
+    Fit();
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+void ChartPlot::SetShowBars(bool show) {
+    if (showBars_ == show) return;
+    showBars_ = show;
+    Invalidate(AffectsRender);
+}
+
+void ChartPlot::SetShowLine(bool show) {
+    if (showLine_ == show) return;
+    showLine_ = show;
+    Invalidate(AffectsRender);
+}
+
 // Point count of whichever source is active.
 static size_t SourceCount(const std::shared_ptr<ChartSeries>& series,
                           const std::shared_ptr<ChartStream>& stream) {
@@ -183,13 +230,18 @@ void ChartPlot::Fit() {
     // A live stream's bounds change on every push, so they are read fresh; a series
     // caches its own. Auto-fit is ON for both by default, and a live chart with a
     // pinned range would grow off-scale within seconds.
-    const ChartBounds dataBounds = stream_ ? stream_->Bounds()
-                                           : (series_ ? series_->Bounds() : ChartBounds{});
-    if (autoFit_ && (stream_ || series_)) {
+    ChartBounds dataBounds = stream_ ? stream_->Bounds()
+                                     : (series_ ? series_->Bounds() : ChartBounds{});
+    // The overlay and the candles share the x axis with the primary series, so
+    // their whole range has to participate in the fit. Fitting only the bars
+    // makes the 50-point line drift off the top of the figure.
+    if (candles_) dataBounds.Surround(candles_->Bounds());
+    if (overlaySeries_) dataBounds.Surround(overlaySeries_->Bounds());
+    if (autoFit_ && (stream_ || series_ || candles_ || overlaySeries_)) {
         visible_ = dataBounds;
     } else if (hasPinned_) {
         visible_ = pinned_;
-    } else if (stream_ || series_) {
+    } else if (stream_ || series_ || candles_ || overlaySeries_) {
         visible_ = dataBounds;
     }
     if (visible_.empty) {
@@ -361,8 +413,46 @@ void ChartPlot::DrawBarPlot(PaintCtx& ctx, const std::vector<ChartPoint>& pts,
     }
 }
 
+void ChartPlot::DrawCandlePlot(PaintCtx& ctx, const ThemePalette& palette, double originX,
+                               double originY) {
+    if (!candles_ || candles_->Count() == 0) return;
+    const std::vector<Candle>& list = candles_->Candles();
+    const Color up = ResolveColor(candleUpColor_, palette);
+    const Color down = ResolveColor(candleDownColor_, palette);
+    double spacing = plot_.w;
+    if (list.size() >= 2) {
+        spacing = std::abs((LeftFromX(list[1].x) + originX) -
+                           (LeftFromX(list[0].x) + originX));
+    }
+    const double bodyW = std::clamp(spacing * 0.62, 2.0, 14.0);
+    for (const Candle& c : list) {
+        const double cx = LeftFromX(c.x) + originX;
+        const double high = TopFromY(c.high) + originY;
+        const double low = TopFromY(c.low) + originY;
+        const double open = TopFromY(c.open) + originY;
+        const double close = TopFromY(c.close) + originY;
+        if (!std::isfinite(cx) || !std::isfinite(high) || !std::isfinite(low) ||
+            !std::isfinite(open) || !std::isfinite(close)) {
+            continue;
+        }
+        const Color& color = c.close >= c.open ? up : down;
+        // The wick shows the whole high-low range; the body shows open-close.
+        ctx.DrawLine(Point{static_cast<float>(cx), static_cast<float>(high)},
+                     Point{static_cast<float>(cx), static_cast<float>(low)}, color, 1.0f);
+        const double top = std::min(open, close);
+        const double h = std::max(1.5, std::abs(close - open));
+        ctx.FillRect(Rect{static_cast<float>(cx - bodyW * 0.5), static_cast<float>(top),
+                          static_cast<float>(bodyW), static_cast<float>(h)},
+                     color);
+    }
+}
+
 void ChartPlot::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
+    // Offscreen figures are not drawn at all. The enclosing clip would discard the
+    // pixels anyway; skipping here also stops the live stream from paying for a
+    // downsample of a plot nobody can see.
+    if (!viewportVisible_) return;
     const double t0 = NowUs();
 
     // Observe the interval between paints. This is what makes the overlay work on its
@@ -389,7 +479,10 @@ void ChartPlot::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 
     const Color gridColor = palette.colors[static_cast<int>(Token::CardBorder)];
     const Color axisColor = palette.colors[static_cast<int>(Token::TextSecondary)];
-    const Color seriesColor = palette.colors[static_cast<int>(Token::Accent)];
+    // Token-coloured defaults follow the theme; a literal colour set by a page
+    // wins, so a colour picker can actually change what is drawn.
+    const Color seriesColor = ResolveColor(lineColor_, palette);
+    const Color barColor = ResolveColor(barColor_, palette);
 
     // Grid first, so the data is drawn over it rather than behind it.
     for (double v : xTicks_.values) {
@@ -427,9 +520,30 @@ void ChartPlot::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 
         ctx.PushClip(frame);
         const int kind = SlotOf("PlotKind") >= 0 ? Get<int>(SlotOf("PlotKind")) : 0;
-        if (kind == 1) DrawBarPlot(ctx, *pts, seriesColor, originX, originY);
-        else if (kind == 2) DrawAreaPlot(ctx, *pts, seriesColor, originX, originY);
-        else DrawLinePlot(ctx, *pts, seriesColor, originX, originY);
+        if (kind == 1) {
+            if (showBars_) DrawBarPlot(ctx, *pts, barColor, originX, originY);
+        } else if (kind == 2) {
+            if (showLine_) DrawAreaPlot(ctx, *pts, seriesColor, originX, originY);
+        } else if (showLine_) {
+            DrawLinePlot(ctx, *pts, seriesColor, originX, originY);
+        }
+        ctx.PopClip();
+    }
+
+    // The overlay is a second x/y series drawn on top of the primary encoding.
+    // Bars and line therefore share one transform and one set of axes.
+    if (overlaySeries_ && overlaySeries_->Count() > 0 && showLine_) {
+        const size_t budget = static_cast<size_t>(std::max(3, lastBudget_));
+        const std::shared_ptr<const std::vector<ChartPoint>> pts =
+            overlaySeries_->Downsampled(budget, mode_);
+        ctx.PushClip(frame);
+        DrawLinePlot(ctx, *pts, seriesColor, originX, originY);
+        ctx.PopClip();
+    }
+
+    if (candles_) {
+        ctx.PushClip(frame);
+        DrawCandlePlot(ctx, palette, originX, originY);
         ctx.PopClip();
     }
 
@@ -470,6 +584,7 @@ Chart::Chart() {
     slotDownsample_ = SlotOf("Downsample");
     slotMaxPoints_ = SlotOf("MaxPoints");
     slotPlotKind_ = SlotOf("PlotKind");
+    slotViewportVisible_ = SlotOf("ViewportVisible");
 
     plot_ = std::make_shared<ChartPlot>();
     // The plot is a real child, so the framework's paint order, clip and dirty
@@ -486,7 +601,9 @@ Chart::Chart() {
     // that claims otherwise. Pushing the current values into the freshly built plot
     // makes the control correct regardless of the order it was populated in.
     for (int slot : {slotSeries_, slotStream_, slotShowFps_, slotAutoFit_, slotDownsample_,
-                     slotMaxPoints_, slotPlotKind_}) {
+                     slotMaxPoints_, slotPlotKind_, SlotOf("OverlaySeries"), SlotOf("Candles"),
+                     SlotOf("BarColor"), SlotOf("LineColor"), SlotOf("CandleUpColor"),
+                     SlotOf("CandleDownColor"), SlotOf("ShowBars"), SlotOf("ShowLine")}) {
         // RawSlot, not Get<Value>: Get<> goes through the codec table, which has no
         // entry for Value itself.
         if (slot >= 0) OnSlotChanged(slot, RawSlot(slot));
@@ -538,7 +655,25 @@ void Chart::OnSlotChanged(int slot, const Value& value) {
         // the chart is what lets one element describe the whole figure.
         plot_->SetSlotValue(plot_->SlotOf("PlotKind"),
                             Value::Enum(EnumSlotValue(value, 0)));
+    } else if (slot == SlotOf("OverlaySeries")) {
+        plot_->SetOverlaySeries(std::dynamic_pointer_cast<ChartSeries>(Get<RefPtr>(slot)));
+    } else if (slot == SlotOf("Candles")) {
+        plot_->SetCandles(std::dynamic_pointer_cast<CandleSeries>(Get<RefPtr>(slot)));
+    } else if (slot == SlotOf("BarColor")) {
+        plot_->SetBarColor(Get<Color>(slot));
+    } else if (slot == SlotOf("LineColor")) {
+        plot_->SetLineColor(Get<Color>(slot));
+    } else if (slot == SlotOf("CandleUpColor")) {
+        plot_->SetCandleUpColor(Get<Color>(slot));
+    } else if (slot == SlotOf("CandleDownColor")) {
+        plot_->SetCandleDownColor(Get<Color>(slot));
+    } else if (slot == SlotOf("ShowBars")) {
+        plot_->SetShowBars(value.type != VType::Bool || value.flag);
+    } else if (slot == SlotOf("ShowLine")) {
+        plot_->SetShowLine(value.type != VType::Bool || value.flag);
     }
+    // ViewportVisible is published BY the chart; a binding writing it back must
+    // not kill the paint path's own decision.
 }
 
 Size Chart::Measure(const Size& available) {
@@ -584,6 +719,14 @@ void Chart::Arrange(const Rect& finalRect) {
 void Chart::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
     if (!plot_) return;
+    // Decided HERE, before the child paints, so the plot can skip its own work
+    // and a ViewModel bound to ViewportVisible can pause the live data source.
+    const bool inView = InViewport(this);
+    plot_->SetViewportVisible(inView);
+    if (slotViewportVisible_ >= 0 && RawSlot(slotViewportVisible_).flag != inView) {
+        SetSlotValue(slotViewportVisible_, Value::Bool(inView), true);
+    }
+    if (!inView) return;
     const Color titleColor = palette.colors[static_cast<int>(Token::TextPrimary)];
 
     // Only the title is drawn here. Axis labels, tick marks and the grid belong to
@@ -620,6 +763,7 @@ void Chart::PaintChildrenAt(PaintCtx& ctx, const ThemePalette& palette, const Po
 
 void Chart::DrawAxisLabels(PaintCtx& ctx, const ThemePalette& palette, const Point& shift) {
     if (!plot_) return;
+    if (!plot_->ViewportVisible()) return;
     ITextService* text = TextSystem::Get();
     const Color labelColor = palette.colors[static_cast<int>(Token::TextSecondary)];
     const Color axisColor = palette.colors[static_cast<int>(Token::TextSecondary)];

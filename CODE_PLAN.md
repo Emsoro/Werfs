@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.13.2.0
+> 版本：0.13.3.0
 > 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.2.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**254 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.3.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**255 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -74,7 +74,7 @@ build.ps1  CMakeLists.txt
 | **Visibility + 转换器** | ✅ | `Collapsed` 不占位不点击；4 个内置转换器；未知名字是加载错误（7 用例） |
 | **浮层**（Popup / Flyout） | ✅ | `OverlayLayer` 挂在根节点、整树绘制后叠加、点外关闭、边缘翻转；8 用例 |
 | **模态**（ContentDialog） | ✅ | 半透明遮罩 + 吞掉点外点击 + Esc 只映射到「取消」；`IsOpen`/`Result` 双向绑定；4 用例 |
-| **菜单栏**（MenuBar / MenuFlyout / 二级子菜单） | ✅ | 数据驱动菜单模型、快捷键文本、禁用项、悬停切换；5 用例 |
+| **菜单栏**（MenuBar / MenuFlyout / 二/三级子菜单） | ✅ | 数据驱动菜单模型、快捷键文本、禁用项、悬停切换、任意深度子菜单；6 用例 |
 | **工具栏 + 溢出**（CommandBar / AppBarButton） | ✅ | 窗口变窄时尾部按钮收进「⋯」，不裁剪；3 用例 |
 | **快捷键表**（`Ctrl+N/O/S/W`） | ✅ | `ParseAccelerator`/`FormatAccelerator` 同一字符串；焦点控件优先（R23）；2 用例 |
 | **单选模型**（Selector 基类） | ✅ | `SelectedIndex`/`SelectedItem` 双向；`ListBox` 点击与键盘选中；7 用例 |
@@ -364,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.13.2.0         [ ok ]
+file version: 0.13.3.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -1540,7 +1540,7 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 | `MenuFlyout` | 下拉面板 | **浮层** |
 | `MenuFlyoutItem` | 单个菜单项（含图标、快捷键文本、禁用态） | 浮层内容 |
 | `MenuFlyoutSeparator` | 分隔线 | 无（复用 `Line`） |
-| `MenuFlyoutSubItem` | 二级子菜单 | 浮层嵌套 + 位置翻转 |
+| `MenuFlyoutSubItem` | 二/三级子菜单（可继续嵌套） | 同一浮层内递归绘制 + 位置翻转 |
 
 WAML 形态（`Flyout` 是附加属性形式，与 WinUI 一致）：
 
@@ -2113,7 +2113,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 **与原计划的偏差**（都记录在案，不是遗漏）：
 
-1. **浮层不是「顶层列表」而是单层**：原计划允许栈（子菜单嵌套浮层）。实现改为「菜单层自己递归绘制子菜单」，省掉整个栈与 z-order 管理。代价是不支持「浮层里再开浮层」（如对话框里的下拉框），当前没有调用方需要。
+1. **浮层不是「顶层列表」而是单层**：原计划允许栈（子菜单嵌套浮层）。实现改为「菜单层自己递归绘制子菜单」，省掉整个栈与 z-order 管理；`MenuLayer` 保存一条打开路径，因此二/三级乃至更深的子菜单都在同一个浮层内工作，代价仍是不支持「浮层里再开浮层」（如对话框里的下拉框），当前没有调用方需要。
 2. **模态不做焦点陷阱，改为吞键**：`DialogLayer::OnKeyDown` 对所有键返回 true，包含 Tab。效果等价（Tab 到不了背后控件），但没有焦点链状态。
 3. **命令路由缩为快捷键表**：原计划的「向上冒泡找处理器」需要控件注册表；`Ctrl+N/O/S/W` 由宿主统一维护一张表，够用且更简单。真正的命令路由（如「撤销」随焦点控件变化）留到实现 `UndoStack` 时再做。
 

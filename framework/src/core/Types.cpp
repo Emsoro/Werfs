@@ -873,6 +873,30 @@ void TypeRegistry::RegisterBuiltins() {
         // budget, which is what the comparison in the sample uses.
         t->Prop("MaxPoints", VType::Number, Value::Number(0), AffectsRender);
         t->EnumProp("PlotKind", {"Line", "Bar", "Area"}, 0, AffectsRender);
+        // A second x/y series (the 50-point line over the 50 bars). It shares the
+        // primary series' transform, so the two encodings cannot drift apart.
+        t->Prop("OverlaySeries", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
+                BindingMode::OneWay);
+        // OHLC candles for the K-line figure.
+        t->Prop("Candles", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
+                BindingMode::OneWay);
+        // Series colours. Token defaults follow the theme; a ViewModel can publish
+        // a literal Color from a colour picker and override them.
+        t->Prop("BarColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("LineColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("CandleUpColor", VType::Color,
+                Value::MakeColor(Color{0.11f, 0.62f, 0.36f, 1.0f, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("CandleDownColor", VType::Color,
+                Value::MakeColor(Color{0.82f, 0.28f, 0.24f, 1.0f, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("ShowBars", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("ShowLine", VType::Bool, Value::Bool(true), AffectsRender);
+        // Published by the control from its ScrollViewer-aware paint path. No
+        // AffectsRender flag: writing it during paint must not invalidate the tree.
+        t->Prop("ViewportVisible", VType::Bool, Value::Bool(true), 0, BindingMode::TwoWay);
         // Read-back surface for the sample: what the last paint actually drew.
         t->Prop("DrawnPoints", VType::Number, Value::Number(0), AffectsRender,
                 BindingMode::TwoWay);

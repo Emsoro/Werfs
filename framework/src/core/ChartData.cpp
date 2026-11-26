@@ -251,6 +251,35 @@ std::shared_ptr<const std::vector<ChartPoint>> ChartSeries::Downsampled(size_t m
 }
 
 // ---------------------------------------------------------------------------
+// CandleSeries
+// ---------------------------------------------------------------------------
+void CandleSeries::SetCandles(std::vector<Candle> candles) {
+    candles_ = std::move(candles);
+    boundsValid_ = false;
+}
+
+const ChartBounds& CandleSeries::Bounds() const {
+    if (!boundsValid_) {
+        bounds_ = ChartBounds{};
+        if (!candles_.empty()) {
+            bounds_.empty = false;
+            bounds_.minX = bounds_.maxX = candles_[0].x;
+            bounds_.minY = candles_[0].low;
+            bounds_.maxY = candles_[0].high;
+            for (size_t i = 1; i < candles_.size(); ++i) {
+                const Candle& c = candles_[i];
+                bounds_.minX = std::min(bounds_.minX, c.x);
+                bounds_.maxX = std::max(bounds_.maxX, c.x);
+                bounds_.minY = std::min(bounds_.minY, c.low);
+                bounds_.maxY = std::max(bounds_.maxY, c.high);
+            }
+        }
+        boundsValid_ = true;
+    }
+    return bounds_;
+}
+
+// ---------------------------------------------------------------------------
 // ChartStream
 // ---------------------------------------------------------------------------
 ChartStream::ChartStream(size_t capacity) { SetCapacity(capacity); }

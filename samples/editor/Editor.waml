@@ -5,7 +5,8 @@
   This is the INTEGRATION page. Every capability the framework grew for real
   applications meets here at once:
 
-    1  MenuBar        File / Edit / Help, one submenu, live enabled state
+    1  MenuBar        File / Edit / View / Help, second- and third-level submenus,
+                     live enabled state, and a tab-content font-size setting
     2  CommandBar     New / Open / Save / Close / Reopen + overflow when narrow
     3  TabView        three documents: switch, close (×), new (+), dirty dot
     4  Editor area    a TextBox bound TwoWay to the active document
@@ -112,6 +113,27 @@
           <MenuFlyoutItem Text="Paste" Hint="Ctrl+V"/>
         </MenuFlyout>
       </MenuBarItem>
+      <!--
+        File ▸ Close is a SECOND-level submenu. View ▸ Appearance ▸ Font size is a
+        THIRD-level one: the menu layer keeps a path of open rows, so every level
+        gets the same hover, chevron and click handling as the top level.
+      -->
+      <MenuBarItem Title="View">
+        <MenuFlyout>
+          <MenuFlyoutSubItem Text="Appearance">
+            <MenuFlyout>
+              <MenuFlyoutSubItem Text="{Binding FontSizeLabel}">
+                <MenuFlyout>
+                  <MenuFlyoutItem Text="12 pt" Command="{Binding Font12Command}"/>
+                  <MenuFlyoutItem Text="14 pt" Command="{Binding Font14Command}"/>
+                  <MenuFlyoutItem Text="16 pt" Command="{Binding Font16Command}"/>
+                  <MenuFlyoutItem Text="18 pt" Command="{Binding Font18Command}"/>
+                </MenuFlyout>
+              </MenuFlyoutSubItem>
+            </MenuFlyout>
+          </MenuFlyoutSubItem>
+        </MenuFlyout>
+      </MenuBarItem>
       <MenuBarItem Title="Help">
         <MenuFlyout>
           <MenuFlyoutItem Text="About Werfs"/>
@@ -155,7 +177,7 @@
                it; a MinHeight keeps a usable box even in a very short window. -->
           <TextBox Text="{Binding ActiveContent, Mode=TwoWay}"
                    PlaceholderText="Start typing…" Height="0" MinHeight="120"
-                   AcceptsReturn="True"/>
+                   AcceptsReturn="True" FontSize="{Binding EditorFontSize}"/>
         </Border>
         <TextBlock Grid.Row="1" Text="{Binding ActivePath}" Style="{StaticResource Caption}"
                    Padding="0,8,0,0"/>

@@ -141,6 +141,41 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Candle / CandleSeries
+//
+// OHLC data is not a ChartSeries: five numbers per x cannot be packed into one
+// (x,y) point without lying about the shape. Keeping candles in their own packed
+// array lets the plot draw a body and a wick from the same source of truth.
+// ---------------------------------------------------------------------------
+struct Candle {
+    double x = 0;
+    double open = 0;
+    double high = 0;
+    double low = 0;
+    double close = 0;
+};
+
+class CandleSeries final : public RefObject {
+public:
+    CandleSeries() = default;
+
+    void SetCandles(std::vector<Candle> candles);
+
+    const std::vector<Candle>& Candles() const { return candles_; }
+    size_t Count() const { return candles_.size(); }
+
+    // Bounds span the lows and highs, so a candle whose wick reaches beyond the
+    // bodies is never clipped by an auto-fit range.
+    const ChartBounds& Bounds() const;
+    void InvalidateBounds() { boundsValid_ = false; }
+
+private:
+    std::vector<Candle> candles_;
+    mutable ChartBounds bounds_;
+    mutable bool boundsValid_ = false;
+};
+
+// ---------------------------------------------------------------------------
 // ChartStream: a fixed-capacity sliding window of samples.
 //
 // A live signal is not "a series that gets longer" -- it is a series that stays the

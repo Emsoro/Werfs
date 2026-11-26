@@ -5017,6 +5017,62 @@ TEST("shell: a submenu opens without leaving the layer") {
     CHECK(!layer->Active());
 }
 
+TEST("shell: a third-level submenu opens and runs its command") {
+    ShellFixture f(R"WAML(
+<Page>
+  <MenuBar x:Name="Bar">
+    <MenuBarItem Title="View">
+      <MenuFlyout>
+        <MenuFlyoutSubItem Text="Appearance">
+          <MenuFlyout>
+            <MenuFlyoutSubItem Text="Font size">
+              <MenuFlyout>
+                <MenuFlyoutItem Text="16 pt" Command="{Binding SaveCommand}"/>
+              </MenuFlyout>
+            </MenuFlyoutSubItem>
+          </MenuFlyout>
+        </MenuFlyoutSubItem>
+      </MenuFlyout>
+    </MenuBarItem>
+  </MenuBar>
+</Page>
+)WAML");
+    if (!f.menu) return;
+    f.menu->OpenMenu(0);
+    OverlayLayer* layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+
+    // Keyboard walk through all three panels: Down selects a row, Return opens
+    // the submenu (or runs the command on the last level).
+    layer->OnKeyDown(KeyDown, 0);
+    layer->OnKeyDown(KeyReturn, 0); // Appearance
+    layer->OnKeyDown(KeyDown, 0);
+    layer->OnKeyDown(KeyReturn, 0); // Font size
+    layer->OnKeyDown(KeyDown, 0);
+    CHECK(f.vmAs()->saveCount == 0); // navigating is not an action
+    layer->OnKeyDown(KeyReturn, 0); // 16 pt
+    CHECK(f.vmAs()->saveCount == 1);
+    CHECK(!layer->Active());
+
+    // Escape unwinds one level at a time instead of collapsing the whole chain.
+    f.menu->OpenMenu(0);
+    layer = f.root->Overlay();
+    CHECK(layer != nullptr);
+    if (!layer) return;
+    layer->OnKeyDown(KeyDown, 0);
+    layer->OnKeyDown(KeyReturn, 0);
+    layer->OnKeyDown(KeyDown, 0);
+    layer->OnKeyDown(KeyReturn, 0);
+    CHECK(layer->Active());
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(layer->Active());
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(layer->Active());
+    CHECK(layer->OnKeyDown(KeyEscape, 0));
+    CHECK(!layer->Active());
+}
+
 TEST("shell: the command bar overflows instead of clipping") {
     ShellFixture f(kShellMarkup);
     CHECK(f.bar != nullptr);

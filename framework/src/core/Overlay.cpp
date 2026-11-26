@@ -138,117 +138,31 @@ public:
     Rect Bounds() const override { return bounds_; }
 
     void Paint(PaintCtx& ctx, const ThemePalette& palette) override {
-        const Color card = palette.colors[static_cast<int>(Token::CardBackground)];
-        const Color border = palette.colors[static_cast<int>(Token::CardBorder)];
-        const Color textPrimary = palette.colors[static_cast<int>(Token::TextPrimary)];
-        const Color textSecondary = palette.colors[static_cast<int>(Token::TextSecondary)];
-        const Color textDisabled = palette.colors[static_cast<int>(Token::TextDisabled)];
-        const Color accent = palette.colors[static_cast<int>(Token::Accent)];
-
-        // A soft shadow makes the menu read as being above the page; without it a
-        // panel over a similarly coloured card is impossible to locate.
-        ctx.FillRoundRect(bounds_.Inflate(2.0f), 7.0f, Color{0, 0, 0, 0.10f});
-        ctx.FillRoundRect(bounds_, 6.0f, card);
-        ctx.StrokeRect(bounds_, border, 1.0f, 6.0f);
-
-        float y = bounds_.y + kPadY;
-        for (size_t i = 0; i < items_.size(); ++i) {
-            const PopupMenuItem& item = items_[i];
-            const float h = ItemHeight(item);
-            const Rect row{bounds_.x + 2.0f, y, bounds_.w - 4.0f, h};
-
-            if (item.kind == PopupMenuItem::Kind::Separator) {
-                ctx.FillRect(Rect{row.x + kPadX, y + h * 0.5f, row.w - kPadX * 2, 1.0f}, border);
-                y += h;
-                continue;
-            }
-            if (item.kind == PopupMenuItem::Kind::Header) {
-                ctx.DrawText(item.text, Rect{row.x + kPadX, row.y, row.w - kPadX * 2, h},
-                             textSecondary, 11.0f, WeightSemiBold, TextAlign::Left);
-                y += h;
-                continue;
-            }
-
-            const bool hovered = static_cast<int>(i) == hoveredRow_;
-            const bool canClick = item.CanInvoke() || item.kind == PopupMenuItem::Kind::Submenu;
-            if (hovered && canClick) {
-                ctx.FillRoundRect(row, 4.0f, palette.colors[static_cast<int>(Token::ControlFillHover)]);
-            }
-
-            const Color fg = !canClick ? textDisabled : textPrimary;
-            float x = row.x + kPadX;
-            // Toggle check mark, or the item's glyph.
-            if (item.kind == PopupMenuItem::Kind::Toggle) {
-                if (item.checked) {
-                    ctx.DrawText(L"\u2713", Rect{x - 4.0f, row.y, 16.0f, h}, accent, 12.0f,
-                                 WeightNormal, TextAlign::Center);
-                }
-                x += 16.0f;
-            } else if (!item.icon.empty()) {
-                ctx.DrawText(Utf8ToWide(item.icon), Rect{x - 4.0f, row.y, 16.0f, h}, fg, 12.0f,
-                             WeightNormal, TextAlign::Center);
-                x += 16.0f;
-            } else {
-                x += 16.0f;
-            }
-
-            // Hints are right-aligned so the labels form a clean column; measuring
-            // them first is what makes that possible without a second layout pass.
-            float hintW = 0.0f;
-            if (!item.hint.empty()) {
-                hintW = TextWidth(item.hint, 12.0f, WeightNormal);
-                ctx.DrawText(item.hint,
-                             Rect{row.x + row.w - kPadX - hintW - 8.0f, row.y, hintW, h},
-                             canClick ? textSecondary : textDisabled, 12.0f, WeightNormal,
-                             TextAlign::Right);
-            }
-            const float submenuRoom = item.kind == PopupMenuItem::Kind::Submenu ? 16.0f : 0.0f;
-            const float labelW = std::max(
-                0.0f, row.x + row.w - kPadX - x - hintW - submenuRoom - (hintW > 0 ? kHintGap : 0.0f));
-            ctx.DrawText(item.text, Rect{x, row.y, labelW, h}, fg, 13.0f, WeightNormal,
-                         TextAlign::Left);
-
-            if (item.kind == PopupMenuItem::Kind::Submenu) {
-                ctx.DrawText(L"\u203a", Rect{row.x + row.w - kPadX - 10.0f, row.y, 10.0f, h}, fg,
-                             13.0f, WeightNormal, TextAlign::Right);
-            }
-            y += h;
-        }
-
-        // Submenus are drawn inside this same layer, offset to the right of the
-        // row that owns them. A stack of layers would be the textbook design; one
-        // layer with its own recursion is far less machinery for the same picture.
-        if (openSub_ >= 0) {
-            PaintSubmenu(ctx, palette, static_cast<size_t>(openSub_));
-        }
+        // Every level uses the same row renderer. The previous version had a
+        // separate, text-only PaintSubmenu, which made a third level invisible:
+        // there was no arrow to tell the reader that "Font size" opened another
+        // menu, and no way to highlight the row that was waiting for a click.
+        PaintMenu(ctx, palette, items_, bounds_, 0);
     }
 
     bool OnPointerDown(const Point& p) override {
-        // A press inside an open submenu acts on it; a press on its parent row
-        // must not close the submenu it just opened.
-        if (openSub_ >= 0) {
-            const int sub = SubmenuRowAt(p);
-            if (sub >= 0) {
-                Activate(items_[static_cast<size_t>(openSub_)].children[static_cast<size_t>(sub)]);
-                return true;
-            }
-            if (SubmenuBounds(static_cast<size_t>(openSub_)).Contains(p)) return true;
-        }
-        if (!bounds_.Contains(p)) {
+        // Find the deepest menu under the pointer, then act on THAT menu's row.
+        // Checking the deepest first is what makes a third-level click land on
+        // the third-level item instead of being swallowed by its parent.
+        const int depth = MenuAtPoint(p);
+        if (depth < 0) {
             if (LightDismiss()) {
                 Close();
                 return true;
             }
-            // Modal-ish menus swallow the press so it never reaches the page.
-            return true;
+            return true; // modal-ish menu: swallow, do not touch the page
         }
-
-        const int row = RowAt(p);
-        if (row < 0) return true; // padding or separator: consumed, nothing to do
-        const PopupMenuItem& item = items_[static_cast<size_t>(row)];
+        const size_t d = static_cast<size_t>(depth);
+        const int row = RowAt(MenuAt(d), MenuBounds(d), p);
+        if (row < 0) return true; // padding or separator
+        const PopupMenuItem& item = MenuAt(d)[static_cast<size_t>(row)];
         if (item.kind == PopupMenuItem::Kind::Submenu) {
-            openSub_ = row;
-            hoveredRow_ = row;
+            OpenSubmenu(d, row);
             return true;
         }
         Activate(item);
@@ -258,61 +172,71 @@ public:
     void OnPointerUp(const Point&) override {}
 
     void OnPointerMove(const Point& p) override {
-        // Hover follows the pointer, including across submenu boundaries: a menu
-        // that only responds to clicks feels dead next to a native one.
-        int next = -1;
-        if (openSub_ >= 0) {
-            const int sub = SubmenuRowAt(p);
-            if (sub >= 0) {
-                hoveredSub_ = sub;
-                hoveredRow_ = openSub_;
-                return;
-            }
-            if (SubmenuBounds(static_cast<size_t>(openSub_)).Contains(p)) {
-                hoveredRow_ = -1;
-                hoveredSub_ = -1;
-                return;
-            }
+        // Hover works at every depth: sweeping from a parent row into its submenu
+        // (and from there into a third level) keeps the chain open.
+        const int depth = MenuAtPoint(p);
+        if (depth < 0) {
+            hoveredRow_ = -1;
+            openPath_.clear();
+            return;
         }
-        hoveredSub_ = -1;
-        if (bounds_.Contains(p)) {
-            next = RowAt(p);
+        const size_t d = static_cast<size_t>(depth);
+        const int row = RowAt(MenuAt(d), MenuBounds(d), p);
+        if (row < 0) {
+            hoveredRow_ = -1;
+            return;
         }
-        // Moving onto a different top-level row closes the submenu it opened:
-        // that is what makes sweeping across the bar feel right.
-        if (next != hoveredRow_ && openSub_ >= 0) {
-            const bool stillParent = next == openSub_;
-            if (!stillParent) openSub_ = -1;
-        }
-        hoveredRow_ = next;
-        // Opening on hover is a deliberate choice: the top-level bar behaves like
-        // a native menu bar where once a menu is open, sliding opens the next.
-        if (hoverOnOpen_ && next >= 0 && next != openSub_ &&
-            items_[static_cast<size_t>(next)].kind == PopupMenuItem::Kind::Submenu) {
-            openSub_ = next;
+        // A deeper menu that is no longer the parent under the pointer is stale.
+        // Keeping the row that actually opened it is deliberate: hovering over
+        // the parent must not close the child it just revealed.
+        if (openPath_.size() > d && row != openPath_[d]) openPath_.resize(d);
+        hoveredRow_ = row;
+        const PopupMenuItem& item = MenuAt(d)[static_cast<size_t>(row)];
+        if (hoverOnOpen_ && item.kind == PopupMenuItem::Kind::Submenu &&
+            (d >= openPath_.size() || openPath_[d] != row)) {
+            OpenSubmenu(d, row);
         }
     }
 
     bool OnKeyDown(int vk, int /*modifiers*/) override {
+        const size_t depth = openPath_.size();
+        const std::vector<PopupMenuItem>& items = MenuAt(depth);
         switch (vk) {
         case KeyEscape:
-            if (openSub_ >= 0) {
-                openSub_ = -1;
+            if (!openPath_.empty()) {
+                // Close one level at a time, leaving the highlight on the row that
+                // opened it. Collapsing the whole chain would lose the reader's place.
+                hoveredRow_ = openPath_.back();
+                openPath_.pop_back();
                 return true;
             }
             Close();
             return true;
+        case KeyLeft:
+            if (!openPath_.empty()) {
+                hoveredRow_ = openPath_.back();
+                openPath_.pop_back();
+                return true;
+            }
+            return false;
+        case KeyRight:
+            if (hoveredRow_ >= 0 && hoveredRow_ < static_cast<int>(items.size()) &&
+                items[static_cast<size_t>(hoveredRow_)].kind == PopupMenuItem::Kind::Submenu) {
+                OpenSubmenu(depth, hoveredRow_);
+                return true;
+            }
+            return false;
         case KeyDown:
         case KeyUp: {
             const int step = vk == KeyDown ? 1 : -1;
             int row = hoveredRow_;
-            const int count = static_cast<int>(items_.size());
+            const int count = static_cast<int>(items.size());
             for (int guard = 0; guard < count; ++guard) {
                 row += step;
                 if (row < 0) row = count - 1;
                 if (row >= count) row = 0;
-                if (IsInteractive(items_[static_cast<size_t>(row)]) &&
-                    items_[static_cast<size_t>(row)].enabled) {
+                if (IsInteractive(items[static_cast<size_t>(row)]) &&
+                    items[static_cast<size_t>(row)].enabled) {
                     hoveredRow_ = row;
                     return true;
                 }
@@ -320,11 +244,10 @@ public:
             return true;
         }
         case KeyReturn:
-            if (hoveredRow_ >= 0 && hoveredRow_ < static_cast<int>(items_.size())) {
-                const PopupMenuItem& item = items_[static_cast<size_t>(hoveredRow_)];
+            if (hoveredRow_ >= 0 && hoveredRow_ < static_cast<int>(items.size())) {
+                const PopupMenuItem& item = items[static_cast<size_t>(hoveredRow_)];
                 if (item.kind == PopupMenuItem::Kind::Submenu) {
-                    openSub_ = hoveredRow_;
-                    hoveredSub_ = 0;
+                    OpenSubmenu(depth, hoveredRow_);
                     return true;
                 }
                 Activate(item);
@@ -343,13 +266,14 @@ public:
     void SetHoverOnOpen(bool on) { hoverOnOpen_ = on; }
 
     // Test hooks: what a click at a point would do, without doing it.
+    // OpenSubmenuRow keeps its old meaning (the first level that is open), while
+    // Depth/Bounds let a test walk into a third level without knowing our geometry.
     int HoveredRow() const { return hoveredRow_; }
-    int OpenSubmenuRow() const { return openSub_; }
-    Rect RowBounds(size_t index) const {
-        float y = bounds_.y + kPadY;
-        for (size_t i = 0; i < items_.size() && i < index; ++i) y += ItemHeight(items_[i]);
-        const float h = index < items_.size() ? ItemHeight(items_[index]) : 0.0f;
-        return Rect{bounds_.x, y, bounds_.w, h};
+    int OpenSubmenuRow() const { return openPath_.empty() ? -1 : openPath_[0]; }
+    size_t OpenSubmenuDepth() const { return openPath_.size(); }
+    Rect RowBounds(size_t index) const { return RowBounds(items_, bounds_, index); }
+    Rect MenuBoundsAt(size_t depth) const {
+        return depth <= openPath_.size() ? MenuBounds(depth) : Rect{};
     }
 
 private:
@@ -372,7 +296,8 @@ private:
 
     void Activate(const PopupMenuItem& item) {
         if (item.kind == PopupMenuItem::Kind::Submenu) {
-            openSub_ = hoveredRow_;
+            // Opening a submenu is the caller's job: it knows which level the row
+            // belongs to, whereas Activate only sees the item itself.
             return;
         }
         if (!item.CanInvoke()) {
@@ -388,71 +313,153 @@ private:
         chosen.Invoke();
     }
 
-    int RowAt(const Point& p) const {
-        if (!bounds_.Contains(p)) return -1;
-        float y = bounds_.y + kPadY;
-        for (size_t i = 0; i < items_.size(); ++i) {
-            const float h = ItemHeight(items_[i]);
-            if (p.y >= y && p.y < y + h) return static_cast<int>(i);
-            y += h;
+    // The menu at `depth` is the child opened by openPath_[depth-1]. Keeping the
+    // whole path (not just one index) is what turns "one submenu" into "submenus
+    // all the way down" without a second overlay layer.
+    const std::vector<PopupMenuItem>& MenuAt(size_t depth) const {
+        const std::vector<PopupMenuItem>* items = &items_;
+        for (size_t i = 0; i < depth; ++i) {
+            items = &(*items)[static_cast<size_t>(openPath_[i])].children;
         }
-        return -1;
+        return *items;
     }
 
-    Rect SubmenuBounds(size_t rowIndex) const {
-        if (rowIndex >= items_.size()) return Rect{};
-        const Rect row = RowBounds(rowIndex);
-        const auto& children = items_[rowIndex].children;
+    Rect MenuBounds(size_t depth) const {
+        if (depth == 0) return bounds_;
+        if (depth > openPath_.size()) return Rect{};
+        const Rect parent = MenuBounds(depth - 1);
+        const size_t row = static_cast<size_t>(openPath_[depth - 1]);
+        const Rect anchor = RowBounds(MenuAt(depth - 1), parent, row);
+        const auto& children = MenuAt(depth);
         const Size want{MenuWidth(children), MenuHeight(children)};
-        Point origin{row.x + row.w - 4.0f, row.y - kPadY};
-        // Flip to the left when the submenu would run off the window.
-        if (origin.x + want.w > available_.w) origin.x = std::max(0.0f, row.x - want.w + 4.0f);
+        Point origin{anchor.x + anchor.w - 4.0f, anchor.y - kPadY};
+        // Flip left when the child would run past the window, then lift it if it
+        // would run past the bottom. Same rule at every depth.
+        if (origin.x + want.w > available_.w) origin.x = std::max(0.0f, anchor.x - want.w + 4.0f);
         if (origin.y + want.h > available_.h) origin.y = std::max(0.0f, available_.h - want.h);
-        return Rect{origin.x, origin.y, want.w, want.h};
+        return Rect{std::max(0.0f, origin.x), std::max(0.0f, origin.y), want.w, want.h};
     }
 
-    int SubmenuRowAt(const Point& p) const {
-        if (openSub_ < 0) return -1;
-        const Rect box = SubmenuBounds(static_cast<size_t>(openSub_));
-        if (!box.Contains(p)) return -1;
-        const auto& children = items_[static_cast<size_t>(openSub_)].children;
+    Rect RowBounds(const std::vector<PopupMenuItem>& items, const Rect& box, size_t index) const {
         float y = box.y + kPadY;
-        for (size_t i = 0; i < children.size(); ++i) {
-            const float h = ItemHeight(children[i]);
+        for (size_t i = 0; i < items.size() && i < index; ++i) y += ItemHeight(items[i]);
+        const float h = index < items.size() ? ItemHeight(items[index]) : 0.0f;
+        return Rect{box.x, y, box.w, h};
+    }
+
+    int RowAt(const std::vector<PopupMenuItem>& items, const Rect& box, const Point& p) const {
+        if (!box.Contains(p)) return -1;
+        float y = box.y + kPadY;
+        for (size_t i = 0; i < items.size(); ++i) {
+            const float h = ItemHeight(items[i]);
             if (p.y >= y && p.y < y + h) return static_cast<int>(i);
             y += h;
         }
         return -1;
     }
 
-    void PaintSubmenu(PaintCtx& ctx, const ThemePalette& palette, size_t rowIndex) {
-        const Rect box = SubmenuBounds(rowIndex);
-        const auto& children = items_[rowIndex].children;
-        ctx.FillRoundRect(box.Inflate(2.0f), 7.0f, Color{0, 0, 0, 0.10f});
-        ctx.FillRoundRect(box, 6.0f, palette.colors[static_cast<int>(Token::CardBackground)]);
-        ctx.StrokeRect(box, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f, 6.0f);
+    int MenuAtPoint(const Point& p) const {
+        // Deepest first: a grandchild overlaps its parent by four pixels, and a
+        // click there must belong to the grandchild the reader can see.
+        for (int d = static_cast<int>(openPath_.size()); d >= 0; --d) {
+            if (MenuBounds(static_cast<size_t>(d)).Contains(p)) return d;
+        }
+        return -1;
+    }
 
+    void OpenSubmenu(size_t depth, int row) {
+        openPath_.resize(depth);
+        openPath_.push_back(row);
+        hoveredRow_ = -1;
+    }
+
+    bool IsRowHovered(size_t depth, size_t row) const {
+        // A level with an open child highlights the row that opened it; the
+        // deepest level highlights whatever the pointer/keyboard is on.
+        if (depth < openPath_.size()) return static_cast<int>(row) == openPath_[depth];
+        return static_cast<int>(row) == hoveredRow_;
+    }
+
+    void PaintMenu(PaintCtx& ctx, const ThemePalette& palette,
+                   const std::vector<PopupMenuItem>& items, const Rect& box, size_t depth) {
+        const Color card = palette.colors[static_cast<int>(Token::CardBackground)];
+        const Color border = palette.colors[static_cast<int>(Token::CardBorder)];
         const Color textPrimary = palette.colors[static_cast<int>(Token::TextPrimary)];
+        const Color textSecondary = palette.colors[static_cast<int>(Token::TextSecondary)];
         const Color textDisabled = palette.colors[static_cast<int>(Token::TextDisabled)];
+        const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+
+        // One layer, recursive panels. A stack of overlay layers would need focus
+        // and dismissal rules; this keeps the whole chain under one light-dismiss.
+        ctx.FillRoundRect(box.Inflate(2.0f), 7.0f, Color{0, 0, 0, 0.10f});
+        ctx.FillRoundRect(box, 6.0f, card);
+        ctx.StrokeRect(box, border, 1.0f, 6.0f);
+
         float y = box.y + kPadY;
-        for (size_t i = 0; i < children.size(); ++i) {
-            const PopupMenuItem& item = children[i];
+        for (size_t i = 0; i < items.size(); ++i) {
+            const PopupMenuItem& item = items[i];
             const float h = ItemHeight(item);
+            const Rect row{box.x + 2.0f, y, box.w - 4.0f, h};
+
             if (item.kind == PopupMenuItem::Kind::Separator) {
-                ctx.FillRect(Rect{box.x + kPadX, y + h * 0.5f, box.w - kPadX * 2, 1.0f},
-                             palette.colors[static_cast<int>(Token::CardBorder)]);
+                ctx.FillRect(Rect{row.x + kPadX, y + h * 0.5f, row.w - kPadX * 2, 1.0f}, border);
                 y += h;
                 continue;
             }
-            const Rect row{box.x + 2.0f, y, box.w - 4.0f, h};
-            if (static_cast<int>(i) == hoveredSub_ && item.enabled) {
+            if (item.kind == PopupMenuItem::Kind::Header) {
+                ctx.DrawText(item.text, Rect{row.x + kPadX, row.y, row.w - kPadX * 2, h},
+                             textSecondary, 11.0f, WeightSemiBold, TextAlign::Left);
+                y += h;
+                continue;
+            }
+
+            const bool hovered = IsRowHovered(depth, i);
+            const bool canClick = item.CanInvoke() || item.kind == PopupMenuItem::Kind::Submenu;
+            if (hovered && canClick) {
                 ctx.FillRoundRect(row, 4.0f,
                                   palette.colors[static_cast<int>(Token::ControlFillHover)]);
             }
-            ctx.DrawText(item.text, Rect{row.x + kPadX + 4.0f, row.y, row.w - kPadX * 2, h},
-                         item.enabled ? textPrimary : textDisabled, 13.0f, WeightNormal,
+
+            const Color fg = !canClick ? textDisabled : textPrimary;
+            float x = row.x + kPadX;
+            if (item.kind == PopupMenuItem::Kind::Toggle) {
+                if (item.checked) {
+                    ctx.DrawText(L"\u2713", Rect{x - 4.0f, row.y, 16.0f, h}, accent, 12.0f,
+                                 WeightNormal, TextAlign::Center);
+                }
+                x += 16.0f;
+            } else if (!item.icon.empty()) {
+                ctx.DrawText(Utf8ToWide(item.icon), Rect{x - 4.0f, row.y, 16.0f, h}, fg, 12.0f,
+                             WeightNormal, TextAlign::Center);
+                x += 16.0f;
+            } else {
+                x += 16.0f;
+            }
+
+            float hintW = 0.0f;
+            if (!item.hint.empty()) {
+                hintW = TextWidth(item.hint, 12.0f, WeightNormal);
+                ctx.DrawText(item.hint,
+                             Rect{row.x + row.w - kPadX - hintW - 8.0f, row.y, hintW, h},
+                             canClick ? textSecondary : textDisabled, 12.0f, WeightNormal,
+                             TextAlign::Right);
+            }
+            const float submenuRoom = item.kind == PopupMenuItem::Kind::Submenu ? 16.0f : 0.0f;
+            const float labelW = std::max(
+                0.0f, row.x + row.w - kPadX - x - hintW - submenuRoom - (hintW > 0 ? kHintGap : 0.0f));
+            ctx.DrawText(item.text, Rect{x, row.y, labelW, h}, fg, 13.0f, WeightNormal,
                          TextAlign::Left);
+            // The chevron is what tells the reader "Font size" has a third level.
+            if (item.kind == PopupMenuItem::Kind::Submenu) {
+                ctx.DrawText(L"\u203a", Rect{row.x + row.w - kPadX - 10.0f, row.y, 10.0f, h}, fg,
+                             13.0f, WeightNormal, TextAlign::Right);
+            }
             y += h;
+        }
+
+        if (depth < openPath_.size()) {
+            const size_t row = static_cast<size_t>(openPath_[depth]);
+            PaintMenu(ctx, palette, items[row].children, MenuBounds(depth + 1), depth + 1);
         }
     }
 
@@ -464,8 +471,9 @@ private:
     bool active_ = true;
     bool hoverOnOpen_ = false;
     int hoveredRow_ = -1;
-    int hoveredSub_ = -1;
-    int openSub_ = -1;
+    // One index per open menu level: [0] is a second-level menu, [1] a third, and
+    // so on. Replacing the single openSub_ is what removed the hard depth limit.
+    std::vector<int> openPath_;
 };
 
 // ---------------------------------------------------------------------------
