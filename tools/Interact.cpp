@@ -908,8 +908,8 @@ int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
         Expect(tree != nullptr, "found the TreeView");
         if (tree != nullptr) {
             root->ForceLayout(Size{700, 3000});
-            const size_t seeded = tree->Rows().size();
-            Expect(seeded > 3 && seeded < 20, "a bounded set of rows is visible");
+            const size_t treeRows = tree->Rows().size();
+            Expect(treeRows > 3 && treeRows < 20, "a bounded set of rows is visible");
             Expect(vm->SelectedTreeNode.Get() == nullptr, "nothing selected yet");
 
             // Expand all runs through the VM: only node properties change.
@@ -917,7 +917,7 @@ int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
             Expect(expandButton != nullptr, "found the Expand all button");
             if (expandButton) ClickAt(root, expandButton);
             root->ForceLayout(Size{700, 3000});
-            Expect(tree->Rows().size() > seeded, "expand all revealed descendants");
+            Expect(tree->Rows().size() > treeRows, "expand all revealed descendants");
 
             // A row click selects its node and writes back to the ViewModel.
             const Rect view = tree->Bounds();

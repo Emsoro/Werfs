@@ -323,9 +323,14 @@ function Build-Executable {
     $includeFlags = $ExtraIncludes | ForEach-Object { "/I$_" }
     # Extra (sample-local) includes go FIRST: a sample's own Resource.h must win
     # over the gallery's, since both define IDR_WAML_* with different ids.
+    # Give every target its own program database. Without /Fd all targets write
+    # the default vc140.pdb into the working directory, so the last compiled
+    # target overwrites it and link.exe emits LNK4099 for every object of the
+    # earlier targets.
     $compileArgs = @('/nologo', '/c', '/std:c++20', '/EHsc', '/utf-8', '/W4',
                      '/permissive-', '/MP', '/FS', '/Zc:__cplusplus', '/Zc:preprocessor') +
-                   $CommonDefs + $includeFlags + $flags + @("/Fo$objDir\") + $Sources
+                   $CommonDefs + $includeFlags + $flags +
+                   @("/Fo$objDir\", "/Fd$objDir\vc140.pdb") + $Sources
     Invoke-Tool 'cl' $compileArgs
 
     $objects = Get-ChildItem -LiteralPath $objDir -Filter '*.obj' |
