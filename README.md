@@ -29,6 +29,14 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 
 ---
 
+## 架构
+
+![Werfs 架构图](architecture.svg)
+
+应用层（`SampleHost` + 示例 + Python 桥）→ 框架核心（`waml` / `core` / `mvvm`）→ 渲染与平台（Direct2D / 软件光栅 / 资源 / 文件对话框）。WAML 在加载期编译成 Widget 树，绑定在运行时连接 ViewModel 与控件属性，渲染后端可替换为离屏光栅。
+
+---
+
 ## 特性
 
 | 能力 | 说明 |
@@ -649,6 +657,16 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 |---|---|
 | `CODE_PLAN.md` | 实施计划 + 技术验证报告：架构决策、迭代路线、风险登记、缺陷复盘 |
 | `samples/basic/Basic.waml` | 五个基础控件，单一数据源 |
+
+---
+
+## 支持
+
+如果 Werfs 对你有帮助，欢迎扫码赞赏；我会继续维护和更新：
+
+<img src="Donate.jpg" alt="masonwu21 的赞赏码" width="320">
+
+> 好用随心赏，更新不断档。
 
 ---
 

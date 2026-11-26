@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Werfs framework architecture</title>
+  <desc id="desc">Architecture diagram showing the application layer (SampleHost, samples, Python bridge), the framework core (waml, core, mvvm), and the render and platform layer (Direct2D, software raster, resources, file dialog).</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fdfbf6"/>
+      <stop offset="1" stop-color="#f3ede0"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#221a12"/>
+      <stop offset="1" stop-color="#4a3520"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d5ae52"/>
+      <stop offset="1" stop-color="#9b7327"/>
+    </linearGradient>
+    <linearGradient id="jev" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eaf1fb"/>
+      <stop offset="1" stop-color="#d8e5f7"/>
+    </linearGradient>
+    <linearGradient id="llm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9eaf1"/>
+      <stop offset="1" stop-color="#efd8e3"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#362a1a" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrowGold" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#a47c2e"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#365d8d"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#7a3248"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#557a4b"/>
+    </marker>
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.2" fill="#b89038" opacity="0.17"/>
+    </pattern>
+    <style>
+      text { font-family: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif; fill: #241d15; }
+      .serif { font-family: Georgia, "Times New Roman", serif; }
+      .small { font-size: 16px; fill: #675c4c; }
+      .micro { font-size: 14px; fill: #756957; }
+      .label { font-size: 14px; font-weight: 700; letter-spacing: 1.5px; }
+      .cardTitle { font-size: 22px; font-weight: 750; }
+      .body { font-size: 16px; fill: #52483a; }
+      .mono { font-family: Consolas, "Courier New", monospace; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1080" fill="url(#bg)"/>
+  <rect width="1600" height="1080" fill="url(#dots)"/>
+  <rect x="0" y="0" width="1600" height="8" fill="url(#gold)"/>
+
+  <!-- Header -->
+  <rect x="50" y="38" width="1500" height="116" rx="22" fill="url(#hero)" filter="url(#shadow)"/>
+  <circle cx="108" cy="96" r="31" fill="url(#gold)"/>
+  <path d="M92 84h32v24H92z M92 93h32" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="158" y="87" class="serif" font-size="36" font-weight="700" style="fill:#ffffff">Werfs</text>
+  <text x="158" y="120" font-size="18" style="fill:#dbcba9">WAML + C++20 + MVVM 的原生 Windows UI 框架 · 单文件 exe</text>
+  <text x="1490" y="85" text-anchor="end" class="label" style="fill:#e2c980">FRAMEWORK ARCHITECTURE</text>
+  <text x="1490" y="117" text-anchor="end" font-size="17" style="fill:#d9d0c0">WAML · C++20 · Direct2D · Win32</text>
+
+  <!-- Layer labels -->
+  <text x="60" y="207" class="label" style="fill:#916d1f">01 · 应用层 / APPLICATION LAYER</text>
+  <line x1="60" y1="219" x2="1540" y2="219" stroke="#cdbd9c" stroke-width="1"/>
+
+  <!-- SampleHost window -->
+  <g filter="url(#shadow)">
+    <rect x="72" y="243" width="430" height="245" rx="20" fill="#fff" stroke="#d8cfbf" stroke-width="2"/>
+    <rect x="72" y="243" width="430" height="48" rx="20" fill="#f2ede4"/>
+    <rect x="72" y="271" width="430" height="20" fill="#f2ede4"/>
+    <circle cx="101" cy="267" r="6" fill="#b8523c"/><circle cx="122" cy="267" r="6" fill="#d0a23f"/><circle cx="143" cy="267" r="6" fill="#557a4b"/>
+    <rect x="171" y="257" width="283" height="20" rx="10" fill="#fff" stroke="#ddd4c6"/>
+    <text x="312" y="272" text-anchor="middle" class="micro mono">waml_basic.exe · HWND</text>
+  </g>
+  <text x="102" y="328" class="cardTitle">SampleHost 共享宿主</text>
+  <text x="102" y="355" class="small">samples/shared · 窗口 · 消息循环 · 输入分发</text>
+  <g>
+    <rect x="102" y="382" width="174" height="36" rx="9" fill="#f5f1e8" stroke="#ddd3c2"/>
+    <text x="189" y="405" text-anchor="middle" font-size="15" font-weight="650">窗口 · 消息循环</text>
+    <rect x="292" y="382" width="178" height="36" rx="9" fill="#f5f1e8" stroke="#ddd3c2"/>
+    <text x="381" y="405" text-anchor="middle" font-size="15" font-weight="650">DPI · DIP / px</text>
+    <rect x="102" y="430" width="174" height="36" rx="9" fill="#f5f1e8" stroke="#ddd3c2"/>
+    <text x="189" y="453" text-anchor="middle" font-size="15" font-weight="650">命中测试 · 快捷键</text>
+    <rect x="292" y="430" width="178" height="36" rx="9" fill="#f5f1e8" stroke="#ddd3c2"/>
+    <text x="381" y="453" text-anchor="middle" font-size="15" font-weight="650">浮层分派 Overlay</text>
+  </g>
+
+  <!-- Samples -->
+  <g filter="url(#shadow)">
+    <rect x="642" y="243" width="520" height="245" rx="20" fill="#fff" stroke="#d8cfbf" stroke-width="2"/>
+    <rect x="642" y="243" width="10" height="245" rx="5" fill="#b89038"/>
+  </g>
+  <text x="680" y="283" class="label" style="fill:#916d1f">SAMPLES 目录 · 七个示例</text>
+  <text x="680" y="318" class="cardTitle">示例 = WAML + ViewModel + 资源</text>
+  <rect x="680" y="342" width="205" height="54" rx="11" fill="#faf7f0" stroke="#ddd1bc"/>
+  <text x="698" y="366" font-size="16" font-weight="700">basic · list</text>
+  <text x="698" y="386" class="micro">控件 + 集合布局</text>
+  <rect x="904" y="342" width="222" height="54" rx="11" fill="#faf7f0" stroke="#ddd1bc"/>
+  <text x="922" y="366" font-size="16" font-weight="700">editor · binding</text>
+  <text x="922" y="386" class="micro">集成 · 四种绑定模式</text>
+  <rect x="680" y="414" width="205" height="50" rx="11" fill="#faf7f0" stroke="#ddd1bc"/>
+  <text x="698" y="437" font-size="16" font-weight="700">theming · charts</text>
+  <text x="698" y="456" class="micro">主题 token · 图表</text>
+  <rect x="904" y="414" width="222" height="50" rx="11" fill="#faf7f0" stroke="#ddd1bc"/>
+  <text x="922" y="437" font-size="16" font-weight="700">resources/</text>
+  <text x="922" y="456" class="micro">RCDATA · 图标 · 清单</text>
+
+  <!-- Python bridge -->
+  <g filter="url(#shadow)">
+    <rect x="1270" y="243" width="258" height="245" rx="20" fill="#fff" stroke="#d8cfbf" stroke-width="2"/>
+  </g>
+  <text x="1300" y="283" class="label" style="fill:#4d7042">PYTHON BRIDGE</text>
+  <text x="1300" y="320" class="cardTitle">basic_py</text>
+  <rect x="1300" y="345" width="198" height="43" rx="9" fill="#f0f6ee" stroke="#c8d9c3"/>
+  <text x="1317" y="372" font-size="16" font-weight="650">main.py · wui.py</text>
+  <rect x="1300" y="401" width="198" height="43" rx="9" fill="#f0f6ee" stroke="#c8d9c3"/>
+  <text x="1317" y="428" font-size="16" font-weight="650">PyBridge / _wui.pyd</text>
+  <text x="1300" y="463" class="micro">Python 写 ViewModel</text>
+  <text x="1300" y="481" class="micro">UI 引擎与绑定仍是 C++</text>
+
+  <!-- Arrows top -->
+  <path d="M502 330 C555 330 585 330 634 330" fill="none" stroke="#a47c2e" stroke-width="4" marker-end="url(#arrowGold)"/>
+  <text x="578" y="309" text-anchor="middle" class="micro" font-weight="700">WAML · 输入</text>
+  <path d="M1270 365 C1228 365 1203 365 1172 365" fill="none" stroke="#557a4b" stroke-width="3" stroke-dasharray="8 7" marker-end="url(#arrowGreen)"/>
+  <text x="1221" y="345" text-anchor="middle" class="micro" font-weight="700" style="fill:#4d7042">PYTHON VM</text>
+
+  <!-- Layer 2 -->
+  <text x="60" y="556" class="label" style="fill:#916d1f">02 · 框架核心 / FRAMEWORK CORE</text>
+  <line x1="60" y1="568" x2="1540" y2="568" stroke="#cdbd9c" stroke-width="1"/>
+
+  <!-- Host to framework arrow -->
+  <path d="M895 488 C895 545 872 588 846 611" fill="none" stroke="#a47c2e" stroke-width="4" marker-end="url(#arrowGold)"/>
+  <text x="825" y="598" text-anchor="end" class="micro" font-weight="700">WAML 加载 · ViewModel 绑定</text>
+
+  <!-- WAML service -->
+  <g filter="url(#shadow)">
+    <rect x="90" y="601" width="465" height="249" rx="22" fill="url(#jev)" stroke="#9bb6d7" stroke-width="2"/>
+  </g>
+  <circle cx="138" cy="650" r="25" fill="#365d8d"/>
+  <path d="M131 642l-8 8 8 8 M145 642l8 8-8 8" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="178" y="643" class="label" style="fill:#365d8d">加载期 · LOAD TIME</text>
+  <text x="178" y="674" class="cardTitle">waml/ 编译与实例化</text>
+  <text x="120" y="717" class="body">Lexer → Parser → Validator → Widget 树</text>
+  <rect x="118" y="742" width="116" height="40" rx="20" fill="#fff" stroke="#9bb6d7"/>
+  <text x="176" y="767" text-anchor="middle" font-size="15" font-weight="750" style="fill:#365d8d">行列号诊断</text>
+  <rect x="244" y="742" width="120" height="40" rx="20" fill="#fff" stroke="#9bb6d7"/>
+  <text x="304" y="767" text-anchor="middle" font-size="15" font-weight="750" style="fill:#365d8d">StyleTriggers</text>
+  <rect x="372" y="742" width="118" height="40" rx="20" fill="#fff" stroke="#9bb6d7"/>
+  <text x="431" y="767" text-anchor="middle" font-size="15" font-weight="750" style="fill:#365d8d">DataTemplate</text>
+  <text x="120" y="818" class="small">未知元素与类型错误在加载期报错 · debug 改界面免重编译</text>
+
+  <!-- Widget engine center -->
+  <g filter="url(#shadow)">
+    <rect x="625" y="620" width="350" height="210" rx="24" fill="#fff" stroke="#cdbd9c" stroke-width="2"/>
+  </g>
+  <circle cx="800" cy="668" r="29" fill="url(#gold)"/>
+  <path d="M789 658h22v20h-22z M789 665h22" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="800" y="720" text-anchor="middle" class="cardTitle">core/ Widget 引擎</text>
+  <text x="800" y="750" text-anchor="middle" class="small">布局 Measure/Arrange · 失效传播 · 事件路由</text>
+  <rect x="671" y="774" width="258" height="31" rx="15" fill="#f5f1e8"/>
+  <text x="800" y="795" text-anchor="middle" class="micro" font-weight="700">49 CONTROLS · OVERLAY · CHART</text>
+
+  <!-- MVVM service -->
+  <g filter="url(#shadow)">
+    <rect x="1045" y="601" width="465" height="249" rx="22" fill="url(#llm)" stroke="#c99aae" stroke-width="2"/>
+  </g>
+  <circle cx="1093" cy="650" r="25" fill="#7a3248"/>
+  <path d="M1082 643h22M1099 638l6 5-6 5 M1104 657h-22M1087 652l-6 5 6 5" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1133" y="643" class="label" style="fill:#7a3248">数据绑定 · BINDING</text>
+  <text x="1133" y="674" class="cardTitle">mvvm/ 属性 · 命令 · 集合</text>
+  <text x="1075" y="717" class="body">ObservableProperty → Binding → 控件属性</text>
+  <rect x="1075" y="742" width="188" height="40" rx="20" fill="#fff" stroke="#c99aae"/>
+  <text x="1169" y="767" text-anchor="middle" font-size="15" font-weight="700" style="fill:#7a3248">4 种绑定模式</text>
+  <rect x="1277" y="742" width="190" height="40" rx="20" fill="#fff" stroke="#c99aae"/>
+  <text x="1372" y="767" text-anchor="middle" font-size="15" font-weight="700" style="fill:#7a3248">RelayCommand</text>
+  <text x="1075" y="818" class="small">FallbackValue · LostFocus · ObservableList 虚拟化</text>
+
+  <!-- Core internal arrows -->
+  <path d="M555 695 C580 695 599 695 625 695" fill="none" stroke="#365d8d" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <text x="590" y="677" text-anchor="middle" class="micro" font-weight="700" style="fill:#365d8d">实例化</text>
+  <path d="M625 790 C601 813 580 813 555 790" fill="none" stroke="#365d8d" stroke-width="3" marker-end="url(#arrowBlue)"/>
+  <text x="590" y="838" text-anchor="middle" class="micro" font-weight="700" style="fill:#365d8d">样式触发</text>
+  <path d="M975 695 C1000 695 1017 695 1035 695" fill="none" stroke="#7a3248" stroke-width="4" marker-end="url(#arrowPurple)"/>
+  <text x="1010" y="677" text-anchor="middle" class="micro" font-weight="700" style="fill:#7a3248">命令调用</text>
+  <path d="M1045 790 C1020 813 999 813 975 790" fill="none" stroke="#7a3248" stroke-width="3" marker-end="url(#arrowPurple)"/>
+  <text x="1010" y="838" text-anchor="middle" class="micro" font-weight="700" style="fill:#7a3248">属性回写</text>
+
+  <!-- Sample ribbon -->
+  <rect x="115" y="506" width="1370" height="32" rx="16" fill="#ede6d8"/>
+  <text x="140" y="528" font-size="14" font-weight="700" style="fill:#675c4c">BASIC  •  LIST  •  EDITOR  •  BINDING  •  THEMING  •  CHARTS  •  BASIC_PY  •  TESTS  •  BENCH  •  TOOLS</text>
+
+  <!-- Layer 3 -->
+  <text x="60" y="917" class="label" style="fill:#916d1f">03 · 渲染与平台 / RENDER &amp; PLATFORM</text>
+  <line x1="60" y1="929" x2="1540" y2="929" stroke="#cdbd9c" stroke-width="1"/>
+  <g filter="url(#shadow)">
+    <rect x="90" y="954" width="1420" height="82" rx="20" fill="#fff" stroke="#d4c8b4" stroke-width="2"/>
+  </g>
+  <rect x="90" y="954" width="12" height="82" rx="6" fill="url(#gold)"/>
+  <text x="128" y="986" font-size="18" font-weight="750">一条管线：失效 → Measure/Arrange → PaintCtx → Present</text>
+  <text x="128" y="1014" class="small">platform/ 提供资源读取、版本与文件对话框 · 快照与测试走离屏渲染，无需窗口</text>
+  <g>
+    <rect x="820" y="974" width="145" height="42" rx="21" fill="#eaf1fb" stroke="#9bb6d7"/>
+    <text x="892" y="1001" text-anchor="middle" font-size="14" font-weight="700" style="fill:#365d8d">D2D + DirectWrite</text>
+    <rect x="977" y="974" width="175" height="42" rx="21" fill="#f9eaf1" stroke="#c99aae"/>
+    <text x="1064" y="1001" text-anchor="middle" font-size="14" font-weight="700" style="fill:#7a3248">SoftwareRender WARP</text>
+    <rect x="1164" y="974" width="155" height="42" rx="21" fill="#f0f6ee" stroke="#b7ceb0"/>
+    <text x="1241" y="1001" text-anchor="middle" font-size="14" font-weight="700" style="fill:#4d7042">RCDATA 单文件 exe</text>
+    <rect x="1331" y="974" width="145" height="42" rx="21" fill="#f5f1e8" stroke="#ddd3c2"/>
+    <text x="1403" y="1001" text-anchor="middle" font-size="14" font-weight="700" style="fill:#675c4c">FileDialog · WIC</text>
+  </g>
+</svg>
