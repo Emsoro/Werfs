@@ -82,6 +82,8 @@ public:
         AddManyLogs.Set(std::make_shared<wui::RelayCommand>([this] { AddLogs(1000); }));
         ClearLogs.Set(std::make_shared<wui::RelayCommand>([this] { ClearLogRows(); }));
         ScrollLogs.Set(std::make_shared<wui::RelayCommand>([this] { NudgeLogScroll(); }));
+        ExpandAll.Set(std::make_shared<wui::RelayCommand>([this] { SetTreeExpanded(true); }));
+        CollapseAll.Set(std::make_shared<wui::RelayCommand>([this] { SetTreeExpanded(false); }));
 
         Make("Name", Name);
         Make("Count", Count);
@@ -107,6 +109,12 @@ public:
         Make("ClearLogsCommand", ClearLogs);
         Make("ScrollLogsCommand", ScrollLogs);
 
+        Make("TreeNodes", TreeNodes);
+        Make("SelectedTreeNode", SelectedTreeNode);
+        Make("TreeSummary", TreeSummary);
+        Make("ExpandAllCommand", ExpandAll);
+        Make("CollapseAllCommand", CollapseAll);
+
         for (int i = 0; i < 5; ++i) AddRow();
         SeedDocuments();
         SeedDocuments();
@@ -126,6 +134,10 @@ public:
         // label: it reads as evidence.
         LogVirtualized.Subscribe(logSync_.get());
         SeedLogs();
+
+        treeSync_ = std::make_unique<TreeSync>(this);
+        SelectedTreeNode.Subscribe(treeSync_.get());
+        SeedTree();
     }
 
     void SeedDocuments() {
@@ -171,6 +183,7 @@ public:
         LogRealized.Unsubscribe(logSync_.get());
         LogFirstVisible.Unsubscribe(logSync_.get());
         LogVirtualized.Unsubscribe(logSync_.get());
+        SelectedTreeNode.Unsubscribe(treeSync_.get());
     }
 
     // Reacts to ActiveTab changing from ANY source -- the control's click, or
@@ -283,6 +296,62 @@ public:
                        (LogVirtualized.Get() ? L"yes" : L"no (no bounded height)"));
     }
 
+    // --- the tree ------------------------------------------------------------
+    //
+    // A tree is data, not widgets: every node owns its children and its own
+    // IsExpanded flag. The TreeView flattens the expanded branches on each layout,
+    // so these commands only have to flip properties on the model.
+    void SeedTree() {
+        treeNodes_ = std::make_shared<wui::ObservableList<wui::TreeNode>>();
+        auto src = std::make_shared<wui::TreeNode>(L"src");
+        auto core = std::make_shared<wui::TreeNode>(L"core");
+        core->Add(std::make_shared<wui::TreeNode>(L"Widget.cpp"));
+        core->Add(std::make_shared<wui::TreeNode>(L"Controls.cpp"));
+        auto waml = std::make_shared<wui::TreeNode>(L"waml");
+        waml->Add(std::make_shared<wui::TreeNode>(L"Parser.cpp"));
+        waml->Add(std::make_shared<wui::TreeNode>(L"Diagnostics.cpp"));
+        src->Add(core);
+        src->Add(waml);
+        auto samples = std::make_shared<wui::TreeNode>(L"samples");
+        auto list = std::make_shared<wui::TreeNode>(L"list");
+        list->Add(std::make_shared<wui::TreeNode>(L"List.waml"));
+        list->Add(std::make_shared<wui::TreeNode>(L"ListVm.h"));
+        samples->Add(list);
+        samples->Add(std::make_shared<wui::TreeNode>(L"editor"));
+        treeNodes_->Add(src);
+        treeNodes_->Add(samples);
+        treeNodes_->Add(std::make_shared<wui::TreeNode>(L"build.ps1"));
+        src->SetTreeExpanded(true);
+        TreeNodes.Set(std::static_pointer_cast<wui::RefObject>(treeNodes_));
+        SyncTreeState();
+    }
+
+    void SetTreeExpanded(bool expanded) {
+        if (!treeNodes_) return;
+        std::vector<std::shared_ptr<wui::TreeNode>> stack;
+        for (size_t i = 0; i < treeNodes_->Count(); ++i) stack.push_back(treeNodes_->At(i));
+        while (!stack.empty()) {
+            auto node = stack.back();
+            stack.pop_back();
+            node->SetTreeExpanded(expanded);
+            for (auto& child : node->Nodes()) stack.push_back(child);
+        }
+        SyncTreeState();
+    }
+
+    void SyncTreeState() {
+        auto selected = std::dynamic_pointer_cast<wui::TreeNode>(SelectedTreeNode.Get());
+        const std::wstring title = selected ? selected->Title.Get() : L"(none)";
+        TreeSummary.Set(L"Selected: " + title +
+                        L" — click a chevron to expand, a row to select.");
+    }
+
+    struct TreeSync final : wui::IPropertyObserver {
+        explicit TreeSync(ListViewVm* vm) : vm_(vm) {}
+        void OnSourceChanged(const wui::Value&) override { vm_->SyncTreeState(); }
+        ListViewVm* vm_;
+    };
+
     wui::ObservableProperty<std::wstring> Name{"Name", L"Mixed layouts"};
     wui::ObservableProperty<int> Count{"Count", 0};
     wui::ObservableProperty<int> ItemCount{"ItemCount", 0};
@@ -308,11 +377,19 @@ public:
     wui::ObservableProperty<wui::RefPtr> ClearLogs{"ClearLogsCommand"};
     wui::ObservableProperty<wui::RefPtr> ScrollLogs{"ScrollLogsCommand"};
 
+    wui::ObservableProperty<wui::RefPtr> TreeNodes{"TreeNodes"};
+    wui::ObservableProperty<wui::RefPtr> SelectedTreeNode{"SelectedTreeNode"};
+    wui::ObservableProperty<std::wstring> TreeSummary{"TreeSummary"};
+    wui::ObservableProperty<wui::RefPtr> ExpandAll{"ExpandAllCommand"};
+    wui::ObservableProperty<wui::RefPtr> CollapseAll{"CollapseAllCommand"};
+
 private:
     std::shared_ptr<wui::ObservableList<ListRow>> list_;
     std::vector<std::shared_ptr<ListRow>> rows_;
     std::shared_ptr<wui::ObservableList<TabDoc>> docs_;
     std::shared_ptr<wui::ObservableList<LogRow>> logRows_;
     std::unique_ptr<LogSync> logSync_;
+    std::shared_ptr<wui::ObservableList<wui::TreeNode>> treeNodes_;
+    std::unique_ptr<TreeSync> treeSync_;
 };
 } // namespace sample

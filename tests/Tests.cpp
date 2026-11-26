@@ -6027,6 +6027,189 @@ TEST("popup primitive: content survives a close and a reopen") {
     CHECK(log.Text().find("PrimitivePayload") != std::string::npos);
 }
 
+TEST("virtual: repeated scrolling with all window properties bound stays stable") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><ScrollViewer><StackPanel Orientation=\"Vertical\" Spacing=\"8\" Margin=\"12\">"
+        "<TextBlock Text=\"header\"/>"
+        "<ListBox ItemsSource=\"{Binding Items}\" Height=\"260\" ItemHeight=\"26\""
+        " RealizedCount=\"{Binding Realized, Mode=TwoWay}\""
+        " IsVirtualized=\"{Binding Virt, Mode=TwoWay}\""
+        " FirstVisibleIndex=\"{Binding First, Mode=TwoWay}\""
+        " ScrollOffset=\"{Binding Scroll, Mode=TwoWay}\""
+        " ScrollMax=\"{Binding ScrollMax, Mode=TwoWay}\">"
+        "<ListBox.ItemTemplate><DataTemplate>"
+        "<Grid ColumnDefinitions=\"36,1*\" ColumnSpacing=\"8\">"
+        "<TextBlock Grid.Column=\"0\" Text=\"row\"/>"
+        "<TextBlock Grid.Column=\"1\" Text=\"{Binding Title}\"/>"
+        "</Grid>"
+        "</DataTemplate></ListBox.ItemTemplate></ListBox>"
+        "<TextBlock Text=\"footer\"/>"
+        "</StackPanel></ScrollViewer></Page>", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+
+    struct VM final : ObservableObject {
+        struct Sync final : IPropertyObserver {
+            void OnSourceChanged(const Value&) override {
+                vm->Summary.Set(std::to_wstring(vm->Realized.Get()) + L"/" +
+                                std::to_wstring(vm->First.Get()));
+            }
+            VM* vm = nullptr;
+        };
+        VM() {
+            Make("Items", Items);
+            Make("Realized", Realized);
+            Make("Virt", Virt);
+            Make("First", First);
+            Make("Scroll", Scroll);
+            Make("ScrollMax", ScrollMax);
+            Make("Summary", Summary);
+            Realized.Subscribe(&sync);
+            First.Subscribe(&sync);
+            Virt.Subscribe(&sync);
+            sync.vm = this;
+            auto list = std::make_shared<wui::ObservableList<ListItem>>();
+            for (int i = 0; i < 1000; ++i) list->Add(std::make_shared<ListItem>(i));
+            Items.Set(std::static_pointer_cast<RefObject>(list));
+        }
+        ~VM() override {
+            Realized.Unsubscribe(&sync);
+            First.Unsubscribe(&sync);
+            Virt.Unsubscribe(&sync);
+        }
+        ObservableProperty<RefPtr> Items{"Items"};
+        ObservableProperty<int> Realized{"Realized", 0};
+        ObservableProperty<bool> Virt{"Virt", false};
+        ObservableProperty<int> First{"First", 0};
+        ObservableProperty<double> Scroll{"Scroll", 0.0};
+        ObservableProperty<double> ScrollMax{"ScrollMax", 0.0};
+        ObservableProperty<std::wstring> Summary{"Summary"};
+        Sync sync;
+    };  // struct VM
+    auto vm = std::make_shared<VM>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{700, 600});
+    ListBox* lb = nullptr;
+    std::function<void(Widget*)> findLb = [&](Widget* w) {
+        if (!w || lb) return;
+        if (auto* box = dynamic_cast<ListBox*>(w)) lb = box;
+        for (auto& c : w->Children()) findLb(c.get());
+    };
+    findLb(root.get());
+    CHECK(lb != nullptr);
+    if (!lb) return;
+
+    for (int i = 0; i < 600; ++i) {
+        // Mix programmatic scrolls, VM-driven scrolls, real wheel events through
+        // the host's hit-test path, layout, painting, and clicks.
+        switch (i % 5) {
+        case 0: lb->ScrollTo(static_cast<float>((i * 137) % 26000)); break;
+        case 1: vm->Scroll.Set(vm->Scroll.Get() + 400.0); break;
+        case 2: {
+            const Rect b = lb->Bounds();
+            const Point p{b.x + b.w * 0.5f, b.y + b.h * 0.5f};
+            if (Widget* hit = root->HitTest(p)) {
+                hit->OnPointerWheel(static_cast<float>((i % 2) ? -3.0f : 3.0f));
+            }
+            break;
+        }
+        case 3: vm->Scroll.Set(0.0); break;
+        default: lb->ScrollTo(static_cast<float>((i * 53) % 26000)); break;
+        }
+        root->ForceLayout(Size{700, 600});
+        RecordingPaintContext rec;
+        root->PaintTree(rec, MakePalette(ThemeKind::Light));
+        if (i % 3 == 0) {
+            const size_t first = lb->RealizedFirst();
+            if (Widget* row = lb->ItemWidgetAt(first)) {
+                const Rect b = row->Bounds();
+                lb->OnPointerDown(Point{b.x + 4.0f, b.y + b.h * 0.5f});
+            }
+        }
+    }
+    CHECK(lb->RealizedCount() < 100);
+}
+
+TEST("tree: expansion flattens only visible nodes and selection binds") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<TreeView ItemsSource=\"{Binding Nodes}\" ItemHeight=\"24\" Indent=\"12\""
+        " Height=\"160\" SelectedItem=\"{Binding Selected, Mode=TwoWay}\"/>", bag);
+    CHECK(doc != nullptr);
+    CHECK_EQ(bag.ErrorCount(), size_t(0));
+    if (!doc) return;
+
+    struct TreeVm final : ObservableObject {
+        TreeVm() {
+            Make("Nodes", Nodes);
+            Make("Selected", Selected);
+            auto root1 = std::make_shared<TreeNode>(L"Root 1");
+            auto child = std::make_shared<TreeNode>(L"Child 1.1");
+            child->Add(std::make_shared<TreeNode>(L"Grand 1.1.1"));
+            root1->Add(child);
+            root1->Add(std::make_shared<TreeNode>(L"Child 1.2"));
+            roots.push_back(root1);
+            roots.push_back(std::make_shared<TreeNode>(L"Root 2"));
+            auto list = std::make_shared<wui::ObservableList<TreeNode>>();
+            for (auto& r : roots) list->Add(r);
+            Nodes.Set(std::static_pointer_cast<RefObject>(list));
+        }
+        ObservableProperty<RefPtr> Nodes{"Nodes"};
+        ObservableProperty<RefPtr> Selected{"Selected"};
+        std::vector<std::shared_ptr<TreeNode>> roots;
+    };
+    auto vm = std::make_shared<TreeVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{400, 400});
+    auto* tree = dynamic_cast<TreeView*>(root.get());
+    CHECK(tree != nullptr);
+    if (!tree) return;
+
+    // Only roots are realized; children of a collapsed node have no row.
+    CHECK_EQ(tree->Rows().size(), size_t(2));
+    CHECK_EQ(tree->ModelCount(), size_t(2));
+    RecordingPaintContext first;
+    root->PaintTree(first, MakePalette(ThemeKind::Light));
+    CHECK(first.Text().find("Root 1") != std::string::npos);
+    CHECK(first.Text().find("Child 1.1") == std::string::npos);
+
+    // A command/VM setting IsExpanded must show up on the next layout.
+    vm->roots[0]->SetTreeExpanded(true);
+    auto child11 = std::dynamic_pointer_cast<TreeNode>(vm->roots[0]->Nodes()[0]);
+    child11->SetTreeExpanded(true);
+    root->ForceLayout(Size{400, 400});
+    CHECK_EQ(tree->Rows().size(), size_t(5));
+    CHECK_EQ(tree->Rows()[1].depth, 1);
+    CHECK_EQ(tree->Rows()[2].depth, 2);
+    RecordingPaintContext expanded;
+    root->PaintTree(expanded, MakePalette(ThemeKind::Light));
+    CHECK(expanded.Text().find("Grand 1.1.1") != std::string::npos);
+
+    // Clicking a chevron collapses the branch through the node, not a widget.
+    const Rect view = tree->Bounds();
+    tree->OnPointerDown(Point{view.x + 8.0f, view.y + 12.0f});
+    root->ForceLayout(Size{400, 400});
+    CHECK_EQ(tree->Rows().size(), size_t(2));
+    CHECK(!vm->roots[0]->TreeExpanded());
+
+    // Clicking a row selects the node and the TwoWay binding writes back.
+    tree->OnPointerDown(Point{view.x + 120.0f, view.y + 12.0f});
+    CHECK(vm->Selected.Get() == std::static_pointer_cast<RefObject>(vm->roots[0]));
+    CHECK_EQ(tree->SelectedRow(), size_t(0));
+
+    // Keyboard reaches the next root and SetAllExpanded works from the VM side.
+    tree->OnKeyDown(KeyDown);
+    CHECK(vm->Selected.Get() == std::static_pointer_cast<RefObject>(vm->roots[1]));
+    tree->SetAllExpanded(true);
+    root->ForceLayout(Size{400, 400});
+    CHECK_EQ(tree->Rows().size(), size_t(5));
+}
+
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : "";
     const int failures = test::RunAll(filter);

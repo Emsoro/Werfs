@@ -878,6 +878,38 @@ int RunListChecks(Widget* root, const std::shared_ptr<sample::ListViewVm>& vm) {
         }
     }
 
+    std::printf("\n[6] TreeView shows only expanded branches and binds selection\n");
+    {
+        TreeView* tree = dynamic_cast<TreeView*>(FindFirst(root, "wui/TreeView"));
+        Expect(tree != nullptr, "found the TreeView");
+        if (tree != nullptr) {
+            root->ForceLayout(Size{700, 3000});
+            const size_t seeded = tree->Rows().size();
+            Expect(seeded > 3 && seeded < 20, "a bounded set of rows is visible");
+            Expect(vm->SelectedTreeNode.Get() == nullptr, "nothing selected yet");
+
+            // Expand all runs through the VM: only node properties change.
+            Widget* expandButton = ButtonWithText(root, L"Expand all");
+            Expect(expandButton != nullptr, "found the Expand all button");
+            if (expandButton) ClickAt(root, expandButton);
+            root->ForceLayout(Size{700, 3000});
+            Expect(tree->Rows().size() > seeded, "expand all revealed descendants");
+
+            // A row click selects its node and writes back to the ViewModel.
+            const Rect view = tree->Bounds();
+            tree->OnPointerDown(Point{view.x + 100.0f, view.y + 12.0f});
+            auto selected = std::dynamic_pointer_cast<TreeNode>(vm->SelectedTreeNode.Get());
+            Expect(selected != nullptr, "clicking a row wrote SelectedTreeNode");
+            if (selected) Expect(selected->Title.Get() == L"src", "and it is the clicked node");
+
+            Widget* collapseButton = ButtonWithText(root, L"Collapse all");
+            Expect(collapseButton != nullptr, "found the Collapse all button");
+            if (collapseButton) ClickAt(root, collapseButton);
+            root->ForceLayout(Size{700, 3000});
+            Expect(tree->Rows().size() < seeded, "collapse all restored the roots");
+        }
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }

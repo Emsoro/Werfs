@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -49,9 +50,13 @@ struct AppState {
     ComPtr<IDWriteFactory> dwrite;
     std::map<uint32_t, ComPtr<ID2D1SolidColorBrush>> brushes;
     std::map<std::wstring, ComPtr<IDWriteTextFormat>> formats;
-    Widget* hovered = nullptr;
-    Widget* pressed = nullptr;
-    Widget* focused = nullptr;
+    // Weak, not raw: a virtualized ListBox frees the row widgets that leave its
+    // window, and a hover/press can be sitting on one of them when that happens.
+    // A raw pointer then survives its widget and the next mouse message calls
+    // into freed memory -- an easy, repeatable crash while scrolling the list.
+    std::weak_ptr<Widget> hovered;
+    std::weak_ptr<Widget> pressed;
+    std::weak_ptr<Widget> focused;
     HWND hwnd = nullptr;
     ThemeKind theme = ThemeKind::Light;
     bool mouseTracking = false;
@@ -354,14 +359,33 @@ bool HandleAccelerator(HWND hwnd, int vk, int modifiers) {
     return false;
 }
 
+// Remember a widget across messages without claiming it stays alive. Rows inside
+// a virtualized list are freed as they leave the window, so a raw pointer here
+// would outlive its widget and the next mouse message would call into freed
+// memory. shared_from_this works for every widget in the tree (they are all held
+// by WidgetPtr); the guard keeps a foreign widget from throwing at us.
+std::weak_ptr<Widget> Track(Widget* w) {
+    if (!w) return {};
+    try {
+        return w->shared_from_this();
+    } catch (const std::bad_weak_ptr&) {
+        return {};
+    }
+}
+
+// Lock before use: the temporary shared_ptr must stay alive for the whole call,
+// otherwise the raw pointer would be dangling again by the time it is dereferenced.
+WidgetPtr Lock(const std::weak_ptr<Widget>& ref) { return ref.lock(); }
+
 void UpdateHover(HWND hwnd, Widget* target, int x, int y) {
-    if (g.hovered == target) {
+    WidgetPtr previous = Lock(g.hovered);
+    if (previous.get() == target) {
         if (target && target->Hovered()) target->OnPointerMove(LocalPoint(target, x, y));
         return;
     }
-    if (g.hovered) g.hovered->OnPointerLeave();
-    g.hovered = target;
-    if (g.hovered) g.hovered->OnPointerEnter();
+    if (previous) previous->OnPointerLeave();
+    g.hovered = Track(target);
+    if (WidgetPtr now = Lock(g.hovered)) now->OnPointerEnter();
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -410,17 +434,19 @@ std::wstring ReadImeString(HWND hwnd, DWORD which) {
 // where it was, which is the right failure: a slightly stale position beats no IME at all.
 void UpdateImePosition() {
     ITextInputService* service = TextInputSystem::Get();
-    if (service == nullptr || g.focused == nullptr) return;
-    const CompositionCaret caret = g.focused->ImeCaret();
+    WidgetPtr focused = Lock(g.focused);
+    if (service == nullptr || !focused) return;
+    const CompositionCaret caret = focused->ImeCaret();
     service->MoveCandidateWindow(caret);
 }
 
 
 void SetFocus(Widget* target) {
-    if (g.focused == target) return;
-    if (g.focused) g.focused->SetFocused(false);
-    g.focused = target;
-    if (g.focused) g.focused->SetFocused(true);
+    WidgetPtr previous = Lock(g.focused);
+    if (previous.get() == target) return;
+    if (previous) previous->SetFocused(false);
+    g.focused = Track(target);
+    if (target) target->SetFocused(true);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -575,7 +601,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
         }
         SetFocus(focusTarget);
-        g.pressed = target;
+        g.pressed = Track(target);
         // Convert to the target's own space. Pointer coordinates are window
         // space, but every control tests bounds_, which are unscrolled -- inside
         // a scrolled page the two differ by the scroll offset, so dispatching the
@@ -606,9 +632,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         ReleaseCapture();
-        if (g.pressed) {
-            g.pressed->OnPointerUp(g.pressed->ToLocal(LocalPoint(g.pressed, x, y)));
-            g.pressed = nullptr;
+        if (WidgetPtr pressed = Lock(g.pressed)) {
+            pressed->OnPointerUp(pressed->ToLocal(LocalPoint(pressed.get(), x, y)));
+            g.pressed.reset();
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -622,15 +648,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
         }
+        // Hold a strong reference for the whole dispatch: the focused widget can
+        // detach itself from the tree while handling the key.
+        WidgetPtr focused = Lock(g.focused);
         // While a composition is open the IME owns the keyboard: Enter picks a
         // candidate, not "insert newline" or "leave the field". DefWindowProc is
         // what forwards these keys to the IME.
-        if (g.focused && g.focused->Composing())
+        if (focused && focused->Composing())
             return DefWindowProcW(hwnd, msg, wp, lp);
         // The focused control gets the key first, so Ctrl+A inside a TextBox is
         // text selection rather than a menu shortcut. Only an unhandled key falls
         // through to the accelerator table.
-        if (g.focused && g.focused->OnKeyDown(static_cast<int>(wp))) {
+        if (focused && focused->OnKeyDown(static_cast<int>(wp))) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -642,17 +671,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g.modifiers = CurrentModifiers();
         return 0;
 
-    case WM_CHAR:
+    case WM_CHAR: {
         // An IME delivers committed characters through the composition messages, not here.
         // If a composition is in progress this key belongs to the IME and must not also be
         // inserted as a literal, or "zhong" would appear as letters next to the candidate.
-        if (g.focused && !g.focused->Composing()) {
-            if (g.focused->OnChar(static_cast<wchar_t>(wp))) {
+        WidgetPtr focused = Lock(g.focused);
+        if (focused && !focused->Composing()) {
+            if (focused->OnChar(static_cast<wchar_t>(wp))) {
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
+    }
 
     case WM_IME_STARTCOMPOSITION: {
         ImeMessageScope scope(g.inImeMessage);
@@ -670,12 +701,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // GCS_RESULTSTR: the user picked a candidate. That is a real edit.
         // GCS_COMPSTR:   the string is still being built. That is a preview.
         // Both can arrive together, and the result must win.
+        WidgetPtr focused = Lock(g.focused);
         if (lp & GCS_RESULTSTR) {
             const std::wstring text = ReadImeString(hwnd, GCS_RESULTSTR);
-            if (g.focused) g.focused->CommitComposition(text);
+            if (focused) focused->CommitComposition(text);
         } else if (lp & GCS_COMPSTR) {
             const std::wstring text = ReadImeString(hwnd, GCS_COMPSTR);
-            if (g.focused) g.focused->SetComposition(text);
+            if (focused) focused->SetComposition(text);
         }
         UpdateImePosition();
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -687,7 +719,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (!scope.Active()) return 0;
         // The IME finished or gave up. If it never sent a result string, the preview must
         // not be left on screen looking like committed text.
-        if (g.focused && g.focused->Composing()) g.focused->CancelComposition();
+        if (WidgetPtr focused = Lock(g.focused)) {
+            if (focused->Composing()) focused->CancelComposition();
+        }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
@@ -921,9 +955,9 @@ void Shutdown() {
     g.root.reset();
     g_accelerators.clear();
     g.vm.reset();
-    g.hovered = nullptr;
-    g.pressed = nullptr;
-    g.focused = nullptr;
+    g.hovered.reset();
+    g.pressed.reset();
+    g.focused.reset();
     g.overlayCapture = false;
     g.target.Reset();
     g.d2d.Reset();

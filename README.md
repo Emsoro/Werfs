@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.13.1.0** · MIT · Windows 10/11 x64
+> 版本 **0.13.2.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -38,6 +38,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **四种绑定模式** | `OneTime` / `OneWay` / `TwoWay` / `OneWayToSource`，默认按目标属性决定；`FallbackValue`、`UpdateSourceTrigger=LostFocus` |
 | **DataTemplate** | 列表项由 WAML 描述，按项实例化 |
 | **列表虚拟化** | `ListBox` 给定有界高度时只保留视口内的行，滚动即建/毁；模型 1000 行也只持有十几个控件 |
+| **树形列表** | `TreeView` + `TreeNode`：节点自己持有子项与 `IsExpanded`，控件只画展开的分支；点击箭头折叠，命令可展开全部 |
 | **图表与降采样** | `Chart`/`ChartPlot` 三种图形（折线/柱状/面积）+ 坐标轴与 nice 刻度；四种降采样模式；`ChartStream` 环形缓冲支持实时流，100 万点降到每像素一点，实测 **5.4 ms vs 37.2 ms** |
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
 | **高 DPI** | DIP 布局 + 像素输入，已验证 200% 缩放 |
@@ -49,14 +50,14 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 
 ### 内置控件
 
-按类别分组（共 26 个控件 + `DataTemplate`）：
+按类别分组（共 27 个控件 + `DataTemplate`）：
 
 | 类别 | 控件 |
 |---|---|
 | 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
 | 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（多行折行、填满列宽） |
 | 输入 | `Button` · `CheckBox` |
-| 集合 | `ListBox` + `DataTemplate` · `TabView`（切换/关闭/新建） |
+| 集合 | `ListBox` + `DataTemplate` · `TreeView`（层级/展开/选中） · `TabView`（切换/关闭/新建） |
 | 外壳 | `MenuBar` · `MenuBarItem` · `MenuFlyout` · `MenuFlyoutItem` · `MenuFlyoutSubItem` · `MenuFlyoutSeparator` · `CommandBar` · `AppBarButton` · `AppBarSeparator` · `ContentDialog` |
 
 面板放置属性写在**子元素**上（本框架无附加属性语法）：
@@ -132,10 +133,10 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.13.1.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.13.2.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
-$env:WUI_VERSION_PATCH = '1'
+$env:WUI_VERSION_PATCH = '2'
 pwsh -File build.ps1 all
 ```
 

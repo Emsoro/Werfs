@@ -313,6 +313,22 @@ void TypeRegistry::RegisterBuiltins() {
         add(t);
     }
     {
+        auto t = std::make_shared<TypeInfo>("wui/TreeView", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<TreeView>(); });
+        AddLayoutProps(*t);
+        t->Prop("ItemsSource", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
+                BindingMode::OneWay);
+        t->Prop("SelectedItem", VType::Ref, Value::Null(), AffectsRender, BindingMode::TwoWay);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("ItemHeight", VType::Number, Value::Number(26), AffectsMeasure);
+        t->Prop("Indent", VType::Number, Value::Number(16), AffectsMeasure);
+        t->Prop("FontSize", VType::Number, Value::Number(12), AffectsRender);
+        t->EnumProp("FontWeight", {"Normal", "Medium", "SemiBold", "Bold"}, WeightNormal, AffectsRender);
+        t->Prop("ScrollOffset", VType::Number, Value::Number(0), AffectsRender, BindingMode::TwoWay);
+        add(t);
+    }
+    {
         auto t = std::make_shared<TypeInfo>("wui/Grid", ContentModel::ManyChildren,
                                             []() -> WidgetPtr { return std::make_shared<Grid>(); });
         AddLayoutProps(*t);

@@ -2268,6 +2268,359 @@ Widget* ListBox::HitTest(const Point& p) {
 
 
 // ---------------------------------------------------------------------------
+// TreeView
+//
+// A tree is a list of the nodes that happen to be visible. The flattened row
+// vector is rebuilt on layout, so an IsExpanded change made by a command is
+// picked up on the next paint without the control having to observe every node.
+// ---------------------------------------------------------------------------
+TreeNode::TreeNode(std::wstring title) {
+    Title.Set(std::move(title));
+    Make("Title", Title);
+    Make("IsExpanded", IsExpanded);
+}
+
+void TreeNode::Add(std::shared_ptr<TreeNode> child) {
+    if (child) children_.push_back(std::move(child));
+}
+
+std::vector<std::shared_ptr<ITreeItem>> TreeNode::TreeChildren() const {
+    std::vector<std::shared_ptr<ITreeItem>> out;
+    out.reserve(children_.size());
+    for (const auto& child : children_) out.push_back(child);
+    return out;
+}
+
+TreeView::TreeView() {
+    BindType(TypeRegistry::Instance().Find("wui/TreeView"));
+    slotItems_ = SlotOf("ItemsSource");
+    slotSelected_ = SlotOf("SelectedItem");
+    slotOffset_ = SlotOf("ScrollOffset");
+}
+
+TreeView::~TreeView() { UnsubscribeSource(); }
+
+void TreeView::SubscribeSource() {
+    auto ref = Get<RefPtr>(slotItems_);
+    auto* list = dynamic_cast<ObservableListBase*>(ref.get());
+    if (list == list_) return;
+    UnsubscribeSource();
+    list_ = list;
+    listRef_ = ref;
+    if (list_) list_->Subscribe(this);
+    Rebuild();
+}
+
+void TreeView::UnsubscribeSource() {
+    if (list_) list_->Unsubscribe(this);
+    list_ = nullptr;
+    listRef_.reset();
+}
+
+void TreeView::OnListChanged(const ListChange&) { Rebuild(); }
+
+void TreeView::OnSlotChanged(int slot, const Value& value) {
+    if (slot == slotItems_) {
+        SubscribeSource();
+        return;
+    }
+    if (slot == slotSelected_ && !writingSelection_) {
+        SetSelectedItem(Get<RefPtr>(slot));
+        return;
+    }
+    if (slot == slotOffset_ && !writingOffset_) {
+        ScrollTo(static_cast<float>(value.num));
+        return;
+    }
+    if (slot == SlotOf("ItemHeight") || slot == SlotOf("Indent")) {
+        Invalidate(AffectsMeasure | AffectsRender);
+    }
+}
+
+void TreeView::Flatten(const RefPtr& ref, int depth, size_t parent) {
+    // Both limits are defensive: a cyclic model must produce a diagnostic-worthy
+    // finite tree, not an infinite loop on the next layout pass.
+    if (!ref || depth > 64 || rows_.size() >= 4096) return;
+    auto* item = dynamic_cast<ITreeItem*>(ref.get());
+    if (!item) return;
+    auto children = item->TreeChildren();
+    const size_t index = rows_.size();
+    rows_.push_back(Row{ref, depth, parent, !children.empty()});
+    if (!item->TreeExpanded()) return;
+    for (auto& child : children) {
+        RefPtr childRef = std::dynamic_pointer_cast<RefObject>(child);
+        if (childRef) Flatten(childRef, depth + 1, index);
+    }
+}
+
+void TreeView::Rebuild() {
+    rows_.clear();
+    modelCount_ = list_ ? list_->Count() : 0;
+    for (size_t i = 0; i < modelCount_; ++i) Flatten(list_->ItemAt(i), 0, size_t(-1));
+
+    // A collapsed branch takes its selection off screen, but does not change
+    // WHAT is selected: the selection comes back when the branch is reopened.
+    selectedRow_ = size_t(-1);
+    if (selected_) {
+        for (size_t i = 0; i < rows_.size(); ++i) {
+            if (rows_[i].item == selected_) {
+                selectedRow_ = i;
+                break;
+            }
+        }
+    }
+    ClampScroll();
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+void TreeView::ClampScroll() {
+    const float contentH = itemHeight_ * static_cast<float>(rows_.size());
+    maxScroll_ = std::max(0.0f, contentH - viewportH_);
+    offset_ = std::clamp(offset_, 0.0f, maxScroll_);
+}
+
+Rect TreeView::ViewportRect() const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    return Rect{bounds_.x + margin.l + pad.l, bounds_.y + margin.t + pad.t,
+                std::max(0.0f, bounds_.w - margin.H() - pad.H()),
+                std::max(0.0f, bounds_.h - margin.V() - pad.V())};
+}
+
+void TreeView::PublishState() {
+    if (slotOffset_ < 0) return;
+    const Value v = Value::Number(static_cast<double>(offset_));
+    if (RawSlot(slotOffset_).Equals(v)) return;
+    writingOffset_ = true;
+    SetSlotValue(slotOffset_, v, true);
+    writingOffset_ = false;
+}
+
+void TreeView::ScrollTo(float offset) {
+    const float target = std::clamp(offset, 0.0f, maxScroll_);
+    if (target == offset_) return;
+    offset_ = target;
+    PublishState();
+    Invalidate(AffectsRender);
+}
+
+void TreeView::SelectRow(size_t row) {
+    if (row >= rows_.size()) return;
+    selectedRow_ = row;
+    const RefPtr item = rows_[row].item;
+    if (item != selected_) {
+        selected_ = item;
+        if (!writingSelection_ && slotSelected_ >= 0) {
+            writingSelection_ = true;
+            SetSlotValue(slotSelected_, Value::Ref(selected_), true);
+            writingSelection_ = false;
+        }
+    }
+    const float top = itemHeight_ * static_cast<float>(row);
+    const float bottom = top + itemHeight_;
+    if (top < offset_) ScrollTo(top);
+    else if (bottom > offset_ + viewportH_) ScrollTo(bottom - viewportH_);
+    Invalidate(AffectsRender);
+}
+
+void TreeView::SetSelectedItem(const RefPtr& item) {
+    if (item == selected_) return;
+    selected_ = item;
+    selectedRow_ = size_t(-1);
+    for (size_t i = 0; i < rows_.size(); ++i) {
+        if (rows_[i].item == item) {
+            selectedRow_ = i;
+            break;
+        }
+    }
+    if (!writingSelection_ && slotSelected_ >= 0) {
+        writingSelection_ = true;
+        SetSlotValue(slotSelected_, Value::Ref(selected_), true);
+        writingSelection_ = false;
+    }
+    Invalidate(AffectsRender);
+}
+
+void TreeView::SetAllExpanded(bool expanded) {
+    std::vector<RefPtr> stack;
+    if (list_) {
+        for (size_t i = 0; i < modelCount_; ++i) stack.push_back(list_->ItemAt(i));
+    }
+    while (!stack.empty()) {
+        const RefPtr ref = stack.back();
+        stack.pop_back();
+        auto* item = dynamic_cast<ITreeItem*>(ref.get());
+        if (!item) continue;
+        item->SetTreeExpanded(expanded);
+        for (auto& child : item->TreeChildren()) {
+            if (RefPtr childRef = std::dynamic_pointer_cast<RefObject>(child)) stack.push_back(childRef);
+        }
+    }
+    Rebuild();
+}
+
+Size TreeView::Measure(const Size& available) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    itemHeight_ = std::max(1.0f, Get<float>(SlotOf("ItemHeight")));
+    indent_ = std::max(0.0f, Get<float>(SlotOf("Indent")));
+    // Rebuilt here rather than only on list changes: IsExpanded is a property of
+    // the NODE, and a command may have flipped it since the last layout.
+    if (list_) Rebuild();
+
+    constexpr float kUnbounded = 1.0e6f;
+    const float explicitH = Get<float>(SlotOf("Height"));
+    const float contentH = itemHeight_ * static_cast<float>(rows_.size());
+    const float offeredH = std::max(0.0f, available.h - margin.V() - pad.V());
+    bounded_ = explicitH > 0 || (available.h > 0 && available.h < kUnbounded * 0.5f);
+
+    if (bounded_) {
+        viewportH_ = explicitH > 0 ? explicitH : offeredH;
+        ClampScroll();
+        desired_ = Size{std::max(200.0f, available.w), viewportH_ + margin.V() + pad.V()};
+    } else {
+        viewportH_ = contentH;
+        offset_ = 0;
+        maxScroll_ = 0;
+        desired_ = Size{std::max(200.0f, available.w), contentH + margin.V() + pad.V()};
+    }
+    ApplySizeConstraints();
+    if (bounded_) {
+        viewportH_ = std::max(0.0f, desired_.h - margin.V() - pad.V());
+        ClampScroll();
+    }
+    PublishState();
+    return desired_;
+}
+
+void TreeView::Arrange(const Rect& finalRect) {
+    bounds_ = finalRect;
+    if (bounded_ && desired_.h > 0 && desired_.h < bounds_.h) bounds_.h = desired_.h;
+    const Rect content = ViewportRect();
+    viewportH_ = content.h;
+    ClampScroll();
+}
+
+void TreeView::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    if (bg.a > 0) ctx.FillRect(bounds_, bg);
+
+    const Rect view = ViewportRect();
+    if (view.w <= 0 || view.h <= 0) return;
+    ctx.PushClip(view);
+
+    const Color textColor = palette.colors[static_cast<int>(Token::TextPrimary)];
+    const Color muted = palette.colors[static_cast<int>(Token::TextSecondary)];
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+    const float fontSize = std::max(1.0f, Get<float>(SlotOf("FontSize")));
+    const int weight = Get<int>(SlotOf("FontWeight"));
+
+    for (size_t i = 0; i < rows_.size(); ++i) {
+        const float y = view.y + itemHeight_ * static_cast<float>(i) - offset_;
+        if (y + itemHeight_ < view.y) continue;
+        if (y > view.y + view.h) break;
+
+        if (i == selectedRow_) {
+            ctx.FillRect(Rect{view.x, y, view.w, itemHeight_},
+                         Color{accent.r, accent.g, accent.b, 0.18f});
+        }
+        const float x = view.x + indent_ * static_cast<float>(rows_[i].depth);
+        if (rows_[i].expandable) {
+            auto* item = dynamic_cast<ITreeItem*>(rows_[i].item.get());
+            const float cx = x + 8.0f;
+            const float cy = y + itemHeight_ * 0.5f;
+            if (item && item->TreeExpanded()) {
+                ctx.DrawLine(Point{cx - 3.0f, cy - 1.0f}, Point{cx, cy + 2.0f}, muted);
+                ctx.DrawLine(Point{cx, cy + 2.0f}, Point{cx + 3.0f, cy - 1.0f}, muted);
+            } else {
+                ctx.DrawLine(Point{cx - 2.0f, cy - 3.0f}, Point{cx + 2.0f, cy}, muted);
+                ctx.DrawLine(Point{cx + 2.0f, cy}, Point{cx - 2.0f, cy + 3.0f}, muted);
+            }
+        }
+        const float textX = x + 20.0f;
+        auto* item = dynamic_cast<ITreeItem*>(rows_[i].item.get());
+        if (!item) continue;
+        ctx.DrawText(item->TreeTitle(),
+                     Rect{textX, y, std::max(0.0f, view.x + view.w - textX), itemHeight_},
+                     textColor, fontSize, weight, TextAlign::Left);
+    }
+    ctx.PopClip();
+}
+
+bool TreeView::ToggleAt(const Point& local) {
+    const Rect view = ViewportRect();
+    const float relY = local.y - view.y;
+    if (relY < 0) return false;
+    const size_t row = static_cast<size_t>(relY / itemHeight_);
+    if (row >= rows_.size() || !rows_[row].expandable) return false;
+    const float cx = view.x + indent_ * static_cast<float>(rows_[row].depth) + 8.0f;
+    if (local.x < cx - 9.0f || local.x > cx + 9.0f) return false;
+    auto* item = dynamic_cast<ITreeItem*>(rows_[row].item.get());
+    if (!item) return false;
+    item->SetTreeExpanded(!item->TreeExpanded());
+    Rebuild();
+    return true;
+}
+
+void TreeView::OnPointerDown(const Point& local) {
+    if (ToggleAt(local)) return;
+    const Rect view = ViewportRect();
+    const float relY = local.y - view.y;
+    if (relY < 0 || relY >= itemHeight_ * static_cast<float>(rows_.size())) return;
+    SelectRow(static_cast<size_t>(relY / itemHeight_));
+}
+
+bool TreeView::OnPointerWheel(float deltaLines) {
+    if (maxScroll_ <= 0) return Widget::OnPointerWheel(deltaLines);
+    ScrollTo(offset_ - deltaLines * 48.0f);
+    return true;
+}
+
+bool TreeView::OnKeyDown(int vk) {
+    switch (vk) {
+    case KeyDown:
+        if (!rows_.empty()) SelectRow(std::min(selectedRow_ + 1, rows_.size() - 1));
+        return true;
+    case KeyUp:
+        if (!rows_.empty() && selectedRow_ != size_t(-1)) SelectRow(selectedRow_ - 1);
+        return true;
+    case KeyHome:
+        if (!rows_.empty()) SelectRow(0);
+        return true;
+    case KeyEnd:
+        if (!rows_.empty()) SelectRow(rows_.size() - 1);
+        return true;
+    case KeyLeft: {
+        if (selectedRow_ >= rows_.size()) return true;
+        const Row row = rows_[selectedRow_]; // copy: Rebuild invalidates rows_
+        auto* item = dynamic_cast<ITreeItem*>(row.item.get());
+        if (item && row.expandable && item->TreeExpanded()) {
+            item->SetTreeExpanded(false);
+            Rebuild();
+        } else if (row.parent != size_t(-1)) {
+            SelectRow(row.parent);
+        }
+        return true;
+    }
+    case KeyRight: {
+        if (selectedRow_ >= rows_.size()) return true;
+        const Row row = rows_[selectedRow_];
+        auto* item = dynamic_cast<ITreeItem*>(row.item.get());
+        if (item && row.expandable && !item->TreeExpanded()) {
+            item->SetTreeExpanded(true);
+            Rebuild();
+        } else if (selectedRow_ + 1 < rows_.size()) {
+            SelectRow(selectedRow_ + 1);
+        }
+        return true;
+    }
+    default:
+        return Widget::OnKeyDown(vk);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TabView
 //
 // Geometry is computed in one place (EnsureTabWidths) and then read by both paint

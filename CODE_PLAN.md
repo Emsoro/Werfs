@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.13.1.0
+> 版本：0.13.2.0
 > 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.1.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**252 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.2.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单/工具栏溢出/模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**254 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -364,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.13.1.0         [ ok ]
+file version: 0.13.2.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -946,6 +946,28 @@ value.type == VType::Number ? ... : /* 默认值 */
 **修复**：夹取下限改为"一行文字 + 内边距"；多行文档仍按可用高度收敛，但单行框永远有足够高度。示例标记同时给五个输入框显式 `Height="32"`，四列对齐。
 
 **验证**：`interact` 的 binding 页新增两组断言——五个输入框逐个走 IME 预览/提交（中文必须进入 Text），以及每个框高度 ≥ 30、两个按钮高度 ≥ 28；同时用截图确认四列对齐、占位文字完整。
+
+---
+
+## 7.35 虚拟化列表滚动崩溃：宿主持有的裸控件指针
+
+`list` 页底部 1000 行的虚拟化列表，滚动时很容易崩溃。控件本身没有越界：崩溃来自宿主。
+
+**根因**：`SampleHost` 用三个裸指针记录 `hovered` / `pressed` / `focused`。`HitTest` 返回的是行内最深的 `TextBlock`，于是 `hovered` 常指向某个行控件。滚动时 `ListBox::SetWindow` 会 `ClearChildren()` 释放离开窗口的行——它的 `shared_ptr` 引用归零，宿主手里的裸指针随之悬空。下一次 `WM_MOUSEMOVE` 调用 `g.hovered->OnPointerLeave()`，或滚轮后松开按键调用 `g.pressed->OnPointerUp()`，就是一次释放后使用。
+
+**修复**：三个字段改为 `std::weak_ptr<Widget>`，通过 `Track()`（`shared_from_this`）记录、`Lock()` 取出强引用后再派发事件。对象还活着就照常处理；已经被虚拟化释放就跳过这一次事件，而不是调用野指针。`focused` 一并改掉：模板里若放可聚焦控件，同样会遇到这个问题。
+
+**教训**：窗口化集合会**主动销毁**控件，任何跨消息保存的指针都必须能发现这件事。注册表式的"记住最后按下的控件"在静态页面里永远正确，一遇到虚拟化就成了悬空指针。
+
+---
+
+## 7.36 TreeView：把树做成"只画展开的分支"
+
+在 `list` 页加入第 9 节展示层级数据。框架此前只有 `ListBox`/`TabView`，没有树。
+
+**设计**：`ITreeItem` 是节点契约，`TreeNode` 是普通模型（标题 + 子项 + `IsExpanded`，都可绑定）。`TreeView` 在每次布局时把展开的分支扁平化成行向量，自己画缩进、箭头和标题——和 `TabView` 的标签条一样，**行是数据而不是子控件**，所以折叠的分支不花任何控件成本。展开/折叠只改节点上的属性，所以 ViewModel 的"展开全部"命令根本不需要认识控件。
+
+**验证**：单元测试覆盖扁平化、深度、箭头点击、键盘上下/左右、选中两回写；`interact` 的 list 页新增一组断言，走真实的按钮 → 命令 → 节点属性 → 重排路径，并确认选中项写回 ViewModel。
 
 ---
 

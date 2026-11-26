@@ -309,6 +309,33 @@
       </Border>
 
 
+      <!-- ================= 9. TreeView ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="9 · TreeView — hierarchical data" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="A tree is data, not a pile of widgets: nodes own their children and their IsExpanded flag. The control draws only the expanded branches, with one row per visible node."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+          <Border Background="ControlFill" CornerRadius="6" BorderBrush="CardBorder"
+                  BorderThickness="1">
+            <TreeView ItemsSource="{Binding TreeNodes}"
+                      SelectedItem="{Binding SelectedTreeNode, Mode=TwoWay}"
+                      ItemHeight="24" Indent="14" Height="168" FontSize="12"/>
+          </Border>
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Expand all" Command="{Binding ExpandAllCommand}"/>
+            <Button Content="Collapse all" Command="{Binding CollapseAllCommand}"/>
+          </StackPanel>
+
+          <TextBlock Text="{Binding TreeSummary}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+
       <!-- ================= Footer ================= -->
       <TextBlock Text="ScrollViewer wraps the whole page — that is why this content can exceed the window."
                  FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap" Padding="0,4,0,16"/>

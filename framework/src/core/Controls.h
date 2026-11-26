@@ -970,6 +970,119 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// TreeView
+//
+// A hierarchical sibling of ListBox: the model is a set of root nodes, and the
+// control draws the EXPANDED subset as indented rows. Like TabView's strip, the
+// rows are data rather than child widgets -- a tree that kept a widget per node
+// would pay for the whole model, expanded or not.
+//
+// Nodes implement ITreeItem; TreeNode is the ordinary model. ItemsSource is an
+// ObservableList of those nodes, and SelectedItem is a TwoWay binding to the
+// selected node. Expand/collapse is a property of the NODE (IsExpanded), so a
+// ViewModel can open branches programmatically just by setting a property.
+// ---------------------------------------------------------------------------
+class ITreeItem {
+public:
+    virtual ~ITreeItem() = default;
+    virtual std::wstring TreeTitle() const = 0;
+    virtual std::vector<std::shared_ptr<ITreeItem>> TreeChildren() const = 0;
+    virtual bool TreeExpanded() const = 0;
+    virtual void SetTreeExpanded(bool expanded) = 0;
+};
+
+// The model used by WAML samples: a title, an expand flag and child nodes. It is
+// observable so a binding can show a node's title somewhere else and a command
+// can expand a branch without reaching into the control.
+class TreeNode final : public ObservableObject, public ITreeItem {
+public:
+    explicit TreeNode(std::wstring title);
+
+    void Add(std::shared_ptr<TreeNode> child);
+
+    std::wstring TreeTitle() const override { return Title.Get(); }
+    std::vector<std::shared_ptr<ITreeItem>> TreeChildren() const override;
+    bool TreeExpanded() const override { return IsExpanded.Get(); }
+    void SetTreeExpanded(bool expanded) override { IsExpanded.Set(expanded); }
+
+    const std::vector<std::shared_ptr<TreeNode>>& Nodes() const { return children_; }
+
+    ObservableProperty<std::wstring> Title{"Title"};
+    ObservableProperty<bool> IsExpanded{"IsExpanded", false};
+
+private:
+    std::vector<std::shared_ptr<TreeNode>> children_;
+};
+
+class TreeView : public Widget, public IListObserver {
+public:
+    TreeView();
+    ~TreeView() override;
+
+    Size Measure(const Size& available) override;
+    void Arrange(const Rect& finalRect) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    void OnPointerDown(const Point& local) override;
+    bool OnPointerWheel(float deltaLines) override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+    void OnSlotChanged(int slot, const Value& value) override;
+    void OnListChanged(const ListChange& change) override;
+
+    // The flattened, currently visible rows. `RowIndex` is the index into this
+    // vector; a node outside it is collapsed away and has no row.
+    struct Row {
+        RefPtr item;
+        int depth = 0;
+        size_t parent = size_t(-1);
+        bool expandable = false;
+    };
+    const std::vector<Row>& Rows() const { return rows_; }
+    size_t ModelCount() const { return modelCount_; }
+    RefPtr SelectedItem() const { return selected_; }
+    size_t SelectedRow() const { return selectedRow_; }
+    float ScrollOffset() const { return offset_; }
+    float MaxScroll() const { return maxScroll_; }
+    void ScrollTo(float offset);
+    void SetSelectedItem(const RefPtr& item);
+    // Expand or collapse every node in the tree; the ViewModel can invoke these
+    // through a command without knowing how rows are drawn.
+    void SetAllExpanded(bool expanded);
+
+protected:
+    float ScrollShiftForPointers() const override { return offset_; }
+
+private:
+    void SubscribeSource();
+    void UnsubscribeSource();
+    void Rebuild();
+    void Flatten(const RefPtr& ref, int depth, size_t parent);
+    void ClampScroll();
+    Rect ViewportRect() const;
+    void PublishState();
+    void SelectRow(size_t row);
+    bool ToggleAt(const Point& local);
+
+    ObservableListBase* list_ = nullptr;
+    RefPtr listRef_;
+    std::vector<Row> rows_;
+    size_t modelCount_ = 0;
+    RefPtr selected_;
+    size_t selectedRow_ = size_t(-1);
+    float itemHeight_ = 26.0f;
+    float indent_ = 16.0f;
+    float offset_ = 0;
+    float maxScroll_ = 0;
+    float viewportH_ = 0;
+    bool bounded_ = false;
+    int slotItems_ = -1;
+    int slotSelected_ = -1;
+    int slotOffset_ = -1;
+    bool writingOffset_ = false;
+    bool writingSelection_ = false;
+};
+
+// ---------------------------------------------------------------------------
 // TabView
 //
 // A tab strip plus a content area. The strip is drawn by this control rather than
