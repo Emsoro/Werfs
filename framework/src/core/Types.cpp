@@ -319,7 +319,10 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("ItemsSource", VType::Ref, Value::Null(), AffectsMeasure | AffectsRender,
                 BindingMode::OneWay);
         t->Prop("SelectedItem", VType::Ref, Value::Null(), AffectsRender, BindingMode::TwoWay);
-        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::None}),
+        // Like ListBox: no background of its own. The surrounding Border supplies
+        // the surface, so light/dark themes stay consistent. An opaque default here
+        // would paint black over that surface in BOTH themes.
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("ItemHeight", VType::Number, Value::Number(26), AffectsMeasure);
         t->Prop("Indent", VType::Number, Value::Number(16), AffectsMeasure);

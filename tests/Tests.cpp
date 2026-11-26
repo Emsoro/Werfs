@@ -6170,11 +6170,17 @@ TEST("tree: expansion flattens only visible nodes and selection binds") {
     CHECK(tree != nullptr);
     if (!tree) return;
 
+    // Collection controls do not paint a surface of their own: the surrounding
+    // Border does. An opaque default would cover it with black in both themes,
+    // and dark TextPrimary text would disappear in the light theme.
+    CHECK(tree->Get<Color>(tree->SlotOf("Background")).a == 0.0f);
+
     // Only roots are realized; children of a collapsed node have no row.
     CHECK_EQ(tree->Rows().size(), size_t(2));
     CHECK_EQ(tree->ModelCount(), size_t(2));
     RecordingPaintContext first;
     root->PaintTree(first, MakePalette(ThemeKind::Light));
+    CHECK(first.Text().find("fill ") == std::string::npos); // no opaque surface painted
     CHECK(first.Text().find("Root 1") != std::string::npos);
     CHECK(first.Text().find("Child 1.1") == std::string::npos);
 
