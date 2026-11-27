@@ -13,6 +13,7 @@
 #include "UserControlVm.h" // sample: the nested-data-source page's ViewModels
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "ChartsVm.h"   // sample: the chart/downsampling page's ViewModel
+#include "AnimationVm.h" // sample: the four waiting animations' ViewModel
 #include "FileDialog.h"
 #include "ListVm.h"     // sample: the list page's ViewModel
 #include "Mvvm.h"
@@ -27,6 +28,7 @@
 #include "Widget.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
@@ -35,6 +37,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace wui;
 
@@ -80,6 +83,11 @@ bool IsThemingPage(const std::string& origin, const std::string& path) {
 bool IsChartsPage(const std::string& origin, const std::string& path) {
     return origin.find("Charts.waml") != std::string::npos ||
            path.find("Charts.waml") != std::string::npos;
+}
+
+bool IsAnimationPage(const std::string& origin, const std::string& path) {
+    return origin.find("Animation.waml") != std::string::npos ||
+           path.find("Animation.waml") != std::string::npos;
 }
 
 // Checks that only make sense on samples/basic/Basic.waml.
@@ -1688,6 +1696,118 @@ int RunChartsChecks(Widget* root, const std::shared_ptr<sample::ChartsVm>& vm) {
     std::printf("\n%s\n", g_failures == 0 ? "INTERACTION OK" : "INTERACTION FAILED");
     return g_failures == 0 ? 0 : 1;
 }
+
+// Checks for samples/animation/Animation.waml.
+//
+// The claim this page makes is narrow and easy to get wrong: ONE clock reaches
+// FOUR shapes, and pausing it freezes all of them. A spinner that hard-coded its
+// own timer would pass a visual check but fail these assertions.
+int RunAnimationChecks(Widget* root, const std::shared_ptr<sample::AnimationVm>& vm) {
+    std::vector<Widget*> spinners;
+    std::function<void(Widget*)> collect = [&](Widget* w) {
+        if (!w) return;
+        if (std::string(w->TypeName()) == "wui/LoadingSpinner") spinners.push_back(w);
+        for (auto& c : w->Children()) collect(c.get());
+    };
+    collect(root);
+
+    std::printf("\n[1] the four mainstream shapes are present\n");
+    Expect(spinners.size() == 4, "the page has four LoadingSpinner widgets");
+    if (spinners.size() != 4) return g_failures == 0 ? 0 : 1;
+    // Ring, Bars, Dots, Bounce -- the enum order is part of the control's contract.
+    const int kinds[4] = {0, 1, 2, 3};
+    for (size_t i = 0; i < 4; ++i) {
+        Expect(spinners[i]->Get<int>(spinners[i]->SlotOf("Kind")) == kinds[i],
+               "spinner kind matches the card order");
+    }
+
+    std::printf("\n[2] one phase reaches all four spinners\n");
+    Expect(vm->Tick(0.1f), "a running page reports that it moved");
+    for (Widget* spinner : spinners) {
+        Expect(spinner->Get<double>(spinner->SlotOf("Phase")) > 0.0,
+               "the spinner's Phase slot followed the ViewModel");
+    }
+
+    std::printf("\n[3] the pause button freezes the clock and dims the shapes\n");
+    Widget* pause = ButtonWithText(root, L"Pause animations");
+    Expect(pause != nullptr, "the page has a pause button");
+    if (pause) ClickAt(root, pause);
+    const double frozen = vm->Phase.Get();
+    Expect(!vm->Running.Get(), "the pause command reached the ViewModel");
+    Expect(!vm->Tick(0.1f), "a paused page asks for no repaint");
+    Expect(vm->Phase.Get() == frozen, "Phase does not move while paused");
+    for (Widget* spinner : spinners) {
+        Expect(!spinner->Get<bool>(spinner->SlotOf("IsActive")),
+               "the spinner was told it is paused");
+    }
+
+    std::printf("\n[4] reset puts every spinner back at phase zero\n");
+    vm->Reset();
+    Expect(vm->Phase.Get() == 0.0, "Reset clears the ViewModel phase");
+    for (Widget* spinner : spinners) {
+        Expect(spinner->Get<double>(spinner->SlotOf("Phase")) == 0.0,
+               "Reset reached the spinner too");
+    }
+
+    std::printf("\n[5] component properties animate through ordinary bindings\n");
+    Widget* resume = ButtonWithText(root, L"Resume animations");
+    Expect(resume != nullptr, "the page has a resume button");
+    if (resume) ClickAt(root, resume);
+    Expect(vm->Running.Get(), "the clock is running again");
+
+    std::vector<Widget*> borders;
+    std::function<void(Widget*)> collectBorders = [&](Widget* w) {
+        if (!w) return;
+        if (std::string(w->TypeName()) == "wui/Border") borders.push_back(w);
+        for (auto& c : w->Children()) collectBorders(c.get());
+    };
+    collectBorders(root);
+
+    // 1. Damped movement: the spring drives the render-only TranslateX slot.
+    Widget* kick = ButtonWithText(root, L"Kick the card");
+    Expect(kick != nullptr, "the page has a spring kick button");
+    if (kick) ClickAt(root, kick);
+    for (int frame = 0; frame < 12; ++frame) vm->Tick(1.0f / 60.0f);
+    Expect(vm->SpringOffset.Get() > 0.0, "the spring moved toward its target");
+    bool springBound = false;
+    for (Widget* border : borders) {
+        const int slot = border->SlotOf("TranslateX");
+        if (slot >= 0 && std::fabs(border->Get<double>(slot) - vm->SpringOffset.Get()) < 0.5) springBound = true;
+    }
+    Expect(springBound, "TranslateX on the card followed SpringOffset");
+
+    // 2. Fade: Opacity is a first-class render property, not a colour trick.
+    Widget* fade = ButtonWithText(root, L"Fade out");
+    Expect(fade != nullptr, "the page has a fade toggle");
+    if (fade) ClickAt(root, fade);
+    for (int frame = 0; frame < 30; ++frame) vm->Tick(1.0f / 60.0f);
+    Expect(vm->FadeOpacity.Get() < 0.5, "the fade approached the dim target");
+    bool fadeBound = false;
+    for (Widget* border : borders) {
+        const int slot = border->SlotOf("Opacity");
+        if (slot >= 0 && std::fabs(border->Get<double>(slot) - vm->FadeOpacity.Get()) < 0.02) fadeBound = true;
+    }
+    Expect(fadeBound, "Opacity on the card followed FadeOpacity");
+
+    // 3. Scale: ScaleX/ScaleY transform the painted subtree, not its layout box.
+    Widget* grow = ButtonWithText(root, L"Grow");
+    Expect(grow != nullptr, "the page has a scale toggle");
+    if (grow) ClickAt(root, grow);
+    for (int frame = 0; frame < 30; ++frame) vm->Tick(1.0f / 60.0f);
+    Expect(vm->ScaleFactor.Get() > 1.1, "the square grew toward its target");
+    bool scaleBound = false;
+    for (Widget* border : borders) {
+        const int sx = border->SlotOf("ScaleX");
+        const int sy = border->SlotOf("ScaleY");
+        if (sx >= 0 && sy >= 0 && std::fabs(border->Get<double>(sx) - vm->ScaleFactor.Get()) < 0.02 &&
+            std::fabs(border->Get<double>(sy) - vm->ScaleFactor.Get()) < 0.02)
+            scaleBound = true;
+    }
+    Expect(scaleBound, "ScaleX/ScaleY on the square followed ScaleFactor");
+
+    return g_failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     // An explicit path wins; otherwise fall back to the basic sample's resource.
@@ -1775,6 +1895,14 @@ int main(int argc, char** argv) {
         root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
         root->ForceLayout(Size{820, 1500});
         return RunChartsChecks(root.get(), vm);
+    }
+
+    if (IsAnimationPage(loaded.origin, argPath)) {
+        auto vm = std::make_shared<sample::AnimationVm>();
+        WidgetPtr root = doc->Instantiate(&text);
+        root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+        root->ForceLayout(Size{820, 820});
+        return RunAnimationChecks(root.get(), vm);
     }
 
     auto listVm = std::make_shared<sample::ListViewVm>();

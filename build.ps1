@@ -29,6 +29,7 @@
       binding   the four binding modes (waml_binding.exe)
       theming   tokens + Light/Dark    (waml_theming.exe)
       usercontrol  nested data sources (waml_usercontrol.exe)
+      animation four waiting spinners (waml_animation.exe)
       editor    the multi-tab editor   (waml_editor.exe)
       all       samples plus every tool and test binary
       debug     one sample with symbols and WAML read from disk at runtime, so
@@ -78,7 +79,7 @@ param(
     [ValidateSet('samples', 'all', 'debug', 'tests', 'bench', 'snapshot',
                  'interact', 'probe', 'probedbg', 'res', 'icon', 'dpishot',
                  'basic', 'list', 'binding', 'theming', 'usercontrol', 'editor',
-                 'charts', 'basic_py')]
+                 'charts', 'animation', 'basic_py')]
     [string]$Target = 'samples',
 
     [switch]$Clean,
@@ -192,7 +193,7 @@ function Get-VersionPart {
 
 $VersionMajor = Get-VersionPart 'MAJOR' '0'
 $VersionMinor = Get-VersionPart 'MINOR' '13'
-$VersionPatch = Get-VersionPart 'PATCH' '3'
+$VersionPatch = Get-VersionPart 'PATCH' '4'
 $VersionBuild = Get-VersionPart 'BUILD' '0'
 $VersionString = "$VersionMajor.$VersionMinor.$VersionPatch.$VersionBuild"
 
@@ -530,6 +531,7 @@ $ThemingSampleDir = Join-Path $SamplesRoot 'theming'
 $UserControlSampleDir = Join-Path $SamplesRoot 'usercontrol'
 $EditorSampleDir = Join-Path $SamplesRoot 'editor'
 $ChartsSampleDir = Join-Path $SamplesRoot 'charts'
+$AnimationSampleDir = Join-Path $SamplesRoot 'animation'
 # Tools that touch several samples need every sample's headers.
 $AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
                        $BasicSampleDir, (Join-Path $BasicSampleDir 'resources'),
@@ -537,7 +539,8 @@ $AllSampleIncludes = @($ListSampleDir, (Join-Path $ListSampleDir 'resources'),
                        $ThemingSampleDir, (Join-Path $ThemingSampleDir 'resources'),
                        $UserControlSampleDir, (Join-Path $UserControlSampleDir 'resources'),
                        $EditorSampleDir, (Join-Path $EditorSampleDir 'resources'),
-                       $ChartsSampleDir, (Join-Path $ChartsSampleDir 'resources'))
+                       $ChartsSampleDir, (Join-Path $ChartsSampleDir 'resources'),
+                       $AnimationSampleDir, (Join-Path $AnimationSampleDir 'resources'))
 
 # A sample's ViewModel implementation has to be compiled into the tools that drive
 # it. The editor is the first sample with real logic in a .cpp; the others keep
@@ -641,6 +644,10 @@ $SampleRegistry = @(
     # renders a 10,000,000-point series with and without downsampling and prints the
     # control's own paint counters, so "the reduction matters" is a measurement.
     @{ Name = 'charts';  Exe = 'waml_charts';  Res = 'charts' }
+    # The four waiting animations share one clock. The page exists to prove that
+    # motion can be injected (and frozen) from the host without the control ever
+    # reading a wall clock -- which is what keeps snapshots deterministic.
+    @{ Name = 'animation'; Exe = 'waml_animation'; Res = 'animation' }
 )
 
 function Build-RegisteredSample {

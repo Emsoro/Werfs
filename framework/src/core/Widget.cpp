@@ -357,12 +357,43 @@ void Widget::PaintTreeAt(PaintCtx& ctx, const ThemePalette& palette, const Point
     bounds_.x += shift.x;
     bounds_.y += shift.y;
 
+    // Render-only animation state. Pushing around the WHOLE subtree (not just
+    // OnPaint) is what makes a parent's Scale/Rotation apply to its children as
+    // well, and keeps the properties out of layout: bounds_ never changes.
+    const int opacitySlot = SlotOf("Opacity");
+    const int sxSlot = SlotOf("ScaleX");
+    const int sySlot = SlotOf("ScaleY");
+    const int rotSlot = SlotOf("Rotation");
+    const int txSlot = SlotOf("TranslateX");
+    const int tySlot = SlotOf("TranslateY");
+    const float opacity = opacitySlot >= 0 ? std::clamp(Get<float>(opacitySlot), 0.0f, 1.0f) : 1.0f;
+    const float sx = sxSlot >= 0 ? Get<float>(sxSlot) : 1.0f;
+    const float sy = sySlot >= 0 ? Get<float>(sySlot) : 1.0f;
+    const float rotation = rotSlot >= 0 ? Get<float>(rotSlot) : 0.0f;
+    const float tx = txSlot >= 0 ? Get<float>(txSlot) : 0.0f;
+    const float ty = tySlot >= 0 ? Get<float>(tySlot) : 0.0f;
+    const bool transformed = sx != 1.0f || sy != 1.0f || rotation != 0.0f || tx != 0.0f || ty != 0.0f;
+
+    if (opacity < 1.0f) ctx.PushOpacity(opacity);
+    if (transformed) {
+        PaintTransform t;
+        t.pivot = Point{bounds_.x + bounds_.w * 0.5f, bounds_.y + bounds_.h * 0.5f};
+        t.scaleX = sx;
+        t.scaleY = sy;
+        t.rotation = rotation;
+        t.translate = Point{tx, ty};
+        ctx.PushTransform(t);
+    }
+
     OnPaint(ctx, palette);
     // The shift is passed DOWN, not just applied to this rect. bounds_ holds
     // absolute coordinates, so translating only the direct child would leave its
     // grandchildren exactly where they were -- which is why scrolling moved the
     // panel but nothing inside it.
     PaintChildrenAt(ctx, palette, shift);
+
+    if (transformed) ctx.PopTransform();
+    if (opacity < 1.0f) ctx.PopOpacity();
 
     bounds_.x = savedPosition.x;
     bounds_.y = savedPosition.y;

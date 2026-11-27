@@ -233,9 +233,34 @@ struct Bitmap {
     bool Valid() const { return width > 0 && height > 0; }
 };
 
+// A render-only affine transform. Animation properties (ScaleX/ScaleY/Rotation
+// /TranslateX/TranslateY) are painted through this stack: layout geometry stays
+// untouched, so scaling a control never reflows its siblings. `pivot` is the
+// centre of the widget being transformed, which is what makes "grow" grow from
+// the middle instead of from the top-left corner.
+struct PaintTransform {
+    Point pivot{0, 0};
+    Point translate{0, 0};
+    float scaleX = 1;
+    float scaleY = 1;
+    float rotation = 0; // degrees
+
+    Point Apply(const Point& p) const;
+    Rect ApplyRect(const Rect& r) const;
+};
+
 class PaintCtx {
 public:
     virtual ~PaintCtx() = default;
+    // Render state stacks. The default implementations are no-ops so trivial
+    // painters (e.g. the IME probe) need not implement motion they never use.
+    // Real backends multiply opacity and compose the transform; Widget pushes
+    // one frame around OnPaint + children and pops it symmetrically.
+    virtual void PushOpacity(float /*multiplier*/) {}
+    virtual void PopOpacity() {}
+    virtual void PushTransform(const PaintTransform& /*t*/) {}
+    virtual void PopTransform() {}
+
     virtual void FillRect(const Rect& r, const Color& c) = 0;
     virtual void FillRoundRect(const Rect& r, float radius, const Color& c) = 0;
     virtual void StrokeRect(const Rect& r, const Color& c, float width, float radius) = 0;

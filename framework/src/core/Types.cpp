@@ -108,6 +108,17 @@ static void AddLayoutProps(TypeInfo& t) {
     // It has no layout/render flag because a context change is not, by itself,
     // a visual change -- the bindings that read it invalidate what they touch.
     t.Prop("DataContext", VType::Ref, Value::Null(), 0, BindingMode::OneWay);
+
+    // Render-only animation properties. They are deliberately NOT AffectsMeasure:
+    // scaling or translating a control must not reflow its siblings. The painter
+    // applies them through PaintCtx's transform/opacity stack around the widget's
+    // whole subtree, so a parent's scale also scales its children.
+    t.Prop("Opacity", VType::Number, Value::Number(1), AffectsRender);
+    t.Prop("ScaleX", VType::Number, Value::Number(1), AffectsRender);
+    t.Prop("ScaleY", VType::Number, Value::Number(1), AffectsRender);
+    t.Prop("Rotation", VType::Number, Value::Number(0), AffectsRender);
+    t.Prop("TranslateX", VType::Number, Value::Number(0), AffectsRender);
+    t.Prop("TranslateY", VType::Number, Value::Number(0), AffectsRender);
 }
 
 void TypeRegistry::RegisterBuiltins() {
@@ -548,6 +559,26 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Value", VType::Number, Value::Number(0), AffectsRender);
         t->Prop("Size", VType::Number, Value::Number(32), AffectsMeasure);
         t->Prop("Thickness", VType::Number, Value::Number(3), AffectsMeasure);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
+                true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/LoadingSpinner", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<LoadingSpinner>(); });
+        AddLayoutProps(*t);
+        // Four mainstream indeterminate shapes. One enum rather than four control
+        // types: they share the clock, the palette and the sizing contract, and a
+        // fifth shape is one enum entry plus one switch arm away.
+        t->EnumProp("Kind", {"Ring", "Bars", "Dots", "Bounce"}, 0, AffectsRender);
+        // Phase is in cycles and is written from outside (a ViewModel bound to the
+        // host's frame callback). No control reads a clock: a snapshot freezes a
+        // spinner simply by leaving this slot alone.
+        t->Prop("Phase", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("IsActive", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("Size", VType::Number, Value::Number(44), AffectsMeasure);
+        t->Prop("Thickness", VType::Number, Value::Number(3), AffectsRender);
         t->Prop("Foreground", VType::Color,
                 Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
                 true, true);

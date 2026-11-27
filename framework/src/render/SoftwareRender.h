@@ -25,6 +25,10 @@ public:
                   TextAlign align, const std::wstring& family) override;
     void PushClip(const Rect& r) override;
     void PopClip() override;
+    void PushOpacity(float multiplier) override;
+    void PopOpacity() override;
+    void PushTransform(const PaintTransform& t) override;
+    void PopTransform() override;
 
     const std::string& Text() const { return text_; }
     size_t OpCount() const { return ops_; }
@@ -36,6 +40,8 @@ public:
 private:
     std::string text_;
     size_t ops_ = 0;
+    std::vector<float> opacities_;
+    std::vector<PaintTransform> transforms_;
 };
 
 // Minimal software rasterizer: solid fills only. Enough to prove that the
@@ -71,10 +77,16 @@ public:
                   TextAlign align, const std::wstring& family) override;
     void PushClip(const Rect& r) override;
     void PopClip() override;
+    void PushOpacity(float multiplier) override;
+    void PopOpacity() override;
+    void PushTransform(const PaintTransform& t) override;
+    void PopTransform() override;
 
 private:
     SoftwareRasterizer& target_;
     std::vector<Rect> clips_;
+    std::vector<float> opacities_;
+    std::vector<PaintTransform> transforms_;
 };
 
 // Deterministic text metrics for headless tests (no DWrite).

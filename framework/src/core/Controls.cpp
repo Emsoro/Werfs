@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "Controls.h"
 
+#include "Animation.h" // Ease: the dots' wrap hop uses the same curve as transitions.
 #include "Image.h" // IImageService: the control asks for a decoder, it never decodes.
 #include "Overlay.h"
 
@@ -10,6 +11,7 @@
 #include <cwctype>
 
 #include <algorithm>
+#include <cmath>
 
 namespace wui {
 
@@ -3749,6 +3751,145 @@ void ProgressRing::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         const float f0 = static_cast<float>(i) / kSegments;
         const float f1 = static_cast<float>(i + 1) / kSegments;
         ctx.DrawLine(pointAt(f0), pointAt(f1), fill, stroke);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LoadingSpinner
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kSpinnerPi = 3.14159265f;
+constexpr float kSpinnerTwoPi = 6.28318530f;
+constexpr float kSpinnerDefaultSize = 44.0f;
+constexpr float kSpinnerDefaultThickness = 3.0f;
+
+// Positive modulo. A phase may be bound to a wall clock or wrapped at 4096 by
+// the page; neither a negative number nor a very large one should reverse a
+// spinner or eat floating-point precision.
+float Wrap(float value, float period) {
+    float out = std::fmod(value, period);
+    if (out < 0.0f) out += period;
+    return out;
+}
+
+// The palette resolves a token once; the fading shapes then need per-primitive
+// alpha on that concrete colour. Writing a token back into the slot would ask
+// the painter to resolve it a second time.
+Color Faded(Color c, float alpha) {
+    c.token = Token::None;
+    c.a = std::clamp(c.a * std::clamp(alpha, 0.0f, 1.0f), 0.0f, 1.0f);
+    return c;
+}
+} // namespace
+
+Size LoadingSpinner::Measure(const Size& /*available*/) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    float side = Get<float>(SlotOf("Size"));
+    if (side <= 0.0f) side = kSpinnerDefaultSize;
+    desired_ = Size{side + margin.H(), side + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+void LoadingSpinner::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0.0f || box.h <= 0.0f) return;
+
+    const Color base = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    // A paused spinner stays visible but dimmed: a still frame should not look
+    // broken, and the pause button should have an obvious effect.
+    const float dim = Get<bool>(SlotOf("IsActive")) ? 1.0f : 0.35f;
+    float thickness = Get<float>(SlotOf("Thickness"));
+    if (thickness <= 0.0f) thickness = kSpinnerDefaultThickness;
+
+    const float phase = Get<float>(SlotOf("Phase"));
+    const int kind = Get<int>(SlotOf("Kind"));
+    const Point center{box.x + box.w * 0.5f, box.y + box.h * 0.5f};
+    const float side = std::min(box.w, box.h);
+
+    switch (kind) {
+    case 1: { // Bars: four vertical rounded bars, lengths offset like a wave.
+        const float barW = std::max(2.0f, thickness * 2.4f);
+        const float gap = barW * 0.85f;
+        const float startX = center.x - (4.0f * barW + 3.0f * gap) * 0.5f;
+        const float minH = side * 0.16f;
+        const float maxH = side * 0.88f;
+        for (int i = 0; i < 4; ++i) {
+            const float wave = 0.5f + 0.5f * std::sin(kSpinnerTwoPi * (phase * 2.0f + i * 0.17f));
+            const float h = minH + (maxH - minH) * wave;
+            ctx.FillRoundRect(Rect{startX + i * (barW + gap), center.y - h * 0.5f, barW, h},
+                              barW * 0.5f, Faded(base, (0.42f + 0.58f * wave) * dim));
+        }
+        break;
+    }
+    case 2: { // Dots: the fifth ball arcs OVER the row and lands at its front.
+        const float r = std::max(2.5f, side * 0.075f);
+        const float pitch = r * 2.0f + std::max(3.0f, r * 0.95f);
+        const float startX = center.x - (4.0f * pitch) * 0.5f;
+        // The arc must clear the four balls still queueing on the row, so its
+        // height comes from the ball radius, not from the control's box.
+        const float arc = r * 3.6f;
+        const float steps = phase * 5.0f;
+        const int step = static_cast<int>(std::floor(steps));
+        const float t = Ease(Easing::EaseInOut, steps - static_cast<float>(step));
+        for (int i = 0; i < 5; ++i) {
+            const int from = (i + step) % 5;
+            float slot = static_cast<float>(from) + static_cast<float>((from + 1) % 5 - from) * t;
+            float y = center.y;
+            float scale = 0.85f + 0.3f * std::max(0.0f, 1.0f - std::fabs(slot));
+            if (from == 4) {
+                // The rightmost ball leaves the queue, sweeps a half circle above
+                // it and arrives as the new first ball. x goes 4 -> 0 while y
+                // follows sqrt(1-u^2): a real semicircle, not a sine hump or a
+                // fade-out/fade-in teleport. It stays visible the whole way.
+                slot = 4.0f * (1.0f - t);
+                const float u = 2.0f * t - 1.0f;
+                y = center.y - arc * std::sqrt(std::max(0.0f, 1.0f - u * u));
+                scale = 1.0f + 0.12f * std::sin(kSpinnerPi * t);
+            }
+            const float rr = r * scale;
+            ctx.FillEllipse(Rect{startX + slot * pitch - rr, y - rr, rr * 2.0f, rr * 2.0f},
+                            Faded(base, dim));
+        }
+        break;
+    }
+    case 3: { // Bounce: three dots rising in turn (the typing indicator).
+        const float r = std::max(3.0f, side * 0.085f);
+        const float pitch = r * 2.8f;
+        const float startX = center.x - pitch;
+        const float amplitude = side * 0.24f;
+        for (int i = 0; i < 3; ++i) {
+            const float rise = std::max(0.0f, std::sin(kSpinnerTwoPi * (phase * 2.0f - i * 0.22f)));
+            const float y = center.y + side * 0.10f - rise * amplitude;
+            ctx.FillEllipse(Rect{startX + i * pitch - r, y - r, r * 2.0f, r * 2.0f},
+                            Faded(base, (0.3f + 0.7f * rise) * dim));
+        }
+        break;
+    }
+    case 0:
+    default: { // Ring: a comet head with a fading tail, Windows-style.
+        constexpr int kSegments = 12;
+        const float radius = side * 0.5f - thickness * 0.5f - 1.0f;
+        if (radius <= 0.0f) break;
+        const float head = Wrap(phase, 1.0f) * kSpinnerTwoPi;
+        auto pointAt = [&](float theta) {
+            const float angle = -kSpinnerPi * 0.5f + theta;
+            return Point{center.x + std::cos(angle) * radius, center.y + std::sin(angle) * radius};
+        };
+        for (int i = 0; i < kSegments; ++i) {
+            const float theta = static_cast<float>(i) / kSegments * kSpinnerTwoPi;
+            const float behind = Wrap(head - theta, kSpinnerTwoPi) / kSpinnerTwoPi;
+            const float brightness = 0.07f + 0.93f * std::pow(1.0f - behind, 6.0f);
+            const float a0 = theta + 0.04f;
+            const float a1 = theta + kSpinnerTwoPi / kSegments * 0.72f;
+            ctx.DrawLine(pointAt(a0), pointAt(a1), Faded(base, brightness * dim), thickness);
+        }
+        break;
+    }
     }
 }
 

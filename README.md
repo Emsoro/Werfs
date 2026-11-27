@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.13.3.0** · MIT · Windows 10/11 x64
+> 版本 **0.13.4.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -54,17 +54,19 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **应用外壳** | 菜单栏（二级 + 三级子菜单，编辑器可从 View ▸ Text &amp; font size ▸ Content font size 调标签内容字号）· 工具栏（窄窗自动溢出）· 多标签（切换/关闭/新建/脏标记）· 模态确认对话框 |
 | **文件对话框** | 打开 / 另存为 / 选文件夹，`IFileDialogService` 可注入假实现供无窗口测试 |
 | **快捷键** | `Ctrl+N` `Ctrl+O` `Ctrl+S` `Ctrl+W`；菜单上显示的提示与真正生效的按键是同一个字符串 |
+| **动画 / 等待指示** | `VisualState` 隐式过渡（颜色/数值/Thickness）；`LoadingSpinner` 四种主流等待动画（Windows 式转圈、四竖条长短变换、五球越顶回队首、经典三点弹跳）；通用渲染属性 `Opacity` / `ScaleX` / `ScaleY` / `Rotation` / `TranslateX` / `TranslateY`，变换只作用于绘制、不触发重排，相位由宿主注入、快照可冻结 |
 | **单文件分发** | 图标、清单、版本信息、WAML 全部打包进 exe |
 
 ### 内置控件
 
-按类别分组（共 27 个控件 + `DataTemplate`）：
+按类别分组（下表为主要控件；完整清单见「控件覆盖范围」）：
 
 | 类别 | 控件 |
 |---|---|
 | 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
 | 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（多行折行、填满列宽） |
 | 输入 | `Button` · `CheckBox` |
+| 状态 | `ProgressBar` · `ProgressRing` · `LoadingSpinner`（四种等待动画） |
 | 集合 | `ListBox` + `DataTemplate` · `TreeView`（层级/展开/选中） · `TabView`（切换/关闭/新建） |
 | 外壳 | `MenuBar` · `MenuBarItem` · `MenuFlyout` · `MenuFlyoutItem` · `MenuFlyoutSubItem` · `MenuFlyoutSeparator` · `CommandBar` · `AppBarButton` · `AppBarSeparator` · `ContentDialog` |
 
@@ -99,18 +101,19 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | 目标 | 产物 | 说明 |
 |---|---|---|
 | *（无参数）* | 全部示例 | **默认**：等价于 `samples` |
-| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_usercontrol.exe` `waml_editor.exe` `waml_charts.exe` | 构建所有示例（release） |
+| `samples` | `waml_basic.exe` `waml_list.exe` `waml_binding.exe` `waml_theming.exe` `waml_usercontrol.exe` `waml_editor.exe` `waml_charts.exe` `waml_animation.exe` | 构建所有示例（release） |
 | `basic` | `waml_basic.exe` | 只构基础控件示例 |
 | `list` | `waml_list.exe` | 只构集合与布局示例 |
 | `binding` | `waml_binding.exe` | 只构绑定模式示例（四种模式对照） |
 | `theming` | `waml_theming.exe` | 只构主题示例（token + 实时 Light/Dark） |
 | `usercontrol` | `waml_usercontrol.exe` | 只构组件作用域示例（一份模板、三份数据源） |
 | `charts` | `waml_charts.exe` | 只构图表示例（百万点实时流 + 50 柱/50 线 + K 线时间范围 + 视口暂停） |
+| `animation` | `waml_animation.exe` | 只构动效示例（四种等待动画 + 阻尼移动/渐隐渐显/缩放 + 注入式帧时钟） |
 | `editor` | `waml_editor.exe` | 只构编辑器示例（菜单/工具栏/多标签/文件对话框） |
 | `basic_py` | `_wui.pyd` `waml_basic_py.exe` | Python 驱动 MVVM 示例（经 CMake 构建，详见下文） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 256 个用例 |
+| `tests` | `waml_tests.exe` | 261 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -141,7 +144,7 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.13.3.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.13.4.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
 $env:WUI_VERSION_PATCH = '3'
@@ -211,8 +214,8 @@ samples/                ← 示例，单向依赖框架
     editor/                **已实现** 集成：菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框
     binding/               **已实现** 四种绑定模式对照（含 FallbackValue / LostFocus）
     theming/               **已实现** Light/Dark 实时切换与 token 面板
-    usercontrol/           （规划）父子组件、两个独立数据源   ← 需先补 DataContext 可绑定
-    animation/             （规划）隐式过渡与缓动            ← 需先补帧时钟
+    usercontrol/           **已实现** 父子组件、三层独立数据源（页面 → 卡片 → 徽章）
+    animation/             **已实现** 四种等待动画 + 阻尼移动 / 渐隐渐显 / 缩放三种组件变换
     basic_py/              **已实现** Python ViewModel 驱动 UI（main.py / wui.py / native 桥接 / exe 启动器）
 
 tests/   bench/   tools/     ← 框架级工具，不依赖示例
@@ -235,12 +238,12 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | 3 | `editor` | **集成**：菜单栏 + 工具栏 + 多标签 + 未保存提示 + 文件对话框 | **已实现** |
 | 4 | `binding` | **绑定对照**：四种模式并排、StringFormat、FallbackValue、LostFocus | **已实现** |
 | 5 | `theming` | **主题**：12 个 token 面板、Light/Dark 实时切换、字面量对照 | **已实现** |
-| 6 | `usercontrol` | **父子组件 + 两个独立数据源**，验证组件复用 | 规划中，需先补 `DataContext` 可绑定 |
-| 7 | `animation` | **隐式过渡 + 三种缓动 + 平滑滚动**，验证帧时钟 | 规划中，需先补帧时钟 |
+| 6 | `usercontrol` | **父子组件 + 三层独立数据源**：页面 → 每行卡片 → 卡片内徽章 | **已实现** |
+| 7 | `animation` | **四种主流等待动画**：Windows 式转圈 / 四竖条 / 五球越顶回队首 / 三点弹跳，共用一个注入式相位 | **已实现** |
 | 8 | `basic_py` | **Python 驱动 MVVM**：ViewModel 用 Python 写，C++ 只做 UI 引擎 | **已实现**（经 CMake 构建） |
 | 9 | `charts` | **成本**：百万点实时流、四种降采样、实测帧率 | **已实现** |
 
-八个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动），`usercontrol` 是**数据源分层**（一份模板三份数据，卡片内嵌的徽章读卡片而不是页面），`charts` 是**成本**（同一份百万点数据，开与不关降采样的帧时间当场量给你看），`basic_py` 是**语言边界**（ViewModel 用 Python 写，UI 引擎与绑定仍是 C++）。
+九个示例分工明确：`basic` 是**入门页**（五个控件、一个数据源，看完就会写第一段 WAML），`list` 是**布局验收现场**（六个面板装进一个真实页面，也因此暴露了 `auto` 列宽、跨行重叠、文字换行三个缺陷），`editor` 是**集成点**（把文件对话框、菜单、工具栏、标签页、模态确认串成一个能真用的窗口），`binding` 是**行为对照**（同一个属性四种绑法并排，差异肉眼可见），`theming` 是**颜色分层**（token 跟主题走、字面量不动），`usercontrol` 是**数据源分层**（一份模板三份数据，卡片内嵌的徽章读卡片而不是页面），`animation` 是**时间边界**（一个注入的 `dt` 同时驱动四种等待动画和三种组件属性变换，暂停即冻结、快照仍确定性），`charts` 是**成本**（同一份百万点数据，开与不关降采样的帧时间当场量给你看），`basic_py` 是**语言边界**（ViewModel 用 Python 写，UI 引擎与绑定仍是 C++）。
 
 > `files` 示例**已并入 `editor`**：它原本的四个区块（打开 / 另存为 / 选文件夹 / 读取预览）里，前三个和第四个都是编辑器的正常功能；单独做一个示例只会变成「按钮 → 弹框 → 显示路径」的纯演示，没有真实用途来暴露接线错误。
 
@@ -257,7 +260,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | P1 常用增强 | 16（**3 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` ／ 待做 `Popup` `ContentDialog`（已提前）`AutoSuggestBox` 等 | 进行中 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **49 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 5 个 + 图表 `Chart`/`ChartPlot`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**。
+目前 **50 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 5 个 + 图表 `Chart`/`ChartPlot` + `LoadingSpinner`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**、**`LoadingSpinner` 的四种等待动画**。
 
 ---
 
@@ -265,9 +268,9 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 
 | 目标 | 用途 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` | 真实 Win32 窗口 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` / `waml_animation.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 256 个单元/集成用例 |
+| `waml_tests.exe` | 261 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -566,6 +569,51 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **`Normal` 是隐式的**，永远存在，表示“没有任何状态修饰”。不声明它也行——这正是关键：如果把它当成“未知状态名”而忽略，上一个状态的值就会永久留在控件上。
 - **动画时间是注入的**。`AnimationHost::AdvanceAll(dt)` 接收调用方给的秒数：宿主给真实流逝时间，测试给 `1/60` 并断言精确中间值。内部去读系统时钟会让每个动画测试天生不稳定。
 
+### 写法示例：四种等待动画
+
+```xml
+<Grid ColumnDefinitions="1*,1*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="12">
+  <LoadingSpinner Grid.Row="0" Grid.Column="0" Kind="Ring"   Phase="{Binding Phase}" Size="72"/>
+  <LoadingSpinner Grid.Row="0" Grid.Column="1" Kind="Bars"   Phase="{Binding Phase}" Size="72"/>
+  <LoadingSpinner Grid.Row="1" Grid.Column="0" Kind="Dots"   Phase="{Binding Phase}" Size="72"/>
+  <LoadingSpinner Grid.Row="1" Grid.Column="1" Kind="Bounce" Phase="{Binding Phase}" Size="72"/>
+</Grid>
+```
+
+`Kind` 四选一：`Ring` 是 Windows 式转圈（亮头 + 渐隐尾巴），`Bars` 是四根长短变换的竖条，`Dots` 是五个圆球、每步最右边那个沿**上方半圆**运动到队首，`Bounce` 是经典三点依次弹跳。它们共用一套尺寸、颜色与时钟约定。
+
+四条约束值得记住：
+
+- **相位是注入的，不是控件自己读时钟**。`HostOptions::onFrame` 把宿主测得的 `dt` 交给页面，`AnimationVm.Tick(dt)` 写 `Phase`，绑定把它推给所有控件。控件里没有计时器，所以四个实例不会各走各的，快照也能通过「不推进 Phase」得到确定性的静止帧。
+- **暂停要同时停时钟和调暗形状**。`IsActive` 绑定同一个 `Running`：暂停时 Tick 返回 `false`（宿主不再重绘），形状淡到 35% 亮度，一眼能看出是暂停而不是卡死。
+- **`ProgressRing` 是另一回事**。它表示「已知百分比」；这四种是「还不知道要多久」的不确定等待，不要混用。
+- **没有关键帧**。这里只有单一相位驱动的循环形状；需要多段时间轴时得先扩展动画系统，不要往 `LoadingSpinner` 里塞第二个时钟。
+
+### 写法示例：组件属性动画
+
+等待动画只是动效的一种。普通控件也有六个**只影响绘制**的动画属性，可用绑定直接驱动：
+
+```xml
+<StackPanel Orientation="Horizontal" Spacing="16">
+  <!-- 阻尼移动：TranslateX 平移整个子树，布局盒不变 -->
+  <Border Width="62" Height="40" Background="Accent"
+          TranslateX="{Binding SpringOffset}"/>
+  <!-- 渐隐渐显：Opacity 乘到子树所有颜色的 alpha 上 -->
+  <Border Width="132" Height="52" Background="Accent"
+          Opacity="{Binding FadeOpacity}"/>
+  <!-- 变大变小：以控件中心为轴缩放绘制结果 -->
+  <Border Width="60" Height="60" Background="Accent"
+          ScaleX="{Binding ScaleFactor}" ScaleY="{Binding ScaleFactor}"/>
+</StackPanel>
+```
+
+另外还有 `Rotation`（度）与 `TranslateY`，写法同上。四条约束值得记住：
+
+- **变换不进布局**。`Widget::PaintTree` 围绕 `OnPaint` 和整棵子树压入/弹出 `PaintCtx` 的变换与透明度栈；`Bounds()` / `DesiredSize()` 不变，所以动画不会让邻居重排，也不需要把控件塞进固定尺寸的容器来"隔离"重排。
+- **`Opacity` 是整棵子树的**。父容器设 `Opacity="0.5"`，里面的文字、形状一起淡下去；不需要逐个改颜色 alpha。
+- **弹簧要积分，不是缓动曲线**。阻尼运动来自每帧积分速度（`v += (-k(x-target) - c·v)·dt`），所以会越过目标再回摆；四种内置 `Easing` 只负责两点之间的过渡，做不出过冲。
+- **快照靠"不推进"冻结**。这些属性都来自宿主注入的 `dt`；`waml_snapshot` 不跑帧回调，页面停在固定 pose，两遍渲染哈希一致。
+
 ### 写法示例：Popup 原语与 AutoSuggestBox
 
 ```xml
@@ -640,7 +688,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - ⚠️ **操作系统真的把 `WM_IME_*` 送到窗口**这一环，无法在此环境自动验证——真实 IME 的候选窗属于 IME 自己的窗口，自动化驱动不可复现。提供 `tools/ImeProbe.cpp` 供在装有输入法的机器上手动确认：它打印每一条 IME 消息。
 
 
-- **动画只覆盖视觉状态过渡**：`VisualState` 的 `Transition` 会插值颜色/数值/Thickness，但没有关键帧、没有嵌套时间轴，也不对布局属性做动画（改尺寸的过渡会触发重排，目前只让绘制属性动）。
+- **动画覆盖视觉状态过渡、循环等待形状和通用渲染变换**：`VisualState` 的 `Transition` 会插值颜色/数值/Thickness，`LoadingSpinner` 用注入的 `Phase` 画四种等待动画；`Opacity`/`ScaleX`/`ScaleY`/`Rotation`/`TranslateX`/`TranslateY` 通过 `PaintCtx` 的透明度与变换栈作用于整个子树，不触碰布局几何。但没有关键帧、没有嵌套时间轴，也不对布局属性（`Width`/`Height`/`Margin` 等）做动画——那些过渡会触发重排，需要时用缩放属性代替。
 - **`Source=` 仍不支持**：`DataContext` 已成为可绑定属性（`usercontrol` 示例即依赖它），但属性级换数据源（一个属性读 A、另一个读 B）仍不可用。真实需求已被 `DataContext` 覆盖，故暂不实现。
 - **`TextBox` 有 IME，但仍无选区与剪贴板**：中文输入走 `WM_IME_*`，组字时是预览、确认后才写入值。仍未实现的是**选区**、**剪贴板**（Ctrl+C/V/X）与**鼠标点选定位光标**。见 `CODE_PLAN.md` R10。
 - **浮层只有一层**：菜单能在自己内部递归画任意深度的子菜单（二/三级都已验证），但「浮层里再开浮层」（例如对话框里的下拉框）仍不支持。
@@ -657,6 +705,7 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 |---|---|
 | `CODE_PLAN.md` | 实施计划 + 技术验证报告：架构决策、迭代路线、风险登记、缺陷复盘 |
 | `samples/basic/Basic.waml` | 五个基础控件，单一数据源 |
+| `samples/animation/Animation.waml` | 四种主流等待动画，共用一个注入式时钟 |
 
 ---
 

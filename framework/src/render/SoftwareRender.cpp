@@ -28,6 +28,25 @@ std::string RectText(const Rect& r) {
     return Num(r.x) + " " + Num(r.y) + " " + Num(r.w) + " " + Num(r.h);
 }
 
+// Render state helpers shared by the recording and raster painters. Opacity
+// multiplies the alpha of literal colours; a token colour is left for the real
+// backend to resolve, so its alpha must not be changed here.
+Color TintColor(const std::vector<float>& opacities, Color c) {
+    if (c.token != Token::None) return c;
+    for (float o : opacities) c.a *= o;
+    return c;
+}
+
+Point MapPoint(const std::vector<PaintTransform>& transforms, Point p) {
+    for (const auto& t : transforms) p = t.Apply(p);
+    return p;
+}
+
+Rect MapRect(const std::vector<PaintTransform>& transforms, Rect r) {
+    for (const auto& t : transforms) r = t.ApplyRect(r);
+    return r;
+}
+
 uint32_t PackColor(const Color& c) {
     const uint32_t a = static_cast<uint32_t>(std::clamp(c.a, 0.0f, 1.0f) * 255.0f + 0.5f);
     const uint32_t r = static_cast<uint32_t>(std::clamp(c.r, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -42,29 +61,34 @@ uint32_t PackColor(const Color& c) {
 // RecordingPaintContext
 // ---------------------------------------------------------------------------
 void RecordingPaintContext::FillRect(const Rect& r, const Color& c) {
-    text_ += "fill " + RectText(r) + " " + ColorText(c) + "\n";
+    text_ += "fill " + RectText(MapRect(transforms_, r)) + " " +
+             ColorText(TintColor(opacities_, c)) + "\n";
     ++ops_;
 }
 
 void RecordingPaintContext::FillRoundRect(const Rect& r, float radius, const Color& c) {
-    text_ += "fillrr " + RectText(r) + " r=" + Num(radius) + " " + ColorText(c) + "\n";
+    text_ += "fillrr " + RectText(MapRect(transforms_, r)) + " r=" + Num(radius) + " " +
+             ColorText(TintColor(opacities_, c)) + "\n";
     ++ops_;
 }
 
 void RecordingPaintContext::StrokeRect(const Rect& r, const Color& c, float width, float radius) {
-    text_ += "stroke " + RectText(r) + " w=" + Num(width) + " r=" + Num(radius) + " " + ColorText(c) +
-             "\n";
+    text_ += "stroke " + RectText(MapRect(transforms_, r)) + " w=" + Num(width) + " r=" + Num(radius) +
+             " " + ColorText(TintColor(opacities_, c)) + "\n";
     ++ops_;
 }
 
 void RecordingPaintContext::FillEllipse(const Rect& r, const Color& c) {
-    text_ += "ellipse " + RectText(r) + " " + ColorText(c) + "\n";
+    text_ += "ellipse " + RectText(MapRect(transforms_, r)) + " " +
+             ColorText(TintColor(opacities_, c)) + "\n";
     ++ops_;
 }
 
 void RecordingPaintContext::DrawLine(const Point& a, const Point& b, const Color& c, float width) {
-    text_ += "line (" + Num(a.x) + "," + Num(a.y) + ")-(" + Num(b.x) + "," + Num(b.y) +
-             ") w=" + Num(width) + " " + ColorText(c) + "\n";
+    const Point p0 = MapPoint(transforms_, a);
+    const Point p1 = MapPoint(transforms_, b);
+    text_ += "line (" + Num(p0.x) + "," + Num(p0.y) + ")-(" + Num(p1.x) + "," + Num(p1.y) +
+             ") w=" + Num(width) + " " + ColorText(TintColor(opacities_, c)) + "\n";
     ++ops_;
 }
 
@@ -72,20 +96,42 @@ void RecordingPaintContext::DrawText(const std::wstring& text, const Rect& r, co
                                  float fontSize, int weight, TextAlign align,
                                  const std::wstring& family) {
     const std::string fontPart = family.empty() ? std::string() : (" font=" + WideToUtf8(family));
-    text_ += "text \"" + WideToUtf8(text) + "\" " + RectText(r) + " size=" + Num(fontSize) +
+    text_ += "text \"" + WideToUtf8(text) + "\" " + RectText(MapRect(transforms_, r)) +
+             " size=" + Num(fontSize) +
              " weight=" + std::to_string(weight) + " align=" + std::to_string(static_cast<int>(align)) +
-             fontPart + " " + ColorText(c) + "\n";
+             fontPart + " " + ColorText(TintColor(opacities_, c)) + "\n";
     ++ops_;
 }
 
 void RecordingPaintContext::PushClip(const Rect& r) {
-    text_ += "pushclip " + RectText(r) + "\n";
+    text_ += "pushclip " + RectText(MapRect(transforms_, r)) + "\n";
     ++ops_;
 }
 
 void RecordingPaintContext::PopClip() {
     text_ += "popclip\n";
     ++ops_;
+}
+
+void RecordingPaintContext::PushOpacity(float multiplier) {
+    opacities_.push_back(multiplier);
+    text_ += "pushopacity " + Num(multiplier) + "\n";
+}
+
+void RecordingPaintContext::PopOpacity() {
+    if (!opacities_.empty()) opacities_.pop_back();
+    text_ += "popopacity\n";
+}
+
+void RecordingPaintContext::PushTransform(const PaintTransform& t) {
+    transforms_.push_back(t);
+    text_ += "pushtransform " + Num(t.scaleX) + " " + Num(t.scaleY) + " " + Num(t.rotation) +
+             " " + Num(t.translate.x) + " " + Num(t.translate.y) + "\n";
+}
+
+void RecordingPaintContext::PopTransform() {
+    if (!transforms_.empty()) transforms_.pop_back();
+    text_ += "poptransform\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -144,23 +190,29 @@ uint64_t SoftwareRasterizer::Hash() const {
 // ---------------------------------------------------------------------------
 // RasterPaintContext
 // ---------------------------------------------------------------------------
-void RasterPaintContext::FillRect(const Rect& r, const Color& c) { target_.FillRectF(r, c); }
+void RasterPaintContext::FillRect(const Rect& r, const Color& c) {
+    target_.FillRectF(MapRect(transforms_, r), TintColor(opacities_, c));
+}
 
 void RasterPaintContext::FillRoundRect(const Rect& r, float, const Color& c) {
-    target_.FillRectF(r, c);
+    target_.FillRectF(MapRect(transforms_, r), TintColor(opacities_, c));
 }
 
 void RasterPaintContext::StrokeRect(const Rect& r, const Color& c, float width, float) {
+    const Rect box = MapRect(transforms_, r);
+    const Color tint = TintColor(opacities_, c);
     const float w = std::max(1.0f, width);
-    target_.FillRectF(Rect{r.x, r.y, r.w, w}, c);
-    target_.FillRectF(Rect{r.x, r.y + r.h - w, r.w, w}, c);
-    target_.FillRectF(Rect{r.x, r.y, w, r.h}, c);
-    target_.FillRectF(Rect{r.x + r.w - w, r.y, w, r.h}, c);
+    target_.FillRectF(Rect{box.x, box.y, box.w, w}, tint);
+    target_.FillRectF(Rect{box.x, box.y + box.h - w, box.w, w}, tint);
+    target_.FillRectF(Rect{box.x, box.y, w, box.h}, tint);
+    target_.FillRectF(Rect{box.x + box.w - w, box.y, w, box.h}, tint);
 }
 
-void RasterPaintContext::FillEllipse(const Rect& r, const Color& c) {
+void RasterPaintContext::FillEllipse(const Rect& in, const Color& c) {
     // Scanline fill with a squared distance test. Deterministic and cheap: every
     // pixel is decided by integer offsets from the centre, so two runs agree exactly.
+    const Rect r = MapRect(transforms_, in);
+    const Color tint = TintColor(opacities_, c);
     const float cx = r.x + r.w * 0.5f;
     const float cy = r.y + r.h * 0.5f;
     const float rx = r.w * 0.5f;
@@ -181,7 +233,7 @@ void RasterPaintContext::FillEllipse(const Rect& r, const Color& c) {
         if (ex < sx) continue;
         target_.FillRectF(Rect{static_cast<float>(sx), static_cast<float>(y),
                                static_cast<float>(ex - sx + 1), 1.0f},
-                          c);
+                          tint);
     }
     (void)x0;
     (void)x1;
@@ -193,28 +245,33 @@ void RasterPaintContext::DrawLine(const Point& a, const Point& b, const Color& c
     // CI gate, not the production renderer, and a stepped line is deterministic
     // where coverage blending invites float-order differences.
     const float w = std::max(1.0f, width);
-    float x0 = a.x;
-    float y0 = a.y;
-    const float x1 = b.x;
-    const float y1 = b.y;
+    const Color tint = TintColor(opacities_, c);
+    const Point from = MapPoint(transforms_, a);
+    const Point to = MapPoint(transforms_, b);
+    float x0 = from.x;
+    float y0 = from.y;
+    const float x1 = to.x;
+    const float y1 = to.y;
     const float dx = std::abs(x1 - x0);
     const float dy = std::abs(y1 - y0);
     const int steps = static_cast<int>(std::max(dx, dy));
     if (steps <= 0) {
-        target_.FillRectF(Rect{x0, y0, w, w}, c);
+        target_.FillRectF(Rect{x0, y0, w, w}, tint);
         return;
     }
     const float sx = (x1 - x0) / static_cast<float>(steps);
     const float sy = (y1 - y0) / static_cast<float>(steps);
     for (int i = 0; i <= steps; ++i) {
-        target_.FillRectF(Rect{x0, y0, w, w}, c);
+        target_.FillRectF(Rect{x0, y0, w, w}, tint);
         x0 += sx;
         y0 += sy;
     }
 }
 
-void RasterPaintContext::DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
-                                  int, TextAlign align, const std::wstring&) {
+void RasterPaintContext::DrawText(const std::wstring& text, const Rect& in, const Color& c,
+                                  float fontSize, int, TextAlign align, const std::wstring&) {
+    const Rect r = MapRect(transforms_, in);
+    const Color tint = TintColor(opacities_, c);
     const float advance = fontSize * 0.55f;
     const float total = advance * static_cast<float>(text.size());
     float x = r.x;
@@ -224,13 +281,22 @@ void RasterPaintContext::DrawText(const std::wstring& text, const Rect& r, const
         if (text[i] == L' ') continue;
         target_.FillRectF(Rect{x + static_cast<float>(i) * advance, r.y + (r.h - fontSize) * 0.5f,
                                advance * 0.7f, fontSize * 0.8f},
-                          c);
+                          tint);
     }
 }
 
-void RasterPaintContext::PushClip(const Rect& r) { clips_.push_back(r); }
+void RasterPaintContext::PushClip(const Rect& r) { clips_.push_back(MapRect(transforms_, r)); }
 void RasterPaintContext::PopClip() {
     if (!clips_.empty()) clips_.pop_back();
+}
+
+void RasterPaintContext::PushOpacity(float multiplier) { opacities_.push_back(multiplier); }
+void RasterPaintContext::PopOpacity() {
+    if (!opacities_.empty()) opacities_.pop_back();
+}
+void RasterPaintContext::PushTransform(const PaintTransform& t) { transforms_.push_back(t); }
+void RasterPaintContext::PopTransform() {
+    if (!transforms_.empty()) transforms_.pop_back();
 }
 
 // ---------------------------------------------------------------------------
@@ -252,9 +318,11 @@ Size FakeTextService::Measure(const std::wstring& text, float fontSize, int weig
 }
 
 void RecordingPaintContext::DrawBitmap(const Bitmap* bitmap, const Rect& dest, const Rect* clip) {
-    text_ += "bitmap " + RectText(dest) + " " +
+    const Rect d = MapRect(transforms_, dest);
+    const Rect c = clip ? MapRect(transforms_, *clip) : Rect{};
+    text_ += "bitmap " + RectText(d) + " " +
              (bitmap ? std::to_string(bitmap->width) + "x" + std::to_string(bitmap->height) : "none") +
-             (clip ? (" clip " + RectText(*clip)) : std::string()) + "\n";
+             (clip ? (" clip " + RectText(c)) : std::string()) + "\n";
     ++ops_;
 }
 

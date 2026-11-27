@@ -14,6 +14,7 @@
 #include "UserControlVm.h" // sample: the nested-data-source page's ViewModels
 #include "EditorVm.h"   // sample: the multi-document editor's ViewModel
 #include "ChartsVm.h"   // sample: the chart/downsampling page's ViewModel
+#include "AnimationVm.h" // sample: the four waiting animations' ViewModel
 #include "Mvvm.h"
 #include "BasicResource.h"  // IDR_WAML_BASIC (default page)
 #include "Resources.h" // LoadWaml honours the debug/release switch
@@ -100,6 +101,7 @@ int main(int argc, char** argv) {
     const bool isUserControlPage = source.find("UserControl.waml") != std::string::npos;
     const bool isEditorPage = source.find("Editor.waml") != std::string::npos;
     const bool isChartsPage = source.find("Charts.waml") != std::string::npos;
+    const bool isAnimationPage = source.find("Animation.waml") != std::string::npos;
 
     std::shared_ptr<RefObject> vmRef;
     if (isBasicPage) {
@@ -138,6 +140,14 @@ int main(int argc, char** argv) {
         std::printf("vm: ChartsVm (%zu points, stream paused for a still frame)\n",
                     sample::ChartsVm::kWindowPoints);
         vmRef = std::static_pointer_cast<RefObject>(chartsVm);
+    } else if (isAnimationPage) {
+        auto animationVm = std::make_shared<sample::AnimationVm>();
+        // The page is driven by the host's frame callback, which a snapshot does
+        // not run. Park Phase on a fixed non-zero pose so both passes capture the
+        // same frame and all four shapes are recognisable rather than at t=0.
+        animationVm->SetStillFrame();
+        std::printf("vm: AnimationVm (four spinners, phase frozen at 0.10)\n");
+        vmRef = std::static_pointer_cast<RefObject>(animationVm);
     } else {
         // Default: the basic page. There is no gallery sample any more; every
         // page belongs to exactly one sample, and an unknown one is a mistake

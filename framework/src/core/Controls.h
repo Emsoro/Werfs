@@ -74,7 +74,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Status controls: ProgressBar, ProgressRing, InfoBar, InfoBadge
+// Status controls: ProgressBar, ProgressRing, LoadingSpinner, InfoBar, InfoBadge
 // ---------------------------------------------------------------------------
 
 // A determinate or indeterminate horizontal bar.
@@ -91,6 +91,26 @@ public:
 // An arc that fills clockwise from 12 o'clock. Drawn from short segments so no
 // backend needs a path language (see PaintCtx::DrawLine).
 class ProgressRing : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+};
+
+// An INDETERMINATE ("waiting") animation: no value to report, just motion that
+// says "still working". Four mainstream shapes share one control because the
+// clock that drives them is the same -- a `Phase` slot in cycles, written by
+// the page's frame callback (or by a binding). The control never reads a clock
+// itself: a still frame must be reproducible, which is why the snapshot tool
+// can freeze a spinner by simply not advancing Phase.
+//
+//   Ring   a bright comet head fading around a segment ring (Windows-style)
+//   Bars   four vertical bars whose lengths run as a wave
+//   Dots   five balls in a row; the fifth sweeps a semicircle above the queue and lands first
+//   Bounce three dots bouncing in sequence (the classic typing indicator)
+//
+// Everything is drawn from FillRoundRect / FillEllipse / DrawLine, so every
+// backend (D2D, software raster, recording) renders the same four shapes.
+class LoadingSpinner : public Widget {
 public:
     Size Measure(const Size& available) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;

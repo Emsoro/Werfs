@@ -14,6 +14,7 @@
 #include <cmath>
 #include <map>
 #include <string>
+#include <vector>
 
 // winuser.h maps DrawText to DrawTextW under UNICODE; our paint context uses
 // the name as a plain virtual method, so drop the macro here.
@@ -191,25 +192,25 @@ public:
         : impl_(impl), palette_(palette) {}
 
     void FillRect(const Rect& r, const Color& c) override {
-        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        auto* brush = impl_.Brush(Tint(ResolveColor(c, palette_)));
         if (!brush) return;
         impl_.target->FillRectangle(RectF(r), brush);
     }
 
     void FillRoundRect(const Rect& r, float radius, const Color& c) override {
-        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        auto* brush = impl_.Brush(Tint(ResolveColor(c, palette_)));
         if (!brush) return;
         impl_.target->FillRoundedRectangle(D2D1::RoundedRect(RectF(r), radius, radius), brush);
     }
 
     void StrokeRect(const Rect& r, const Color& c, float width, float radius) override {
-        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        auto* brush = impl_.Brush(Tint(ResolveColor(c, palette_)));
         if (!brush) return;
         impl_.target->DrawRoundedRectangle(D2D1::RoundedRect(RectF(r), radius, radius), brush, width);
     }
 
     void FillEllipse(const Rect& r, const Color& c) override {
-        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        auto* brush = impl_.Brush(Tint(ResolveColor(c, palette_)));
         if (!brush) return;
         impl_.target->FillEllipse(D2D1::Ellipse(D2D1::Point2F(r.x + r.w * 0.5f, r.y + r.h * 0.5f),
                                                 r.w * 0.5f, r.h * 0.5f),
@@ -281,14 +282,14 @@ public:
     }
 
     void DrawLine(const Point& a, const Point& b, const Color& c, float width) override {
-        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        auto* brush = impl_.Brush(Tint(ResolveColor(c, palette_)));
         if (!brush) return;
         impl_.target->DrawLine(D2D1::Point2F(a.x, a.y), D2D1::Point2F(b.x, b.y), brush, width);
     }
 
     void DrawText(const std::wstring& text, const Rect& r, const Color& c, float fontSize,
                   int weight, TextAlign align, const std::wstring& family) override {
-        auto* brush = impl_.Brush(ResolveColor(c, palette_));
+        auto* brush = impl_.Brush(Tint(ResolveColor(c, palette_)));
         auto* format = impl_.Format(fontSize, weight, family);
         if (!brush || !format) return;
         format->SetTextAlignment(align == TextAlign::Center   ? DWRITE_TEXT_ALIGNMENT_CENTER
@@ -301,13 +302,44 @@ public:
     void PushClip(const Rect& r) override { impl_.target->PushAxisAlignedClip(RectF(r), D2D1_ANTIALIAS_MODE_ALIASED); }
     void PopClip() override { impl_.target->PopAxisAlignedClip(); }
 
+    void PushOpacity(float multiplier) override { opacities_.push_back(multiplier); }
+    void PopOpacity() override {
+        if (!opacities_.empty()) opacities_.pop_back();
+    }
+
+    void PushTransform(const PaintTransform& t) override {
+        D2D1_MATRIX_3X2_F current{};
+        impl_.target->GetTransform(&current);
+        transforms_.push_back(current);
+        const D2D1_POINT_2F pivot = D2D1::Point2F(t.pivot.x, t.pivot.y);
+        const D2D1_MATRIX_3X2_F local =
+            D2D1::Matrix3x2F::Scale(t.scaleX, t.scaleY, pivot) *
+            D2D1::Matrix3x2F::Rotation(t.rotation, pivot) *
+            D2D1::Matrix3x2F::Translation(t.translate.x, t.translate.y);
+        impl_.target->SetTransform(current * local);
+    }
+
+    void PopTransform() override {
+        if (transforms_.empty()) return;
+        impl_.target->SetTransform(transforms_.back());
+        transforms_.pop_back();
+    }
+
 private:
     static D2D1_RECT_F RectF(const Rect& r) {
         return D2D1::RectF(r.x, r.y, r.x + r.w, r.y + r.h);
     }
 
+    Color Tint(Color c) const {
+        if (c.token != Token::None) return c;
+        for (float o : opacities_) c.a *= o;
+        return c;
+    }
+
     D2DSnapshotRenderer::Impl& impl_;
     const ThemePalette& palette_;
+    std::vector<float> opacities_;
+    std::vector<D2D1_MATRIX_3X2_F> transforms_;
 };
 
 } // namespace

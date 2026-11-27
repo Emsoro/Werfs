@@ -25,12 +25,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Werfs Project"
             VALUE "FileDescription",  "Werfs sample: Python-driven MVVM"
-            VALUE "FileVersion",      "0.13.3.0"
+            VALUE "FileVersion",      "0.13.4.0"
             VALUE "InternalName",     "waml_basic_py"
             VALUE "LegalCopyright",   "MIT License. Copyright (c) 2026 Werfs Project."
             VALUE "OriginalFilename", "waml_basic_py.exe"
             VALUE "ProductName",      "Werfs Samples"
-            VALUE "ProductVersion",   "0.13.3.0"
+            VALUE "ProductVersion",   "0.13.4.0"
             VALUE "Comments",         "Python ViewModel, C++ UI engine, stable-ABI extension."
         END
     END

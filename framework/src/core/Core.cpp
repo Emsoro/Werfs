@@ -16,6 +16,38 @@ Rect Rect::Deflate(const Thickness& t) const {
 }
 
 // ---------------------------------------------------------------------------
+// PaintTransform
+//
+// Scale then rotate about the pivot, then translate. That order matches what
+// UI authors expect from a transform property: "Scale=1.4" grows around the
+// widget's centre, and "TranslateX=40" afterwards moves the grown result.
+// ---------------------------------------------------------------------------
+Point PaintTransform::Apply(const Point& p) const {
+    const float radians = rotation * 3.14159265f / 180.0f;
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    const float dx = (p.x - pivot.x) * scaleX;
+    const float dy = (p.y - pivot.y) * scaleY;
+    return Point{pivot.x + dx * c - dy * s + translate.x,
+                 pivot.y + dx * s + dy * c + translate.y};
+}
+
+Rect PaintTransform::ApplyRect(const Rect& r) const {
+    // Axis-aligned bounds of the transformed rectangle. For rotation that is a
+    // conservative box, which is exactly what a software rasteriser and a
+    // rounded-rect approximation need.
+    const Point a = Apply(Point{r.x, r.y});
+    const Point b = Apply(Point{r.Right(), r.y});
+    const Point c = Apply(Point{r.x, r.Bottom()});
+    const Point d = Apply(Point{r.Right(), r.Bottom()});
+    const float x0 = std::min(std::min(a.x, b.x), std::min(c.x, d.x));
+    const float y0 = std::min(std::min(a.y, b.y), std::min(c.y, d.y));
+    const float x1 = std::max(std::max(a.x, b.x), std::max(c.x, d.x));
+    const float y1 = std::max(std::max(a.y, b.y), std::max(c.y, d.y));
+    return Rect{x0, y0, x1 - x0, y1 - y0};
+}
+
+// ---------------------------------------------------------------------------
 // Value
 // ---------------------------------------------------------------------------
 Value Value::Number(double v) {

@@ -19,10 +19,12 @@
 #include "Widget.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -6285,6 +6287,196 @@ TEST("tree: expansion flattens only visible nodes and selection binds") {
     tree->SetAllExpanded(true);
     root->ForceLayout(Size{400, 400});
     CHECK_EQ(tree->Rows().size(), size_t(5));
+}
+
+// ===========================================================================
+// LoadingSpinner: the four waiting animations
+// ===========================================================================
+TEST("spinner: four kinds parse and draw distinct primitives") {
+    InstallText();
+    struct Case {
+        const char* kind;
+        size_t ops;
+    };
+    const Case cases[] = {{"Ring", 12}, {"Bars", 4}, {"Dots", 5}, {"Bounce", 3}};
+    for (const Case& c : cases) {
+        const std::string src = std::string("<Page><LoadingSpinner Kind=\"") + c.kind +
+                                "\" Size=\"64\" Phase=\"0.2\"/></Page>";
+        DiagnosticBag bag;
+        auto doc = Compile(src, bag);
+        CHECK(doc != nullptr);
+        CHECK(!bag.HasErrors());
+        if (!doc) continue;
+        WidgetPtr root = doc->Instantiate(&g_fakeText);
+        root->ForceLayout(Size{200, 200});
+        // Paint the spinner alone: the Page also fills its background, which
+        // would add one rect to every count and hide a missing spinner segment.
+        RecordingPaintContext paint;
+        root->ChildAt(0)->PaintTree(paint, LightPalette());
+        CHECK_EQ(paint.OpCount(), c.ops);
+    }
+}
+
+TEST("spinner: phase changes the picture and pause dims it") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile("<Page><LoadingSpinner Kind=\"Ring\" Size=\"64\"/></Page>", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{200, 200});
+    Widget* spinner = root->ChildAt(0);
+    CHECK(spinner != nullptr);
+    if (!spinner) return;
+    const int phaseSlot = spinner->SlotOf("Phase");
+    const int activeSlot = spinner->SlotOf("IsActive");
+
+    spinner->SetSlotValue(phaseSlot, Value::Number(0.0));
+    RecordingPaintContext before;
+    root->PaintTree(before, LightPalette());
+    spinner->SetSlotValue(phaseSlot, Value::Number(0.25));
+    RecordingPaintContext after;
+    root->PaintTree(after, LightPalette());
+    CHECK(before.Text() != after.Text());
+    // The head moved to a different segment, not merely a different colour.
+    CHECK_EQ(before.OpCount(), after.OpCount());
+
+    spinner->SetSlotValue(activeSlot, Value::Bool(false));
+    RecordingPaintContext paused;
+    root->PaintTree(paused, LightPalette());
+    CHECK(paused.Text() != after.Text());
+}
+
+TEST("spinner: a ViewModel phase reaches every spinner through a binding") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><StackPanel><LoadingSpinner Kind=\"Ring\" Phase=\"{Binding Phase}\"/>"
+        "<LoadingSpinner Kind=\"Bars\" Phase=\"{Binding Phase}\"/>"
+        "<LoadingSpinner Kind=\"Dots\" Phase=\"{Binding Phase}\"/>"
+        "<LoadingSpinner Kind=\"Bounce\" Phase=\"{Binding Phase}\"/></StackPanel></Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    struct ClockVm final : ObservableObject {
+        ClockVm() { Make("Phase", Phase); }
+        ObservableProperty<double> Phase{"Phase", 0.0};
+    };
+    auto vm = std::make_shared<ClockVm>();
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+
+    std::vector<Widget*> spinners;
+    std::function<void(Widget*)> collect = [&](Widget* w) {
+        if (!w) return;
+        if (std::string(w->TypeName()) == "wui/LoadingSpinner") spinners.push_back(w);
+        for (auto& c : w->Children()) collect(c.get());
+    };
+    collect(root.get());
+    CHECK_EQ(spinners.size(), size_t(4));
+    vm->Phase.Set(0.3);
+    for (Widget* spinner : spinners) {
+        CHECK_NEAR(spinner->Get<double>(spinner->SlotOf("Phase")), 0.3, 1e-9);
+    }
+}
+
+TEST("spinner: the fifth ball travels a semicircle above the queue") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile("<Page><LoadingSpinner Kind=\"Dots\" Size=\"72\"/></Page>", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{200, 200});
+    Widget* spinner = root->ChildAt(0);
+    CHECK(spinner != nullptr);
+    if (!spinner) return;
+    const int phaseSlot = spinner->SlotOf("Phase");
+
+    // RecordingPaintContext reports each ellipse as: ellipse x y w h rgba(...)
+    auto paintAt = [&](double phase) {
+        spinner->SetSlotValue(phaseSlot, Value::Number(phase));
+        RecordingPaintContext paint;
+        spinner->PaintTree(paint, LightPalette());
+        std::vector<std::array<float, 4>> ellipses;
+        std::istringstream lines(paint.Text());
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.rfind("ellipse ", 0) != 0) continue;
+            std::istringstream fields(line.substr(8)); // skip "ellipse "
+            float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+            if (fields >> x >> y >> w >> h) ellipses.push_back({x, y, w, h});
+        }
+        return ellipses;
+    };
+    auto centerY = [](const std::array<float, 4>& e) { return e[1] + e[3] * 0.5f; };
+    auto centerX = [](const std::array<float, 4>& e) { return e[0] + e[2] * 0.5f; };
+
+    const auto resting = paintAt(0.0);
+    const auto apex = paintAt(0.1); // 0.1 * 5 = half a step: the top of the arc
+    CHECK_EQ(resting.size(), size_t(5));
+    CHECK_EQ(apex.size(), size_t(5));
+    if (resting.size() != 5 || apex.size() != 5) return;
+
+    float rowY = 0.0f;
+    for (const auto& e : resting) rowY += centerY(e);
+    rowY /= 5.0f;
+
+    // The travelling ball is high above the row, and it is still drawn -- an
+    // alpha-fade "teleport" would fail both assertions.
+    const auto highest = std::min_element(apex.begin(), apex.end(),
+        [&](const std::array<float, 4>& a, const std::array<float, 4>& b) {
+            return centerY(a) < centerY(b);
+        });
+    CHECK(rowY - centerY(*highest) > 10.0f);
+    // At the apex it sits between the second and fourth slots, not parked at
+    // either end: x really sweeps from the fifth position to the first.
+    const float rowCenterX = (centerX(resting[0]) + centerX(resting[4])) * 0.5f;
+    CHECK(std::fabs(centerX(*highest) - rowCenterX) < 6.0f);
+}
+
+TEST("render: Opacity and ScaleX are render-only animation properties") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><StackPanel><Border Width=\"60\" Height=\"40\" Background=\"Accent\" "
+        "Opacity=\"0.5\" ScaleX=\"2\" ScaleY=\"2\" TranslateX=\"10\" "
+        "HorizontalAlignment=\"Left\"/></StackPanel></Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{300, 200});
+    Widget* stack = root->ChildAt(0);
+    Widget* border = stack ? stack->ChildAt(0) : nullptr;
+    CHECK(border != nullptr);
+    if (!border) return;
+    const Rect layoutBox = border->Bounds();
+    CHECK_NEAR(layoutBox.w, 60.0, 0.01); // transform must NOT have touched layout
+
+    RecordingPaintContext paint;
+    border->PaintTree(paint, LightPalette());
+    std::istringstream lines(paint.Text());
+    std::string line;
+    bool found = false;
+    while (std::getline(lines, line)) {
+        if (line.rfind("fill ", 0) == 0) { found = true; break; }
+    }
+    CHECK(found);
+    if (!found) return;
+    // "fill x y w h r,g,b,a" -> make the colour parseable as four more floats.
+    std::string fields = line.substr(5);
+    std::replace(fields.begin(), fields.end(), ',', ' ');
+    std::istringstream nums(fields);
+    float x = 0, y = 0, w = 0, h = 0, r = 0, g = 0, b = 0, a = 0;
+    CHECK(static_cast<bool>(nums >> x >> y >> w >> h >> r >> g >> b >> a));
+    CHECK_NEAR(w, 120.0, 0.02);  // 60 px scaled by 2 about its centre
+    CHECK_NEAR(h, 80.0, 0.02);
+    CHECK_NEAR(x, layoutBox.x - 20.0, 0.02); // scaled about centre, then +10 px
+    CHECK_NEAR(a, 0.5, 0.01);    // Opacity multiplied the painted colour's alpha
+    CHECK_EQ(border->Bounds().w, layoutBox.w); // painting left geometry alone
 }
 
 int main(int argc, char** argv) {

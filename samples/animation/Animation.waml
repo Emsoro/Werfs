@@ -1,0 +1,202 @@
+<?waml version="0.1"?>
+<!--
+  samples/animation — two families of motion, driven by one injected clock.
+
+  A waiting indicator is only ONE kind of animation. This page also moves real
+  component properties: a damped spring (Canvas.Left), a colour alpha fade
+  (Background) and a size ease (Width/Height), all bound to ViewModel values
+  that the same Tick(dt) advances:
+
+      host frame callback -> AnimationVm.Tick(dt) -> properties -> bindings
+
+  The four LoadingSpinner shapes share the same clock through their Phase slot.
+  Nothing reads the system clock, so a snapshot freezes every animation simply
+  by not ticking.
+
+  Bound to sample::AnimationVm in AnimationVm.h.
+-->
+<Page Background="AppBackground" Padding="0">
+  <ScrollViewer>
+    <StackPanel Orientation="Vertical" Margin="24" Spacing="16">
+
+      <!-- ================= Header ================= -->
+      <TextBlock Text="Animation" FontSize="30" FontWeight="SemiBold"
+                 Foreground="TextPrimary"/>
+      <TextBlock Text="Waiting indicators are only one kind of motion. This page also animates ordinary component properties — damped movement, fade and scale — all from the same injected clock. Pause it and everything freezes."
+                 FontSize="13" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+      <!-- ================= The clock ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="10">
+          <TextBlock Text="One clock, seven consumers" FontSize="17" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="The host calls Tick(seconds) with measured elapsed time. Tick writes Phase for the four spinners and integrates three ordinary properties for the component demos. Nothing here reads a wall clock, so a headless tool can render a deterministic still frame."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <Button Content="{Binding ToggleText}" Command="{Binding ToggleCommand}"/>
+            <Button Content="Reset phase" Command="{Binding ResetCommand}"/>
+            <TextBlock Text="{Binding SpeedLabel}" FontSize="13" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <TextBlock Text="{Binding PhaseText}" FontSize="13" FontFamily="Consolas"
+                       Foreground="TextSecondary"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="Speed" FontSize="12" Foreground="TextSecondary"/>
+            <Slider Width="180" Minimum="1" Maximum="3" Value="{Binding Speed, Mode=TwoWay}"/>
+          </StackPanel>
+          <TextBlock Text="{Binding StateNote}" FontSize="12" Foreground="TextSecondary"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <!-- ============ Component property transitions ============ -->
+      <TextBlock Text="Component properties, not just spinners" FontSize="21"
+                 FontWeight="SemiBold" Foreground="TextPrimary"/>
+      <TextBlock Text="These are plain controls. Their properties are bound to values that Tick integrates: a spring for position, an alpha for colour, a number for size. The framework only sees ordinary bindings."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+
+      <Grid ColumnDefinitions="1*,1*,1*" ColumnSpacing="12">
+
+        <!-- 1. Damped movement: TranslateX follows a spring with overshoot. -->
+        <Border Grid.Column="0" Background="CardBackground" BorderBrush="CardBorder"
+                BorderThickness="1" CornerRadius="8" Padding="14">
+          <StackPanel Orientation="Vertical" Spacing="8">
+            <TextBlock Text="1 · Damped movement" FontSize="16" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <Canvas Width="180" Height="80" Background="ControlFill">
+              <Border Width="62" Height="40" Canvas.Top="20" Canvas.Left="8"
+                      TranslateX="{Binding SpringOffset}"
+                      Background="Accent" CornerRadius="8"/>
+            </Canvas>
+            <Button Content="Kick the card" Command="{Binding KickCommand}"/>
+            <TextBlock Text="{Binding SpringNote}" FontSize="11" FontFamily="Consolas"
+                       Foreground="TextSecondary"/>
+            <TextBlock Text="Stiffness 38, damping 7. TranslateX is render-only: the card moves without reflowing anything. Overshoot needs integrated velocity, which no easing curve can produce."
+                       FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 2. Fade: Opacity is eased toward a target. -->
+        <Border Grid.Column="1" Background="CardBackground" BorderBrush="CardBorder"
+                BorderThickness="1" CornerRadius="8" Padding="14">
+          <StackPanel Orientation="Vertical" Spacing="8">
+            <TextBlock Text="2 · Fade in / out" FontSize="16" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <Canvas Width="180" Height="80" Background="ControlFill">
+              <Border Width="132" Height="52" Canvas.Left="24" Canvas.Top="14"
+                      Background="Accent" Opacity="{Binding FadeOpacity}" CornerRadius="8"/>
+            </Canvas>
+            <Button Content="{Binding FadeText}" Command="{Binding ToggleFadeCommand}"/>
+            <TextBlock Text="{Binding FadeNote}" FontSize="11" FontFamily="Consolas"
+                       Foreground="TextSecondary"/>
+            <TextBlock Text="Opacity is a first-class render property: the painter multiplies the alpha of the whole subtree, so text and shapes on a fading card fade together. Layout is untouched."
+                       FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 3. Scale: ScaleX/ScaleY are eased, layout box stays fixed. -->
+        <Border Grid.Column="2" Background="CardBackground" BorderBrush="CardBorder"
+                BorderThickness="1" CornerRadius="8" Padding="14">
+          <StackPanel Orientation="Vertical" Spacing="8">
+            <TextBlock Text="3 · Grow / shrink" FontSize="16" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <Canvas Width="180" Height="80" Background="ControlFill">
+              <Border Width="60" Height="60" Canvas.Top="10" Canvas.Left="60"
+                      ScaleX="{Binding ScaleFactor}" ScaleY="{Binding ScaleFactor}"
+                      Background="Accent" CornerRadius="10"/>
+            </Canvas>
+            <Button Content="{Binding ScaleText}" Command="{Binding ToggleScaleCommand}"/>
+            <TextBlock Text="{Binding ScaleNote}" FontSize="11" FontFamily="Consolas"
+                       Foreground="TextSecondary"/>
+            <TextBlock Text="ScaleX/ScaleY are render-only: the square grows from its centre through PaintCtx's transform stack, while its layout box stays 60×60 and its neighbours never move."
+                       FontSize="11" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- ================= The four waiting shapes ================= -->
+      <TextBlock Text="Four mainstream waiting indicators" FontSize="21"
+                 FontWeight="SemiBold" Foreground="TextPrimary"/>
+      <TextBlock Text="These four share one Phase slot. Changing speed or pausing affects all of them at once; the control itself owns no timer."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+      <Grid ColumnDefinitions="1*,1*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="12">
+
+        <!-- 1. Windows-style ring: a bright comet head fading around a segmented circle. -->
+        <Border Grid.Row="0" Grid.Column="0" Background="CardBackground"
+                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8" Padding="16">
+          <StackPanel Orientation="Vertical" Spacing="10">
+            <TextBlock Text="1 · Windows-style ring" FontSize="17" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <LoadingSpinner Kind="Ring" Size="72" Thickness="5"
+                            Phase="{Binding Phase}" IsActive="{Binding Running}"
+                            HorizontalAlignment="Center"/>
+            <TextBlock Text="Twelve segments around a circle. The head is fully opaque and the tail falls off behind it, so rotation reads without a gradient brush or a path primitive."
+                       FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 2. Four vertical bars, their lengths running as a wave. -->
+        <Border Grid.Row="0" Grid.Column="1" Background="CardBackground"
+                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8" Padding="16">
+          <StackPanel Orientation="Vertical" Spacing="10">
+            <TextBlock Text="2 · Four changing bars" FontSize="17" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <LoadingSpinner Kind="Bars" Size="72" Thickness="5"
+                            Phase="{Binding Phase}" IsActive="{Binding Running}"
+                            HorizontalAlignment="Center"/>
+            <TextBlock Text="Four rounded bars, each a sine wave offset from its neighbour. The lengths change independently, which is what makes it read as activity rather than a rotating shape."
+                       FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 3. Five balls: the fifth leaves the right end and arrives at the front. -->
+        <Border Grid.Row="1" Grid.Column="0" Background="CardBackground"
+                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8" Padding="16">
+          <StackPanel Orientation="Vertical" Spacing="10">
+            <TextBlock Text="3 · Five balls, fifth to first" FontSize="17" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <LoadingSpinner Kind="Dots" Size="72" Thickness="5"
+                            Phase="{Binding Phase}" IsActive="{Binding Running}"
+                            HorizontalAlignment="Center"/>
+            <TextBlock Text="Five balls in a row. Each step shifts them one place; the ball at the far right leaves the queue, sweeps a half circle above it and lands in the first position, staying visible the whole way."
+                       FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 4. Classic: three dots bouncing in turn (the typing indicator). -->
+        <Border Grid.Row="1" Grid.Column="1" Background="CardBackground"
+                BorderBrush="CardBorder" BorderThickness="1" CornerRadius="8" Padding="16">
+          <StackPanel Orientation="Vertical" Spacing="10">
+            <TextBlock Text="4 · Classic bouncing dots" FontSize="17" FontWeight="SemiBold"
+                       Foreground="TextPrimary"/>
+            <LoadingSpinner Kind="Bounce" Size="72" Thickness="5"
+                            Phase="{Binding Phase}" IsActive="{Binding Running}"
+                            HorizontalAlignment="Center"/>
+            <TextBlock Text="Three dots rise in sequence and dim between rises. It is the oldest of the four and still the clearest signal that something is typing or thinking."
+                       FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- ================= Why it is built this way ================= -->
+      <Border Background="CardBackground" BorderBrush="CardBorder" BorderThickness="1"
+              CornerRadius="8" Padding="16">
+        <StackPanel Orientation="Vertical" Spacing="6">
+          <TextBlock Text="What is shared, and what is not" FontSize="15" FontWeight="SemiBold"
+                     Foreground="TextPrimary"/>
+          <TextBlock Text="host frame  →  AnimationVm.Tick(dt)  →  Phase / SpringOffset / FadeOpacity / ScaleFactor  →  bindings"
+                     FontFamily="Consolas" FontSize="12" Foreground="TextPrimary"
+                     TextWrapping="Wrap"/>
+          <TextBlock Text="One enum picks the spinner shape; one number drives all four. The three component demos use ordinary bindings on ordinary controls. No widget reads a clock, so instances cannot desynchronise and a screenshot is a still frame. Pausing the page stops the clock, not the shapes."
+                     FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="The separate ProgressRing control is for a known percentage; these four are for the case where there is nothing to measure yet."
+                 FontSize="12" Foreground="TextSecondary" TextWrapping="Wrap"
+                 Padding="0,0,0,16"/>
+
+    </StackPanel>
+  </ScrollViewer>
+</Page>

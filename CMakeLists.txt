@@ -87,7 +87,9 @@ set(SAMPLE_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/editor
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/editor/resources
     ${CMAKE_CURRENT_SOURCE_DIR}/samples/charts
-    ${CMAKE_CURRENT_SOURCE_DIR}/samples/charts/resources)
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/charts/resources
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/animation
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/animation/resources)
 
 # One function so adding a sample stays a single call.
 function(add_sample NAME)
@@ -97,7 +99,7 @@ function(add_sample NAME)
         OUTPUT ${res}
         COMMAND rc /nologo /fo${res}
                 /dWUI_VERSION_MAJOR=0 /dWUI_VERSION_MINOR=13
-                /dWUI_VERSION_PATCH=3 /dWUI_VERSION_BUILD=0
+                /dWUI_VERSION_PATCH=4 /dWUI_VERSION_BUILD=0
                 ${dir}/resources/app.rc
         DEPENDS ${dir}/resources/app.rc
         COMMENT "Compiling ${NAME} resources"
@@ -120,6 +122,7 @@ add_sample(theming)
 add_sample(usercontrol)
 add_sample(editor)
 add_sample(charts)
+add_sample(animation)
 
 # ---------------------------------------------------------------------------
 # Framework harnesses. These read sample markup and ViewModels, so they carry

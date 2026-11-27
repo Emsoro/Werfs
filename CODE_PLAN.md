@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.13.3.0
+> 版本：0.13.4.0
 > 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.3.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**49 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`，以及图表的 `Chart`/`ChartPlot`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**256 个测试**全绿，并交付 **8 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.4.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**50 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`、图表的 `Chart`/`ChartPlot`，以及 `LoadingSpinner`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**261 个测试**全绿，并交付 **9 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `animation` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 252 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 261 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -67,10 +67,10 @@ build.ps1  CMakeLists.txt
 | 主题切换（Light/Dark，13 token） | ✅ | snapshot 双主题 |
 | 高 DPI（DIP 布局 + 像素输入） | ✅ | 已验证 200% |
 | 资源打包（单文件 exe，无外部依赖） | ✅ | probe 门禁 |
-| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 8 个示例（basic / list / editor / binding / theming / usercontrol / charts / basic_py）共用同一 Win32+D2D 宿主 |
+| **多示例 + 共享宿主**（`samples/shared`） | ✅ | 9 个示例（basic / list / editor / binding / theming / usercontrol / charts / animation / basic_py）共用同一 Win32+D2D 宿主 |
 | **按页分派的验证工具** | ✅ | `snapshot` 与 `interact` 依据页面选择 ViewModel 与断言 |
 | **文件选择器**（打开 / 保存 / 选文件夹） | ✅ **已接入示例** | `IFileDialogService` + Win32 实现；`editor` 的 File ▸ Open / Save as 真实可弹（§10b.1） |
-| **动画**（隐式过渡 + 关键帧） | ⬜ 规划 | 需帧时钟与插值属性，见 §10b.2 |
+| **动画**（隐式过渡 + 等待动画 + 渲染变换） | ✅ | `VisualState` + `AnimationHost`；`LoadingSpinner` 四种等待动画；`Opacity`/`ScaleX`/`ScaleY`/`Rotation`/`TranslateX`/`TranslateY` 只作用于绘制（见 §10b.2） |
 | **Visibility + 转换器** | ✅ | `Collapsed` 不占位不点击；4 个内置转换器；未知名字是加载错误（7 用例） |
 | **浮层**（Popup / Flyout） | ✅ | `OverlayLayer` 挂在根节点、整树绘制后叠加、点外关闭、边缘翻转；8 用例 |
 | **模态**（ContentDialog） | ✅ | 半透明遮罩 + 吞掉点外点击 + Esc 只映射到「取消」；`IsOpen`/`Result` 双向绑定；4 用例 |
@@ -84,8 +84,8 @@ build.ps1  CMakeLists.txt
 
 | 产物 | 作用 |
 |---|---|
-| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 252 个单元/集成用例 |
+| `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` / `waml_usercontrol.exe` / `waml_charts.exe` / `waml_animation.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
+| `waml_tests.exe` | 261 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -364,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.13.3.0         [ ok ]
+file version: 0.13.4.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -1026,8 +1026,8 @@ samples/
   3. editor/       集成：菜单 + 工具栏 + 多标签 + 未保存提示 + 文件对话框  ✅
   4. binding/      绑定：四种模式的完整对照              ✅
   5. theming/      主题：Light/Dark 与 token             ✅
-  6. usercontrol/  组合：父子组件、两个独立数据源        需先补 DataContext
-  7. animation/    动效：隐式过渡与缓动                   需先补帧时钟（10b.2）
+  6. usercontrol/  组合：页面 → 卡片 → 徽章三层数据源       ✅ 已完成
+  7. animation/    动效：四种等待动画 + 注入式帧时钟         ✅ 已完成（10b.2）
   8. charts/       图表：百万点与降采样                    ✅ 已完成（0.12）
 ```
 
@@ -1243,7 +1243,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 4 | `binding` | 无 | **✅ 已完成**（含 `FallbackValue`/`LostFocus` 两处框架修复，§7.23） |
 | 5 | `theming` | 无（主题已支持） | **✅ 已完成**（宿主新增 `HostOptions::themeProperty` 实时切换） |
 | 6 | `usercontrol` | **`DataContext` 可绑定**（10a.6） | **✅ 已完成**（底层 §7.1 已就绪，标记层可直接用；`Source=` 仍不需要） |
-| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | **✅ 已完成**（`VisualState` + `AnimationHost`，已并入 `basic` 卡片） |
+| 7 | `animation` | **帧时钟 + 过渡**（10b.2） | **✅ 已完成**（`VisualState` + `AnimationHost` 并入 `basic` 卡片；独立页面用 `LoadingSpinner` 展示四种等待动画） |
 | ~~—~~ | ~~`files`~~ | — | **已并入 `editor`**（§10b.1 说明理由） |
 
 **`editor` 从第七位提前到第三位**。原顺序把它排在 `files` 之后、`animation` 之前，理由是「它是集成点，要等前面能力齐备」。实际做下来发现这个顺序判断反了：
@@ -1487,11 +1487,17 @@ WAML 语法（新增 `Transitions` 属性，作用于单个控件）：
 
 | 区块 | 内容 |
 |---|---|
-| 1 隐式过渡 | 点击切换 `Opacity` / `CornerRadius`，观察补间 |
-| 2 缓动函数对比 | 三种 `Easing` 并排，同时启动 |
-| 3 展开动画 | `Expander` 平滑展开 |
-| 4 滚动缓动 | 长页面，滚轮有缓冲感 |
-| 5 关闭动画 | 一个开关切 `SetAnimationEnabled(false)`，对比硬跳变 |
+| 1 注入式时钟 | 宿主 `onFrame` → `AnimationVm.Tick(dt)` → `Phase`，四个控件共读一个相位 |
+| 2 Windows 式转圈 | `Kind="Ring"`：12 段圆环，亮头拖出渐隐尾巴 |
+| 3 四竖条 | `Kind="Bars"`：四根圆角竖条按错位正弦波改变长度 |
+| 4 五球越顶 | `Kind="Dots"`：每步最右的球沿上方半圆运动到队首，全程可见 |
+| 5 经典弹跳 | `Kind="Bounce"`：三点依次抬升，即常见的输入中指示 |
+| 6 阻尼移动 | 普通 `Border` 的 `TranslateX` 绑定弹簧积分出的位移：过冲后回摆，布局盒不动 |
+| 7 渐隐渐显 | `Opacity` 绑定积分出的 alpha：`PaintCtx` 把透明度乘进整棵子树的颜色 |
+| 8 变大变小 | `ScaleX`/`ScaleY` 绑定缓动出的系数：围绕控件中心缩放绘制结果，`Bounds()` 不变 |
+| 9 暂停 / 调速 | `Toggle` 停止推进并调暗形状；`Slider` 调速度；快照固定相位 |
+
+**渲染变换与布局属性分开**（对 R18 的回应）：等待动画之外，普通控件也需要动。为此在 `AddLayoutProps` 里加了六个 `AffectsRender` 属性（`Opacity`、`ScaleX`、`ScaleY`、`Rotation`、`TranslateX`、`TranslateY`），由 `Widget::PaintTreeAt` 在 `OnPaint` 前后压入/弹出 `PaintCtx` 的透明度与变换栈。它们是**绘制期**的，不写 `bounds_` / `desired_`，因此不会触发重排；`Width`/`Height`/`Margin` 仍然是 `AffectsMeasure`，不拿它们做逐帧动画。D2D（窗口与快照）、录制上下文和软件光栅都实现了这组栈，测试用录制输出锁定「缩放后绘制矩形变大、layoutBox 不变」。
 
 #### 风险
 
@@ -2253,7 +2259,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（252 用例）
+## A. 测试清单（261 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 
