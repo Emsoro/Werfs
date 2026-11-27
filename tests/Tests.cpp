@@ -6648,6 +6648,46 @@ TEST("breadcrumbbar: clicking a crumb publishes its index and runs the command")
     CHECK(paint.Text().find(test::Narrow(L"\u203A")) != std::string::npos);
 }
 
+TEST("expander: literal IsExpanded and keyboard toggle stay in sync") {
+    struct ExpandVm2 final : ObservableObject {
+        ExpandVm2() { Make("Open", Open); }
+        ObservableProperty<bool> Open{"Open", false};
+    };
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><StackPanel>"
+        "<Expander Header=\"Literal\" IsExpanded=\"True\"><TextBlock Text=\"Body\"/></Expander>"
+        "<Expander Header=\"Keyboard\" IsExpanded=\"{Binding Open, Mode=TwoWay}\"/>"
+        "</StackPanel></Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    auto vm = std::make_shared<ExpandVm2>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{300, 300});
+    auto* stack = dynamic_cast<StackPanel*>(root->ChildAt(0));
+    auto* literal = stack ? dynamic_cast<Expander*>(stack->ChildAt(0)) : nullptr;
+    auto* keyboard = stack ? dynamic_cast<Expander*>(stack->ChildAt(1)) : nullptr;
+    CHECK(literal != nullptr);
+    CHECK(keyboard != nullptr);
+    if (!literal || !keyboard) return;
+
+    // A load-time literal must be adopted before the first Measure.
+    CHECK(literal->IsExpanded());
+    CHECK(literal->DesiredSize().h > literal->HeaderBounds().h);
+
+    // Keyboard is the other input path; it must publish through TwoWay as well.
+    CHECK(!keyboard->IsExpanded());
+    keyboard->OnKeyDown(KeyReturn);
+    CHECK(keyboard->IsExpanded());
+    CHECK(vm->Open.Get());
+    vm->Open.Set(false);
+    CHECK(!keyboard->IsExpanded());
+    CHECK(keyboard->DesiredSize().h <= keyboard->HeaderBounds().h + 0.01);
+}
+
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : "";
     const int failures = test::RunAll(filter);
