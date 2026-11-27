@@ -65,10 +65,10 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 |---|---|
 | 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
 | 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（多行折行、填满列宽） |
-| 输入 | `Button` · `CheckBox` |
+| 输入 | `Button` · `CheckBox` · `RatingControl`（星级评分） · `BreadcrumbBar`（可点击路径） |
 | 状态 | `ProgressBar` · `ProgressRing` · `LoadingSpinner`（四种等待动画） |
 | 集合 | `ListBox` + `DataTemplate` · `TreeView`（层级/展开/选中） · `TabView`（切换/关闭/新建） |
-| 外壳 | `MenuBar` · `MenuBarItem` · `MenuFlyout` · `MenuFlyoutItem` · `MenuFlyoutSubItem` · `MenuFlyoutSeparator` · `CommandBar` · `AppBarButton` · `AppBarSeparator` · `ContentDialog` |
+| 外壳 | `MenuBar` · `MenuBarItem` · `MenuFlyout` · `MenuFlyoutItem` · `MenuFlyoutSubItem` · `MenuFlyoutSeparator` · `CommandBar` · `AppBarButton` · `AppBarSeparator` · `AppBarToggleButton` · `ContentDialog` |
 
 面板放置属性写在**子元素**上（本框架无附加属性语法）：
 
@@ -113,7 +113,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `basic_py` | `_wui.pyd` `waml_basic_py.exe` | Python 驱动 MVVM 示例（经 CMake 构建，详见下文） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 261 个用例 |
+| `tests` | `waml_tests.exe` | 265 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -257,10 +257,10 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|---|---|
 | **P0 必做** | 23（**✅ 全部完成**） | ✅ `Grid` `Canvas` `WrapPanel` `VariableSizedWrapGrid` `Viewbox` `Expander` `RelativePanel` `ToggleButton` `RepeatButton` `HyperlinkButton` `RadioButton` `Slider` `ToggleSwitch` `PasswordBox` `NumberBox` `ProgressBar` `ProgressRing` `InfoBar` `InfoBadge` `Image` `PersonPicture` `Line` `Shape` | 已完成 |
 | **已提前完成** | 12 | `TabView`（原 P2）· `MenuBar` `MenuBarItem` `MenuFlyout` `MenuFlyoutItem` `MenuFlyoutSubItem` `MenuFlyoutSeparator` `CommandBar` `AppBarButton` `AppBarSeparator` `ContentDialog`（原 P1，浮层完成后一并落地）· 以及 `OverlayLayer` 这个非控件能力 | 已实现 |
-| P1 常用增强 | 16（**3 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` ／ 待做 `Popup` `ContentDialog`（已提前）`AutoSuggestBox` 等 | 进行中 |
+| P1 常用增强 | 16（**14 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` `Popup` `ContentDialog` `AutoSuggestBox` `MenuFlyout` `CommandBar` `AppBarButton` `AppBarToggleButton` `AppBarSeparator` `MenuBar` `BreadcrumbBar` `RatingControl` ／ 待做 `TeachingTip` `SplitView` | 进行中 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **50 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 5 个 + 图表 `Chart`/`ChartPlot` + `LoadingSpinner`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**、**`LoadingSpinner` 的四种等待动画**。
+目前 **55 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 8 个 + 图表 `Chart`/`ChartPlot` + `LoadingSpinner` + `AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**、**`LoadingSpinner` 的四种等待动画**、**`Expander.IsExpanded` 可绑定**、**`AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`**。
 
 ---
 
@@ -270,7 +270,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` / `waml_animation.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 261 个单元/集成用例 |
+| `waml_tests.exe` | 265 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |
@@ -613,6 +613,27 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 - **`Opacity` 是整棵子树的**。父容器设 `Opacity="0.5"`，里面的文字、形状一起淡下去；不需要逐个改颜色 alpha。
 - **弹簧要积分，不是缓动曲线**。阻尼运动来自每帧积分速度（`v += (-k(x-target) - c·v)·dt`），所以会越过目标再回摆；四种内置 `Easing` 只负责两点之间的过渡，做不出过冲。
 - **快照靠"不推进"冻结**。这些属性都来自宿主注入的 `dt`；`waml_snapshot` 不跑帧回调，页面停在固定 pose，两遍渲染哈希一致。
+
+### 写法示例：评分、路径与工具栏开关
+
+```xml
+<RatingControl Value="{Binding Score, Mode=TwoWay}" MaxRating="5"/>
+<BreadcrumbBar Items="Home;Documents;Report"
+               SelectedIndex="{Binding CrumbIndex, Mode=TwoWay}"
+               Command="{Binding NavigateCommand}"/>
+<CommandBar>
+  <AppBarToggleButton Icon="☰" Label="Grid lines"
+                      IsChecked="{Binding ShowGrid, Mode=TwoWay}"/>
+</CommandBar>
+<Expander Header="Details" IsExpanded="{Binding ShowDetails, Mode=TwoWay}"/>
+```
+
+四条约束值得记住：
+
+- **点击就是用户改值**。`RatingControl.Value`、`BreadcrumbBar.SelectedIndex`、`AppBarToggleButton.IsChecked` 和 `Expander.IsExpanded` 都是 `TwoWay`：控件用 `fromBinding=true` 写自己的槽位，绑定会把它推给 ViewModel；反过来 ViewModel 直接赋值也能驱动控件。
+- **评分的悬停只是预览**。鼠标划过会显示"如果点这里"的星级，但不写槽位；移开或确认后才落值，ViewModel 不会看到半成品。
+- **面包屑沿用 `;` 分隔**，与 `ComboBox` / `AutoSuggestBox` 同一套规则；点击某一节同时更新索引并执行 `Command`，键盘 `←` / `→` 也能移动。
+- **`AppBarToggleButton` 不是组合控件**。它继承 `AppBarButton`，因此工具栏宽度计算、溢出菜单项和命中测试与普通按钮完全一致，只在选中时多画一条强调色下划线；普通按钮的 `Command` 照常执行。
 
 ### 写法示例：Popup 原语与 AutoSuggestBox
 

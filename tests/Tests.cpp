@@ -6479,6 +6479,175 @@ TEST("render: Opacity and ScaleX are render-only animation properties") {
     CHECK_EQ(border->Bounds().w, layoutBox.w); // painting left geometry alone
 }
 
+// ===========================================================================
+// P1 controls: AppBarToggleButton, RatingControl, BreadcrumbBar
+// and the bindable Expander.IsExpanded
+// ===========================================================================
+TEST("expander: IsExpanded is a TwoWay property") {
+    struct ExpandVm final : ObservableObject {
+        ExpandVm() { Make("Expanded", Expanded); }
+        ObservableProperty<bool> Expanded{"Expanded", false};
+    };
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><Expander Header=\"Details\" IsExpanded=\"{Binding Expanded, Mode=TwoWay}\"/>"
+        "</Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    auto vm = std::make_shared<ExpandVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{300, 200});
+    auto* expander = dynamic_cast<Expander*>(root->ChildAt(0));
+    CHECK(expander != nullptr);
+    if (!expander) return;
+    CHECK(!expander->IsExpanded());
+
+    const Rect header = expander->HeaderBounds();
+    expander->OnPointerUp(Point{header.x + header.w * 0.5f, header.y + header.h * 0.5f});
+    CHECK(expander->IsExpanded());
+    CHECK(vm->Expanded.Get()); // the user's click reached the ViewModel
+
+    vm->Expanded.Set(false);
+    CHECK(!expander->IsExpanded()); // and the ViewModel can drive it back
+}
+
+TEST("appbartogglebutton: click publishes IsChecked and paints the checked state") {
+    struct ToggleVm final : ObservableObject {
+        ToggleVm() { Make("On", On); }
+        ObservableProperty<bool> On{"On", false};
+    };
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><AppBarToggleButton Label=\"Grid\" IsChecked=\"{Binding On, Mode=TwoWay}\"/>"
+        "</Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    auto vm = std::make_shared<ToggleVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{300, 200});
+    Widget* button = root->ChildAt(0);
+    CHECK(button != nullptr);
+    if (!button) return;
+
+    const Rect b = button->Bounds();
+    const Point center{b.x + b.w * 0.5f, b.y + b.h * 0.5f};
+    button->OnPointerDown(center);
+    button->OnPointerUp(center);
+    CHECK(vm->On.Get());
+    CHECK(button->Get<bool>(button->SlotOf("IsChecked")));
+
+    RecordingPaintContext checked;
+    button->PaintTree(checked, LightPalette());
+    vm->On.Set(false);
+    RecordingPaintContext unchecked;
+    button->PaintTree(unchecked, LightPalette());
+    CHECK(checked.OpCount() > unchecked.OpCount()); // accent rule disappears
+    CHECK(!button->Get<bool>(button->SlotOf("IsChecked")));
+}
+
+TEST("ratingcontrol: stars preview on hover and commit a TwoWay value") {
+    struct RatingVm final : ObservableObject {
+        RatingVm() { Make("Score", Score); }
+        ObservableProperty<double> Score{"Score", 0.0};
+    };
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><RatingControl MaxRating=\"5\" Value=\"{Binding Score, Mode=TwoWay}\"/></Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    auto vm = std::make_shared<RatingVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{300, 100});
+    auto* rating = dynamic_cast<RatingControl*>(root->ChildAt(0));
+    CHECK(rating != nullptr);
+    if (!rating) return;
+
+    const Rect b = rating->Bounds();
+    const Point first{b.x + 2.0f, b.y + b.h * 0.5f};
+    CHECK_EQ(rating->RatingAt(first), 1);
+    CHECK_EQ(rating->HoveredRating(), -1);
+    rating->OnPointerMove(first);
+    CHECK_EQ(rating->HoveredRating(), 1);
+    RecordingPaintContext hovered;
+    rating->PaintTree(hovered, LightPalette());
+    const std::string star = test::Narrow(L"\u2605");
+    const std::string hollow = test::Narrow(L"\u2606");
+    CHECK(hovered.Text().find(star) != std::string::npos);
+    // A hover previews one filled star without touching the ViewModel yet.
+    CHECK_NEAR(vm->Score.Get(), 0.0, 1e-9);
+
+    rating->OnPointerUp(first);
+    CHECK_NEAR(vm->Score.Get(), 1.0, 1e-9);
+    rating->OnPointerLeave(); // leaving drops the preview; the committed value remains
+    CHECK_EQ(rating->HoveredRating(), -1);
+    vm->Score.Set(4.0);
+    CHECK_NEAR(rating->Get<double>(rating->SlotOf("Value")), 4.0, 1e-9);
+    RecordingPaintContext four;
+    rating->PaintTree(four, LightPalette());
+    auto occurrences = [](const std::string& text, const std::string& needle) {
+        size_t n = 0, at = 0;
+        while ((at = text.find(needle, at)) != std::string::npos) { ++n; at += needle.size(); }
+        return n;
+    };
+    CHECK_EQ(occurrences(four.Text(), star), size_t(4));
+    CHECK_EQ(occurrences(four.Text(), hollow), size_t(1));
+}
+
+TEST("breadcrumbbar: clicking a crumb publishes its index and runs the command") {
+    struct CrumbVm final : ObservableObject {
+        CrumbVm() {
+            Go.Set(std::make_shared<RelayCommand>([this] { ++Runs; }));
+            Make("Index", Index);
+            Make("Go", Go);
+        }
+        ObservableProperty<int> Index{"Index", 0};
+        ObservableProperty<RefPtr> Go{"Go"};
+        int Runs = 0;
+    };
+    DiagnosticBag bag;
+    auto doc = Compile(
+        "<Page><BreadcrumbBar Items=\"Home;Documents;Report\" "
+        "SelectedIndex=\"{Binding Index, Mode=TwoWay}\" "
+        "Command=\"{Binding Go}\"/></Page>",
+        bag);
+    CHECK(doc != nullptr);
+    CHECK(!bag.HasErrors());
+    if (!doc) return;
+    auto vm = std::make_shared<CrumbVm>();
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->SetDataContext(std::static_pointer_cast<RefObject>(vm));
+    root->ForceLayout(Size{400, 80});
+    auto* bar = dynamic_cast<BreadcrumbBar*>(root->ChildAt(0));
+    CHECK(bar != nullptr);
+    if (!bar) return;
+
+    const Rect b = bar->Bounds();
+    CHECK_EQ(bar->IndexAt(Point{b.x + 4.0f, b.y + b.h * 0.5f}), 0);
+    bar->OnPointerUp(Point{b.x + 4.0f, b.y + b.h * 0.5f});
+    CHECK_EQ(vm->Index.Get(), 0);
+    CHECK_EQ(vm->Runs, 1);
+
+    bar->OnKeyDown(KeyRight);
+    CHECK_EQ(vm->Index.Get(), 1);
+    CHECK_EQ(vm->Runs, 2);
+    vm->Index.Set(2);
+    CHECK_EQ(bar->Get<int>(bar->SlotOf("SelectedIndex")), 2);
+
+    RecordingPaintContext paint;
+    bar->PaintTree(paint, LightPalette());
+    CHECK(paint.Text().find(test::Narrow(L"Documents")) != std::string::npos);
+    CHECK(paint.Text().find(test::Narrow(L"\u203A")) != std::string::npos);
+}
+
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : "";
     const int failures = test::RunAll(filter);

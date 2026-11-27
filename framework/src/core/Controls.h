@@ -827,6 +827,7 @@ public:
     void OnPointerUp(const Point& local) override;
     bool OnKeyDown(int vk) override;
     bool Focusable() const override { return true; }
+    void OnSlotChanged(int slot, const Value& value) override;
 
     bool IsExpanded() const { return expanded_; }
     void SetExpanded(bool value);
@@ -1412,6 +1413,82 @@ public:
     PopupMenuItem BuildItem();
     float ToolbarWidth() const;
     bool IsSeparator() const;
+};
+
+// A toolbar button that is also a two-state setting.
+//
+// Derived from AppBarButton rather than composing one: the toolbar's overflow
+// menu, sizing and hit testing must be identical to an ordinary button, and the
+// only difference is that a click writes IsChecked instead of (only) invoking a
+// command. A composed control would have to duplicate ToolbarWidth/BuildItem
+// and would drift the moment either changed.
+class AppBarToggleButton : public AppBarButton {
+public:
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnKeyDown(int vk) override;
+    void OnSlotChanged(int slot, const Value& value) override;
+
+private:
+    void Toggle();
+};
+
+// A five-star (configurable) rating input.
+//
+// Stars are glyphs, not paths: the recording painter can assert which stars are
+// filled, DWrite renders them with the system font, and the headless text service
+// still gives a stable width. Value is TwoWay because clicking IS the user
+// choosing a rating; a hovered star previews the value without writing it.
+class RatingControl : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerMove(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    void OnPointerLeave() override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+    // Test hook: the star the pointer currently previews, or -1.
+    int HoveredRating() const { return hovered_; }
+    // Test hook: which star contains a point in this widget's coordinate space.
+    int RatingAt(const Point& p) const;
+
+private:
+    int DisplayedRating() const;
+    void Commit(int rating);
+
+    int hovered_ = -1;
+};
+
+// A row of clickable path segments ("Home › Documents › Report").
+//
+// Items use the same ';' convention as ComboBox: a breadcrumb is one label per
+// segment, and a templated collection would be a feature this control does not
+// need. SelectedIndex is TwoWay: clicking a crumb navigates, so the ViewModel
+// must hear about it.
+class BreadcrumbBar : public Widget {
+public:
+    Size Measure(const Size& available) override;
+    void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
+    Widget* HitTest(const Point& p) override;
+    void OnPointerMove(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    void OnPointerLeave() override;
+    bool OnKeyDown(int vk) override;
+    bool Focusable() const override { return true; }
+
+    static std::vector<std::wstring> SplitItems(const std::wstring& items);
+    // Test hook: segment under a point in this widget's coordinate space, or -1.
+    int IndexAt(const Point& p) const;
+
+private:
+    Rect CrumbRect(size_t index) const;
+    void Commit(int index);
+
+    int hovered_ = -1;
 };
 
 // ---------------------------------------------------------------------------

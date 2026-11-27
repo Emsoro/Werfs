@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.4.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**50 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 `ComboBox`/`Flyout`/`ToolTip`、图表的 `Chart`/`ChartPlot`，以及 `LoadingSpinner`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**261 个测试**全绿，并交付 **9 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `animation` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.13.4.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**55 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 8 个、图表的 `Chart`/`ChartPlot`，以及 `LoadingSpinner`/`AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**265 个测试**全绿，并交付 **9 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `animation` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,11 +50,11 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 261 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 265 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
-| **26 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** | ✅ | 类型注册表 30 项（含 DataTemplate/AppBarSeparator） |
+| **55 控件**：Page/Border/StackPanel/ScrollViewer/TextBlock/Button/CheckBox/TextBox/ListBox/TabView + **Grid/Canvas/WrapPanel/VariableSizedWrapGrid/Viewbox/Expander** + **MenuBar/MenuBarItem/MenuFlyout/MenuFlyoutItem/MenuFlyoutSubItem/MenuFlyoutSeparator/CommandBar/AppBarButton/ContentDialog** + P0/P1 补齐项 | ✅ | 类型注册表 56 项（含 DataTemplate/AppBarSeparator） |
 | **Grid 行列布局**：`ColumnDefinitions="1*,2*,auto"` + `Grid.Row/Column/RowSpan/ColumnSpan` + 间距 | ✅ | 5 个测试锁定星号分配、固定混合、跨列、间距、auto 自适应 |
 | **WrapPanel / VariableSizedWrapGrid**：换行流式 + 跨行列贴片（占用网格算法） | ✅ | 2 个测试锁定换行与跨行不重叠 |
 | **Canvas**：绝对定位（`Canvas.Left/Top`） | ✅ | 2 个测试锁定偏移与显式尺寸 |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` / `waml_usercontrol.exe` / `waml_charts.exe` / `waml_animation.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 261 个单元/集成用例 |
+| `waml_tests.exe` | 265 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -1175,7 +1175,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 | 档位 | 数量 | 范围 | 何时做 |
 |---|---|---|---|
 | **P0 必做** | **23**（✅ 全部完成） | 日常界面几乎必用、且**不需要新子系统** | ✅ |
-| P1 常用增强 | 16（**3 已完成**） | 共同卡在「浮层/弹出」这一层 | ✅ `ComboBox` `Flyout` `ToolTip`；其余浮层完成后解锁 |
+| P1 常用增强 | 16（**14 已完成**） | 浮层落地后批量解锁；剩 `TeachingTip` / `SplitView` | ✅ `ComboBox` `Flyout` `ToolTip` `Popup` `ContentDialog` `AutoSuggestBox` `MenuFlyout` `CommandBar` `AppBarButton` `AppBarToggleButton` `AppBarSeparator` `MenuBar` `BreadcrumbBar` `RatingControl` |
 | P2 长尾 | 51 | 其余虚拟化集合形态、日期、媒体、动画、窗口管理 | 按需再议，不承诺 |
 
 **P0 清单**（23 个全部 ✅ 完成）：
@@ -1223,7 +1223,7 @@ ServerCard（可复用组件，自己的 VM 是自己的 DataContext）
 
 **已完成的三项**：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列、`TextBlock` 自动换行。
 
-**P1 — 之后做（16 个）**：`ComboBox`、`Popup`、`Flyout`、`MenuFlyout`、`ToolTip`、`ContentDialog`、`TeachingTip`、`AutoSuggestBox`、`CommandBar`、`AppBarButton`、`AppBarToggleButton`、`AppBarSeparator`、`BreadcrumbBar`、`MenuBar`、`SplitView`、`RatingControl`
+**P1 — 16 个，已完成 14 个**：`ComboBox`、`Popup`、`Flyout`、`MenuFlyout`、`ToolTip`、`ContentDialog`、`AutoSuggestBox`、`CommandBar`、`AppBarButton`、`AppBarToggleButton`、`AppBarSeparator`、`BreadcrumbBar`、`MenuBar`、`RatingControl` ✅；仅剩 `TeachingTip`、`SplitView` 待做（后者需要内容/窗格双区布局）
 
 这 16 个共同卡在一个缺失子系统上：**浮层（Popup/Flyout）**。它要处理 z-order、点外关闭、焦点陷阱、窗口外定位，成本高于 P0 任意单项——但做完这一次，其中大多数会顺带完成。
 
@@ -2259,7 +2259,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（261 用例）
+## A. 测试清单（265 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

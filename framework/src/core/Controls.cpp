@@ -1655,6 +1655,10 @@ void Expander::SetExpanded(bool value) {
     if (expanded_ == value) return;
     expanded_ = value;
     Invalidate(AffectsMeasure | AffectsRender);
+    const int slot = SlotOf("IsExpanded");
+    // fromBinding=true: the user toggled the header, so a TwoWay binding must
+    // publish it. OnSlotChanged sees the value already adopted and stops.
+    if (slot >= 0) SetSlotValue(slot, Value::Bool(value), true);
 }
 
 Rect Expander::HeaderBounds() const {
@@ -3557,6 +3561,307 @@ void CommandBar::OpenOverflow() {
     ownedLayer_ = std::move(layer);
     SetOverlay(ownedLayer_.get());
     Invalidate(AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// Expander: bindable IsExpanded
+// ---------------------------------------------------------------------------
+void Expander::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    const int own = SlotOf("IsExpanded");
+    if (own < 0 || slot != own) return;
+    // A binding (or markup) set the property: adopt it without echoing it back.
+    const bool next = value.type == VType::Bool ? value.flag : false;
+    if (expanded_ == next) return;
+    expanded_ = next;
+    Invalidate(AffectsMeasure | AffectsRender);
+}
+
+// ---------------------------------------------------------------------------
+// AppBarToggleButton
+// ---------------------------------------------------------------------------
+void AppBarToggleButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    AppBarButton::OnPaint(ctx, palette);
+    const int slot = SlotOf("IsChecked");
+    if (slot < 0 || !Get<bool>(slot)) return;
+    // A checked toggle keeps the toolbar's compact look but gains an accent rule
+    // along the bottom edge -- the same affordance the tab strip uses.
+    ctx.FillRect(Rect{bounds_.x + 4.0f, bounds_.Bottom() - 3.0f,
+                      std::max(0.0f, bounds_.w - 8.0f), 2.0f},
+                 palette.colors[static_cast<int>(Token::Accent)]);
+}
+
+void AppBarToggleButton::OnPointerDown(const Point& local) {
+    (void)local;
+    SetPressed(true);
+    Invalidate(AffectsRender);
+}
+
+void AppBarToggleButton::OnPointerUp(const Point& local) {
+    const bool wasPressed = pressed_;
+    SetPressed(false);
+    if (wasPressed && bounds_.Contains(local)) {
+        Toggle();
+        AppBarButton::OnPointerUp(local); // the command, if any, still runs
+    }
+    Invalidate(AffectsRender);
+}
+
+bool AppBarToggleButton::OnKeyDown(int vk) {
+    if (vk == KeySpace || vk == KeyReturn) {
+        Toggle();
+        AppBarButton::Invoke();
+        return true;
+    }
+    return AppBarButton::OnKeyDown(vk);
+}
+
+void AppBarToggleButton::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    const int own = SlotOf("IsChecked");
+    if (own >= 0 && slot == own) Invalidate(AffectsRender);
+}
+
+void AppBarToggleButton::Toggle() {
+    const int slot = SlotOf("IsChecked");
+    if (slot < 0 || !Get<bool>(SlotOf("IsEnabled"))) return;
+    SetSlotValue(slot, Value::Bool(!Get<bool>(slot)), true);
+}
+
+// ---------------------------------------------------------------------------
+// RatingControl
+// ---------------------------------------------------------------------------
+namespace {
+int RatingMax(const Widget& w) {
+    const int slot = w.SlotOf("MaxRating");
+    const int max = slot >= 0 ? w.Get<int>(slot) : 5;
+    return std::clamp(max, 1, 10);
+}
+
+float RatingGlyphWidth(const Widget& w, float fontSize) {
+    (void)w; // kept in the signature so callers read as "this widget's font metrics"
+    if (ITextService* svc = TextSystem::Get()) return svc->Measure(L"★", fontSize, WeightNormal).w;
+    return fontSize * 0.9f;
+}
+
+constexpr float kRatingGap = 2.0f;
+} // namespace
+
+Size RatingControl::Measure(const Size& /*available*/) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const int max = RatingMax(*this);
+    const float glyph = RatingGlyphWidth(*this, fontSize);
+    desired_ = Size{static_cast<float>(max) * glyph + static_cast<float>(max - 1) * kRatingGap +
+                        margin.H(),
+                    fontSize * 1.4f + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+int RatingControl::RatingAt(const Point& p) const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (!box.Contains(p)) return -1;
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const float glyph = RatingGlyphWidth(*this, fontSize);
+    const float step = glyph + kRatingGap;
+    const int index = static_cast<int>((p.x - box.x) / step);
+    const int max = RatingMax(*this);
+    return std::clamp(index, 0, max - 1) + 1;
+}
+
+int RatingControl::DisplayedRating() const {
+    if (hovered_ > 0) return hovered_;
+    const int slot = SlotOf("Value");
+    const double value = slot >= 0 ? Get<double>(slot) : 0.0;
+    return std::clamp(static_cast<int>(std::floor(value + 0.5)), 0, RatingMax(*this));
+}
+
+void RatingControl::Commit(int rating) {
+    const int slot = SlotOf("Value");
+    if (slot < 0) return;
+    // fromBinding=true: clicking is the user changing the value.
+    SetSlotValue(slot, Value::Number(rating), true);
+    Invalidate(AffectsRender);
+}
+
+void RatingControl::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Rect box{bounds_.x + margin.l, bounds_.y + margin.t,
+                   std::max(0.0f, bounds_.w - margin.H()),
+                   std::max(0.0f, bounds_.h - margin.V())};
+    if (box.w <= 0 || box.h <= 0) return;
+    const bool enabled = Get<bool>(SlotOf("IsEnabled"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const float glyph = RatingGlyphWidth(*this, fontSize);
+    const Color filled = enabled ? ResolveColor(Get<Color>(SlotOf("Foreground")), palette)
+                                 : palette.colors[static_cast<int>(Token::TextDisabled)];
+    const Color empty = palette.colors[static_cast<int>(Token::CardBorder)];
+    const int shown = DisplayedRating();
+    const int max = RatingMax(*this);
+    for (int i = 0; i < max; ++i) {
+        const Rect r{box.x + i * (glyph + kRatingGap), box.y, glyph, box.h};
+        ctx.DrawText(i < shown ? L"\u2605" : L"\u2606", r, i < shown ? filled : empty,
+                     fontSize, WeightNormal, TextAlign::Center);
+    }
+}
+
+Widget* RatingControl::HitTest(const Point& p) {
+    return Get<bool>(SlotOf("IsEnabled")) && bounds_.Contains(p) ? this : nullptr;
+}
+
+void RatingControl::OnPointerMove(const Point& local) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    const int next = RatingAt(local);
+    if (next == hovered_) return;
+    hovered_ = next;
+    Invalidate(AffectsRender);
+}
+
+void RatingControl::OnPointerUp(const Point& local) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    const int rating = RatingAt(local);
+    if (rating > 0) Commit(rating);
+}
+
+void RatingControl::OnPointerLeave() {
+    Widget::OnPointerLeave();
+    hovered_ = -1;
+    Invalidate(AffectsRender);
+}
+
+bool RatingControl::OnKeyDown(int vk) {
+    if (vk != KeyLeft && vk != KeyRight) return Widget::OnKeyDown(vk);
+    const int slot = SlotOf("Value");
+    if (slot < 0) return false;
+    const int current = DisplayedRating();
+    Commit(std::clamp(current + (vk == KeyRight ? 1 : -1), 0, RatingMax(*this)));
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// BreadcrumbBar
+// ---------------------------------------------------------------------------
+namespace {
+constexpr float kBreadcrumbSeparatorWidth = 18.0f;
+} // namespace
+
+std::vector<std::wstring> BreadcrumbBar::SplitItems(const std::wstring& items) {
+    return ComboBox::SplitItems(items);
+}
+
+Size BreadcrumbBar::Measure(const Size& available) {
+    (void)available;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const auto items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    float total = 0.0f;
+    for (size_t i = 0; i < items.size(); ++i) {
+        float w = static_cast<float>(items[i].size()) * fontSize * 0.55f;
+        if (ITextService* svc = TextSystem::Get()) w = svc->Measure(items[i], fontSize, WeightNormal).w;
+        total += w;
+        if (i + 1 < items.size()) total += kBreadcrumbSeparatorWidth;
+    }
+    desired_ = Size{total + margin.H(), fontSize * 1.5f + margin.V()};
+    ApplySizeConstraints();
+    return desired_;
+}
+
+Rect BreadcrumbBar::CrumbRect(size_t index) const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const auto items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    const float height = std::max(0.0f, bounds_.h - margin.V());
+    float x = bounds_.x + margin.l;
+    for (size_t i = 0; i < items.size(); ++i) {
+        float w = static_cast<float>(items[i].size()) * fontSize * 0.55f;
+        if (ITextService* svc = TextSystem::Get()) w = svc->Measure(items[i], fontSize, WeightNormal).w;
+        if (i == index) return Rect{x, bounds_.y + margin.t, w, height};
+        x += w + kBreadcrumbSeparatorWidth;
+    }
+    return Rect{};
+}
+
+int BreadcrumbBar::IndexAt(const Point& p) const {
+    const auto items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (CrumbRect(i).Contains(p)) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void BreadcrumbBar::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
+    ++PaintCount;
+    const auto items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    if (items.empty()) return;
+    const int selected = Get<int>(SlotOf("SelectedIndex"));
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    const Color normal = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
+    const Color muted = palette.colors[static_cast<int>(Token::TextSecondary)];
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Rect r = CrumbRect(i);
+        const bool current = static_cast<int>(i) == selected;
+        ctx.DrawText(items[i], r, current ? accent : normal, fontSize, WeightNormal, TextAlign::Left);
+        if (current) {
+            ctx.FillRect(Rect{r.x, r.Bottom() - 2.0f, r.w, 2.0f}, accent);
+        }
+        if (i + 1 < items.size()) {
+            ctx.DrawText(L"\u203A", Rect{r.Right(), r.y, kBreadcrumbSeparatorWidth, r.h}, muted,
+                         fontSize, WeightNormal, TextAlign::Center);
+        }
+    }
+}
+
+Widget* BreadcrumbBar::HitTest(const Point& p) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return nullptr;
+    return bounds_.Contains(p) ? this : nullptr;
+}
+
+void BreadcrumbBar::OnPointerMove(const Point& local) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    const int next = IndexAt(local);
+    if (next == hovered_) return;
+    hovered_ = next;
+    Invalidate(AffectsRender);
+}
+
+void BreadcrumbBar::Commit(int index) {
+    const int slot = SlotOf("SelectedIndex");
+    if (slot >= 0) SetSlotValue(slot, Value::Number(index), true);
+    auto command = Get<RefPtr>(SlotOf("Command"));
+    if (auto* cmd = dynamic_cast<ICommand*>(command.get())) {
+        if (cmd->CanExecute()) cmd->Execute();
+    }
+    Invalidate(AffectsRender);
+}
+
+void BreadcrumbBar::OnPointerUp(const Point& local) {
+    if (!Get<bool>(SlotOf("IsEnabled"))) return;
+    const int index = IndexAt(local);
+    if (index >= 0) Commit(index);
+}
+
+void BreadcrumbBar::OnPointerLeave() {
+    Widget::OnPointerLeave();
+    hovered_ = -1;
+    Invalidate(AffectsRender);
+}
+
+bool BreadcrumbBar::OnKeyDown(int vk) {
+    if (vk != KeyLeft && vk != KeyRight) return Widget::OnKeyDown(vk);
+    const int slot = SlotOf("SelectedIndex");
+    if (slot < 0) return false;
+    const auto items = SplitItems(Get<std::wstring>(SlotOf("Items")));
+    if (items.empty()) return false;
+    const int current = std::clamp(Get<int>(slot), 0, static_cast<int>(items.size()) - 1);
+    Commit(std::clamp(current + (vk == KeyRight ? 1 : -1), 0,
+                      static_cast<int>(items.size()) - 1));
+    return true;
 }
 
 // ---------------------------------------------------------------------------

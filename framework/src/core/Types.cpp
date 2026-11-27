@@ -412,6 +412,10 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}),
                 AffectsMeasure);
+        // TwoWay: clicking the header IS the user expanding, and a ViewModel must
+        // be able to drive the same state from outside.
+        t->Prop("IsExpanded", VType::Bool, Value::Bool(false),
+                AffectsMeasure | AffectsRender, BindingMode::TwoWay);
         add(t);
     }
     {
@@ -520,6 +524,51 @@ void TypeRegistry::RegisterBuiltins() {
         auto t = std::make_shared<TypeInfo>("wui/AppBarSeparator", ContentModel::None,
                                             []() -> WidgetPtr { return std::make_shared<AppBarButton>(); });
         t->Prop("IsSeparator", VType::Bool, Value::Bool(true), 0);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/AppBarToggleButton", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<AppBarToggleButton>(); });
+        AddLayoutProps(*t);
+        t->Prop("Icon", VType::Text, Value::Text(L""), 0);
+        t->Prop("Label", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender);
+        t->Prop("Command", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        // TwoWay: a toolbar click is the user changing a setting.
+        t->Prop("IsChecked", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("ToolTip", VType::Text, Value::Text(L""), 0);
+        t->Prop("FontSize", VType::Number, Value::Number(12), AffectsMeasure | AffectsRender);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/RatingControl", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<RatingControl>(); });
+        AddLayoutProps(*t);
+        t->Prop("Value", VType::Number, Value::Number(0), AffectsRender, BindingMode::TwoWay);
+        t->Prop("MaxRating", VType::Number, Value::Number(5), AffectsMeasure | AffectsRender);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(24), AffectsMeasure | AffectsRender);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender,
+                BindingMode::OneWay, true, true);
+        add(t);
+    }
+    {
+        auto t = std::make_shared<TypeInfo>("wui/BreadcrumbBar", ContentModel::None,
+                                            []() -> WidgetPtr { return std::make_shared<BreadcrumbBar>(); });
+        AddLayoutProps(*t);
+        // Same ';' rule as ComboBox: one label per segment, no item template needed.
+        t->Prop("Items", VType::Text, Value::Text(L""), AffectsMeasure | AffectsRender);
+        t->Prop("SelectedIndex", VType::Number, Value::Number(0), AffectsRender, BindingMode::TwoWay);
+        t->Prop("Command", VType::Ref, Value::Null(), AffectsRender, BindingMode::OneWay);
+        t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
+        t->Prop("FontSize", VType::Number, Value::Number(13), AffectsMeasure | AffectsRender);
+        t->Prop("Foreground", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
+                BindingMode::OneWay, true, true);
         add(t);
     }
     {
