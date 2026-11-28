@@ -319,6 +319,9 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("ItemHeight", VType::Number, Value::Number(26), AffectsMeasure);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
+        // Opt-in sticky follow. "ToEnd" pins the list to the newest row when
+        // items are appended; the default "None" keeps row 0 visible.
+        t->EnumProp("AutoScroll", {"None", "ToEnd"}, 0, AffectsMeasure);
         // Selection: TwoWay on both, because the canonical use is "click a row,
         // the ViewModel learns" and the reverse (restore selection) must work too.
         // -1 means nothing selected.
@@ -346,6 +349,10 @@ void TypeRegistry::RegisterBuiltins() {
         // "rows x itemHeight" in markup, because the page does not know the viewport
         // height the host actually granted.
         t->Prop("ScrollMax", VType::Number, Value::Number(0), AffectsRender,
+                BindingMode::TwoWay);
+        // Content width actually granted by layout. A page can use it to measure
+        // text before deciding a row height, instead of guessing from window size.
+        t->Prop("ViewportWidth", VType::Number, Value::Number(0), AffectsRender,
                 BindingMode::TwoWay);
         add(t);
     }

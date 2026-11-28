@@ -2074,6 +2074,7 @@ ListBox::ListBox() {
     slotFirstVisible_ = SlotOf("FirstVisibleIndex");
     slotScrollOffset_ = SlotOf("ScrollOffset");
     slotScrollMax_ = SlotOf("ScrollMax");
+    slotAutoScroll_ = SlotOf("AutoScroll");
 }
 
 ListBox::~ListBox() { UnsubscribeSource(); }
@@ -2097,13 +2098,23 @@ void ListBox::UnsubscribeSource() {
 
 void ListBox::OnSlotChanged(int slot, const Value& value) {
     if (slot == slotItems_) SubscribeSource();
+    if (slot == slotAutoScroll_) {
+        stickToEnd_ = Get<int>(slotAutoScroll_) == 1;
+        if (stickToEnd_) ScrollTo(maxScroll_);
+        Invalidate(AffectsRender);
+    }
     if (slot == slotTemplate_) RebuildItems(text_);
     // A different row height moves every row, so the window has to be recomputed
     // as well as re-measured.
     if (slot == SlotOf("ItemHeight")) {
+        // A row-height change can shrink or grow the content below the reader;
+        // if they were at the end, keep them there.
+        const bool wasAtEnd = maxScroll_ <= 0 || offset_ >= maxScroll_ - 0.5f;
+        stickToEnd_ = slotAutoScroll_ >= 0 && Get<int>(slotAutoScroll_) == 1 && wasAtEnd;
         itemHeight_ = std::max(1.0f, Get<float>(slot));
         ClampScroll();
         UpdateWindow();
+        if (virtualized_ && modelCount_ > 0 && wasAtEnd) ScrollTo(maxScroll_);
         Invalidate(AffectsMeasure | AffectsRender);
     }
     // ScrollOffset is the one virtualisation property that is also an input: a
@@ -2181,6 +2192,24 @@ int ListBox::PageStep() const {
 }
 
 void ListBox::OnPointerDown(const Point& local) {
+    const Rect viewport = ViewportRect();
+    if (virtualized_ && maxScroll_ > 0 && viewport.w > 0 &&
+        local.x >= viewport.x + viewport.w - 10.0f && local.x <= viewport.x + viewport.w) {
+        // `local` is in content space; convert back to viewport space for the
+        // scrollbar, which is fixed to the viewport rather than the rows.
+        const float viewY = local.y - offset_;
+        const Rect track = ScrollbarTrack();
+        const float thumbTop = ScrollbarThumbTop();
+        const float thumbH = ScrollbarThumbHeight();
+        if (viewY >= thumbTop && viewY <= thumbTop + thumbH) {
+            draggingThumb_ = true;
+            thumbGrabDelta_ = viewY - thumbTop;
+            return;
+        }
+        const float ratio = std::clamp((viewY - track.y) / std::max(1.0f, track.h), 0.0f, 1.0f);
+        ScrollTo(ratio * maxScroll_ - viewportH_ * 0.5f);
+        return;
+    }
     // Selection happens on press, matching how lists behave everywhere else --
     // press-and-drag-off still leaves the row selected.
     //
@@ -2197,10 +2226,28 @@ void ListBox::OnPointerDown(const Point& local) {
     }
 }
 
-void ListBox::OnPointerUp(const Point&) {}
+void ListBox::OnPointerMove(const Point& local) {
+    Widget::OnPointerMove(local);
+    if (!draggingThumb_ || maxScroll_ <= 0) return;
+    const Rect track = ScrollbarTrack();
+    const float travel = std::max(1.0f, track.h - ScrollbarThumbHeight());
+    const float viewY = local.y - offset_;
+    const float ratio = std::clamp((viewY - thumbGrabDelta_ - track.y) / travel, 0.0f, 1.0f);
+    ScrollTo(ratio * maxScroll_);
+}
+
+void ListBox::OnPointerUp(const Point& local) {
+    draggingThumb_ = false;
+    Widget::OnPointerUp(local);
+}
 
 void ListBox::OnListChanged(const ListChange& change) {
+    // Stickiness belongs to the control, not the page: while the reader is parked
+    // at the end, appended rows must still be the visible last row (toend).
+    const bool wasAtEnd = maxScroll_ <= 0 || offset_ >= maxScroll_ - 0.5f;
+    stickToEnd_ = slotAutoScroll_ >= 0 && Get<int>(slotAutoScroll_) == 1 && wasAtEnd;
     RebuildItems(text_);
+    if (virtualized_ && modelCount_ > 0 && wasAtEnd) ScrollTo(maxScroll_);
     // Reselecting through the model keeps SelectedIndex valid after a removal in
     // front of it; without this the highlight would stay on whatever row now
     // occupies the old index.
@@ -2274,7 +2321,8 @@ void ListBox::UpdateWindow() {
     }
     constexpr size_t kOverscan = 1;
     const float rowH = std::max(1.0f, itemHeight_);
-    const size_t firstVisible = static_cast<size_t>(offset_ / rowH);
+    const size_t firstVisible = std::min(static_cast<size_t>(offset_ / rowH),
+                                         modelCount_ - 1);
     const size_t visible = static_cast<size_t>((viewportH_ > 0 ? viewportH_ : rowH) / rowH) + 1;
     size_t first = firstVisible >= kOverscan ? firstVisible - kOverscan : 0;
     size_t last = std::min(modelCount_, firstVisible + visible + kOverscan);
@@ -2284,9 +2332,27 @@ void ListBox::UpdateWindow() {
 void ListBox::ClampScroll() {
     const float rowH = std::max(1.0f, itemHeight_);
     const float contentH = rowH * static_cast<float>(modelCount_);
-    maxScroll_ = std::max(0.0f, contentH - viewportH_);
+    // Before the first Arrange there is no viewport, so there is no valid
+    // scroll range. Reporting contentH as the max here allowed an early wheel
+    // step to jump past the rows and leave an empty virtual window (white list).
+    maxScroll_ = viewportH_ > 0 ? std::max(0.0f, contentH - viewportH_) : 0.0f;
     if (offset_ > maxScroll_) offset_ = maxScroll_;
     if (offset_ < 0) offset_ = 0;
+}
+
+void ListBox::SetViewportHeight(float h) {
+    // Measure and Arrange can disagree by a few pixels (star rows, borders,
+    // round-off). Letting that jitter through made maxScroll_ flap and the
+    // layout loop forever. Within the tolerance we keep the SMALLER height: an
+    // under-reported viewport only leaves a little slack at the end, while an
+    // over-reported one pushes the last row below the clip (masked bottom line).
+    const float tolerance = std::max(1.0f, itemHeight_ * 0.5f);
+    h = std::max(0.0f, h);
+    if (viewportH_ > 0 && std::fabs(h - viewportH_) < tolerance) {
+        viewportH_ = std::min(viewportH_, h);
+        return;
+    }
+    viewportH_ = h;
 }
 
 void ListBox::PublishState() {
@@ -2302,6 +2368,7 @@ void ListBox::PublishState() {
     publish(slotVirtualized_, Value::Bool(virtualized_));
     publish(slotFirstVisible_, Value::Number(static_cast<double>(FirstVisibleIndex())));
     publish(slotScrollMax_, Value::Number(static_cast<double>(maxScroll_)));
+    publish(SlotOf("ViewportWidth"), Value::Number(static_cast<double>(ViewportRect().w)));
     // Guarded: this write must not come back as a scroll request (see OnSlotChanged).
     if (slotScrollOffset_ >= 0) {
         const Value v = Value::Number(static_cast<double>(offset_));
@@ -2321,10 +2388,27 @@ size_t ListBox::FirstVisibleIndex() const {
 }
 
 void ListBox::ScrollTo(float offset) {
+    // A wheel step can arrive between a data change and the next layout, when
+    // ClampScroll's cached range is stale. Refresh it before applying the move.
+    ClampScroll();
     const float target = std::min(std::max(0.0f, offset), maxScroll_);
     if (target == offset_) return;
     offset_ = target;
+    // Scrolling is how the reader leaves (or returns to) the end, but only in
+    // ToEnd mode; a plain list must stay wherever the reader put it.
+    if (slotAutoScroll_ >= 0 && Get<int>(slotAutoScroll_) == 1) {
+        stickToEnd_ = target >= maxScroll_ - 0.5f;
+    }
     UpdateWindow();
+    // A transient out-of-range window must never leave the viewport blank.
+    if (virtualized_ && modelCount_ > 0 && itemWidgets_.empty()) {
+        offset_ = 0;
+        ClampScroll();
+        SetWindow(0, std::min<size_t>(modelCount_, 1));
+    }
+    // Report every scroll, not only those that moved the virtual window: a
+    // ViewModel's sticky-follow state must detach on a small wheel step too.
+    PublishState();
     Invalidate(AffectsRender);
 }
 
@@ -2374,9 +2458,10 @@ Size ListBox::Measure(const Size& available) {
         // The viewport is what the parent offered, so there is no need to measure
         // an unknowable number of rows: measure the representative rows that are
         // realized (the window is refreshed from the new viewport right after).
-        viewportH_ = explicitH > 0 ? explicitH : offeredH;
+        SetViewportHeight(explicitH > 0 ? explicitH : offeredH);
         virtualized_ = true;
         ClampScroll();
+        if (stickToEnd_) offset_ = maxScroll_;
         UpdateWindow();
     } else {
         viewportH_ = 0;
@@ -2408,8 +2493,9 @@ Size ListBox::Measure(const Size& available) {
         // The viewport is the CONTENT box, so an explicit Height still leaves room
         // for margin and padding; reading it back from desired_ keeps the two in step
         // when ApplySizeConstraints clamped the height.
-        viewportH_ = std::max(0.0f, desired_.h - marginV - pad.V());
+        SetViewportHeight(std::max(0.0f, desired_.h - marginV - pad.V()));
         ClampScroll();
+        if (stickToEnd_) offset_ = maxScroll_;
         UpdateWindow();
     }
     PublishState();
@@ -2426,8 +2512,9 @@ void ListBox::Arrange(const Rect& finalRect) {
     // does exactly this, for the same reason.
     if (virtualized_ && desired_.h > 0 && desired_.h < bounds_.h) bounds_.h = desired_.h;
     const Rect content = ViewportRect();
-    viewportH_ = content.h;
+    SetViewportHeight(content.h);
     ClampScroll();
+    if (stickToEnd_) offset_ = maxScroll_;
     // Refresh before arranging: the viewport height is only known now, so a list
     // whose first layout happens here must still get the right rows.
     UpdateWindow();
@@ -2438,6 +2525,7 @@ void ListBox::Arrange(const Rect& finalRect) {
         const float y = content.y + rowH * static_cast<float>(realizedFirst_ + i);
         itemWidgets_[i]->Arrange(Rect{content.x, y, content.w, rowH});
     }
+    PublishState();
 }
 
 Rect ListBox::ViewportRect() const {
@@ -2446,6 +2534,29 @@ Rect ListBox::ViewportRect() const {
     return Rect{bounds_.x + margin.l + pad.l, bounds_.y + margin.t + pad.t,
                 std::max(0.0f, bounds_.w - margin.H() - pad.H()),
                 std::max(0.0f, bounds_.h - margin.V() - pad.V())};
+}
+
+Rect ListBox::ScrollbarTrack() const {
+    constexpr float kBarW = 6.0f;
+    constexpr float kBarInset = 2.0f;
+    const Rect viewport = ViewportRect();
+    return Rect{viewport.x + viewport.w - kBarW - kBarInset,
+                viewport.y + kBarInset, kBarW,
+                std::max(0.0f, viewport.h - kBarInset * 2)};
+}
+
+float ListBox::ScrollbarThumbHeight() const {
+    const Rect track = ScrollbarTrack();
+    const float contentH = viewportH_ + maxScroll_;
+    if (contentH <= 0) return track.h;
+    return std::max(24.0f, track.h * viewportH_ / contentH);
+}
+
+float ListBox::ScrollbarThumbTop() const {
+    const Rect track = ScrollbarTrack();
+    const float travel = std::max(0.0f, track.h - ScrollbarThumbHeight());
+    const float t = maxScroll_ > 0 ? std::clamp(offset_ / maxScroll_, 0.0f, 1.0f) : 0.0f;
+    return track.y + travel * t;
 }
 
 void ListBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
@@ -2467,6 +2578,19 @@ void ListBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         }
     }
     ctx.PopClip();
+
+    // A virtualised list scrolls inside its own viewport. Without a visible
+    // thumb the reader cannot tell where they are when captions exceed a screen.
+    if (virtualized_ && maxScroll_ > 0 && viewport.w > 0 && viewport.h > 0) {
+        const Rect track = ScrollbarTrack();
+        const Color trackColor = ResolveColor(Color{0, 0, 0, 1, Token::CardBorder}, palette);
+        ctx.FillRoundRect(track, track.w * 0.5f,
+                          Color{trackColor.r, trackColor.g, trackColor.b, 0.35f});
+        const Color thumbColor = ResolveColor(Color{0, 0, 0, 1, Token::TextSecondary}, palette);
+        ctx.FillRoundRect(Rect{track.x, ScrollbarThumbTop(), track.w, ScrollbarThumbHeight()},
+                          track.w * 0.5f,
+                          Color{thumbColor.r, thumbColor.g, thumbColor.b, 0.55f});
+    }
 
     // Rows are drawn by PaintChildrenAt (below), so that the scroll shift is
     // applied once to the whole window and the clip is installed in one place.

@@ -942,6 +942,7 @@ class ListBox : public Selector, public IListObserver {public:
     void OnSelectionChanged() override;
     bool OnKeyDown(int vk) override;
     void OnPointerDown(const Point& local) override;
+    void OnPointerMove(const Point& local) override;
     void OnPointerUp(const Point& local) override;
     bool Focusable() const override { return true; }
 
@@ -979,12 +980,18 @@ private:
     int PageStep() const;
     // Content box (viewport) in the coordinates bounds_ currently has.
     Rect ViewportRect() const;
+    Rect ScrollbarTrack() const;
+    float ScrollbarThumbHeight() const;
+    float ScrollbarThumbTop() const;
     WidgetPtr CreateItemWidget(size_t index);
     // Makes the realized rows exactly the model range [first, last).
     void SetWindow(size_t first, size_t last);
     // Recomputes the window from offset_, viewportH_ and the model count.
     void UpdateWindow();
     void ClampScroll();
+    // Applies a newly measured viewport height, damping sub-row jitter so a
+    // measure/arrange disagreement cannot oscillate the scroll range forever.
+    void SetViewportHeight(float h);
     // Publishes the two read-only outputs (RealizedCount / Virtualized) for
     // anything bound to them. Written as target-side writes, like CloseRequested.
     void PublishState();
@@ -1001,6 +1008,11 @@ private:
     float maxScroll_ = 0;
     float viewportH_ = 0;
     bool virtualized_ = false;
+    bool draggingThumb_ = false;
+    float thumbGrabDelta_ = 0.0f;
+    // Sticky follow owned by the control, enabled only by AutoScroll="ToEnd".
+    // A plain ListBox starts at row 0, like every other framework control.
+    bool stickToEnd_ = false;
     ITextService* text_ = nullptr;
     int slotItems_ = -1;
     int slotTemplate_ = -1;
@@ -1009,6 +1021,7 @@ private:
     int slotFirstVisible_ = -1;
     int slotScrollOffset_ = -1;
     int slotScrollMax_ = -1;
+    int slotAutoScroll_ = -1;
     // True while PublishState writes ScrollOffset, so the write is not read back as
     // a scroll request.
     bool writingScrollOffset_ = false;

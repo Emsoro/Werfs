@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.14.0.0** · MIT · Windows 10/11 x64
+> 版本 **0.14.1.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -45,7 +45,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | **静态校验** | 未知元素/属性、类型转换失败、语法错误全部在**加载期**报错，带行列号与建议 |
 | **四种绑定模式** | `OneTime` / `OneWay` / `TwoWay` / `OneWayToSource`，默认按目标属性决定；`FallbackValue`、`UpdateSourceTrigger=LostFocus` |
 | **DataTemplate** | 列表项由 WAML 描述，按项实例化 |
-| **列表虚拟化** | `ListBox` 给定有界高度时只保留视口内的行，滚动即建/毁；模型 1000 行也只持有十几个控件 |
+| **列表虚拟化** | `ListBox` 给定有界高度时只保留视口内的行，滚动即建/毁；模型 1000 行也只持有十几个控件；内置可点击/拖动滚动条，`AutoScroll="ToEnd"` 可选粘性末尾跟随 |
 | **树形列表** | `TreeView` + `TreeNode`：节点自己持有子项与 `IsExpanded`，控件只画展开的分支；点击箭头折叠，命令可展开全部 |
 | **图表与降采样** | `Chart`/`ChartPlot` 三种图形（折线/柱状/面积）+ 坐标轴与 nice 刻度；四种降采样模式；`ChartStream` 环形缓冲支持实时流，100 万点降到每像素一点，实测 **5.4 ms vs 37.2 ms** |
 | **自绘引擎** | Direct2D + DirectWrite，无窗口也能离屏渲染（WARP + WIC） |
@@ -144,7 +144,7 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.14.0.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.14.1.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
 $env:WUI_VERSION_BUILD = '1'
@@ -441,11 +441,16 @@ demo.waml(12,5): error WAML0102: 'wui/TextBlock' has no property 'Txt' (did you 
 | 场景 | 行为 |
 |---|---|
 | `Height="260" ItemHeight="26"` | 虚拟化：约 13 个行控件 |
+| `AutoScroll="ToEnd"` | 粘性跟随末尾：追加行或改行高后仍停在新末尾；默认 `None` 从第一行开始，保持阅读位置 |
 | 放在 `ScrollViewer` 里（高度无界） | **不虚拟化**：全部行都实例化，由外层滚动器负责滚动 |
 
 这条切换由**约束**决定，不由开关决定 —— 这也是既有页面一行都不用改的原因：所有示例的列表都在 `ScrollViewer` 里，行为与改动前完全一致。
 
-四个属性让页面能**看到**窗口在动（都是控件写给 ViewModel 的，`Mode=TwoWay`）：`RealizedCount`、`IsVirtualized`、`FirstVisibleIndex`、`ScrollOffset`（这个也是输入，ViewModel 写它即可滚动），外加只读的 `ScrollMax`。`samples/list` 第 8 节就是把这几个值直接印在页面上。
+六个属性让页面能**看到**窗口在动（都是控件写给 ViewModel 的，`Mode=TwoWay`）：`RealizedCount`、`IsVirtualized`、`FirstVisibleIndex`、`ScrollOffset`（这个也是输入，ViewModel 写它即可滚动），外加只读的 `ScrollMax` 与 `ViewportWidth`（布局实际给到的内容宽度，可用来测量文本再决定行高，而不必猜窗口尺寸）。`samples/list` 第 8 节就是把这几个值直接印在页面上。
+
+虚拟化时右侧会画出滚动条：点击轨道跳页、拖动滑块定位；滚动位置变化时页面能立即观察到，即使虚拟窗口还没变。
+
+末尾粘性跟随是**显式开关**：`AutoScroll="ToEnd"` 时，停在列表末尾追加新行或调整 `ItemHeight` 后仍停在新末尾；向上滚轮/拖动离开末尾即脱离跟随，滚回底部重新跟随。默认 `AutoScroll="None"` 的普通列表从第一行开始，滚动后保持在 reader 放下的位置。Viewport 高度在 Measure/Arrange 之间出现亚行抖动时会被阻尼，避免 `ScrollMax` 反复变化导致布局震荡；首次布局前的滚轮也不会把窗口推到空白。
 
 两条契约值得记住：
 

@@ -28,7 +28,7 @@
 #define WUI_VERSION_MINOR 14
 #endif
 #ifndef WUI_VERSION_PATCH
-#define WUI_VERSION_PATCH 0
+#define WUI_VERSION_PATCH 1
 #endif
 #ifndef WUI_VERSION_BUILD
 #define WUI_VERSION_BUILD 0
