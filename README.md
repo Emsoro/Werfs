@@ -4,7 +4,7 @@
 
 用声明式的 WAML 描述界面，用 C++20 编写逻辑，用 MVVM 连接两者。所有渲染、布局、输入、焦点都由自研的 C++ 引擎完成 —— 没有 WebView、没有 .NET、没有 Qt、没有 JS 引擎。产物是单文件 exe。
 
-> 版本 **0.13.4.0** · MIT · Windows 10/11 x64
+> 版本 **0.14.0.0** · MIT · Windows 10/11 x64
 
 ---
 
@@ -64,7 +64,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | 类别 | 控件 |
 |---|---|
 | 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
-| 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（多行折行、填满列宽） |
+| 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（`AcceptsReturn` 多行、`TextWrapping="NoWrap\|Wrap"` 显式换行开关、溢出时内置竖滚动条 + 滚轮/拖动、`AutoScroll="None\|ToEnd"` 保持位置或跟随最新文本、`ScrollOffset` 双向可绑定） |
 | 输入 | `Button` · `CheckBox` · `RatingControl`（星级评分） · `BreadcrumbBar`（可点击路径） |
 | 状态 | `ProgressBar` · `ProgressRing` · `LoadingSpinner`（四种等待动画） |
 | 集合 | `ListBox` + `DataTemplate` · `TreeView`（层级/展开/选中） · `TabView`（切换/关闭/新建） |
@@ -113,7 +113,7 @@ pwsh -File build.ps1 all -Clean   # 清空输出目录后重建
 | `basic_py` | `_wui.pyd` `waml_basic_py.exe` | Python 驱动 MVVM 示例（经 CMake 构建，详见下文） |
 | `all` | 全部 | 示例 + 全部工具与测试 |
 | `debug` | 各示例 | 符号 + WAML 读磁盘，改界面免重编 |
-| `tests` | `waml_tests.exe` | 266 个用例 |
+| `tests` | `waml_tests.exe` | 268 个用例 |
 | `bench` | `waml_bench.exe` | 性能基线 |
 | `snapshot` | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `interact` | `waml_interact.exe` | 无窗口输入驱动 |
@@ -144,10 +144,10 @@ pwsh -File build.ps1 all
 
 单一来源，CI 可用同名环境变量覆盖：
 
-当前默认版本为 `0.13.4.0`。CI 可用同名环境变量覆盖任意字段：
+当前默认版本为 `0.14.0.0`。CI 可用同名环境变量覆盖任意字段：
 
 ```powershell
-$env:WUI_VERSION_PATCH = '3'
+$env:WUI_VERSION_BUILD = '1'
 pwsh -File build.ps1 all
 ```
 
@@ -260,7 +260,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 | P1 常用增强 | 16（**14 已完成**） | ✅ `ComboBox` `Flyout` `ToolTip` `Popup` `ContentDialog` `AutoSuggestBox` `MenuFlyout` `CommandBar` `AppBarButton` `AppBarToggleButton` `AppBarSeparator` `MenuBar` `BreadcrumbBar` `RatingControl` ／ 待做 `TeachingTip` `SplitView` | 进行中 |
 | P2 长尾 | 51 | 虚拟化集合、日期时间、动画过渡、导航容器、媒体等 | 按需，不承诺 |
 
-目前 **55 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 8 个 + 图表 `Chart`/`ChartPlot` + `LoadingSpinner` + `AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**、**`LoadingSpinner` 的四种等待动画**、**`Expander.IsExpanded` 可绑定**、**`AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`**。
+目前 **55 个控件可用**（原有 9 个 + 6 个布局面板 + 10 个外壳控件 + P0 补齐的 17 个 + P1 弹出的 8 个 + 图表 `Chart`/`ChartPlot` + `LoadingSpinner` + `AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`）。框架改造已全部完成：`Grid` 行列布局、`VariableSizedWrapGrid` 跨行列换行、`TextBlock`/`TextBox` 文字换行（`TextBox` 还可显式 `TextWrapping`、内置滚动条与 `AutoScroll` 跟随最新文本）、**浮层子系统**（`OverlayLayer`，同时解锁菜单、工具栏溢出与模态）、**单选模型**、**快捷键路由**、**`RelativePanel` 附加属性与按名查兄弟**、**`Image` 的 WIC 解码（可注入）**、**`PaintCtx` 画线/椭圆/位图**、**`RadioButton` 组作用域**、**`HorizontalAlignment`/`VerticalAlignment`**、**`FontFamily` 等宽字体**、**承载任意控件子树的 `Flyout` 浮层**、**`VisualState` 与动画过渡**、**`Popup` 原语与 `AutoSuggestBox`**、**`LoadingSpinner` 的四种等待动画**、**`Expander.IsExpanded` 可绑定**、**`AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`**。
 
 ---
 
@@ -270,7 +270,7 @@ tests/   bench/   tools/     ← 框架级工具，不依赖示例
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_usercontrol.exe` / `waml_editor.exe` / `waml_charts.exe` / `waml_animation.exe` | 真实 Win32 窗口 |
 | `<sample>.exe --selftest` | 无窗口自检，写 `selftest.log`，退出码表示结果 |
-| `waml_tests.exe` | 266 个单元/集成用例 |
+| `waml_tests.exe` | 268 个单元/集成用例 |
 | `waml_interact.exe <页面.waml>` | 无窗口驱动真实输入（点击、键盘、菜单、对话框）；按文件名分派到对应页面的检查 |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验（两次渲染 SHA 必须相同） |
 | `waml_probe.exe` | 资源与交付模式门禁（缺失资源、陈旧 `.res`、权限标记） |

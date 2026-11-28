@@ -192,8 +192,8 @@ function Get-VersionPart {
 }
 
 $VersionMajor = Get-VersionPart 'MAJOR' '0'
-$VersionMinor = Get-VersionPart 'MINOR' '13'
-$VersionPatch = Get-VersionPart 'PATCH' '4'
+$VersionMinor = Get-VersionPart 'MINOR' '14'
+$VersionPatch = Get-VersionPart 'PATCH' '0'
 $VersionBuild = Get-VersionPart 'BUILD' '0'
 $VersionString = "$VersionMajor.$VersionMinor.$VersionPatch.$VersionBuild"
 

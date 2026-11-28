@@ -652,14 +652,18 @@ void CheckBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const float size = 18.0f;
     const Rect glyph{box.x + 3, box.y + (box.h - size) * 0.5f, size, size};
     const bool checked = Get<bool>(SlotOf("IsChecked"));
-    const Color accent = palette.colors[static_cast<int>(Token::Accent)];
-    ctx.FillRoundRect(glyph, 3.0f, checked ? accent : palette.colors[static_cast<int>(Token::ControlFill)]);
+    const Color checkColor = ResolveColor(Get<Color>(SlotOf("CheckColor")), palette);
+    ctx.FillRoundRect(glyph, 3.0f, checked ? checkColor
+                                           : palette.colors[static_cast<int>(Token::ControlFill)]);
     if (!checked) ctx.StrokeRect(glyph, palette.colors[static_cast<int>(Token::TextSecondary)], 1.0f, 3.0f);
     if (checked) {
-        // A check mark drawn as two thin strokes; good enough for the spike.
+        // Keep the mark legible on both dark and light custom check colours.
+        const float luminance = checkColor.r * 0.299f + checkColor.g * 0.587f +
+                                checkColor.b * 0.114f;
+        const Color mark = luminance > 0.6f ? Color{0, 0, 0, 1, Token::None}
+                                            : Color{1, 1, 1, 1, Token::None};
         ctx.DrawText(L"\u2713", Rect{glyph.x, glyph.y, glyph.w, glyph.h},
-                     palette.colors[static_cast<int>(Token::TextOnAccent)], size * 0.8f, WeightBold,
-                     TextAlign::Center);
+                     mark, size * 0.8f, WeightBold, TextAlign::Center);
     }
     const Color fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
     ctx.DrawText(Get<std::wstring>(SlotOf("Content")),
@@ -687,6 +691,14 @@ void CheckBox::Toggle() { SetSlotValue(SlotOf("IsChecked"), Value::Bool(!Get<boo
 // ---------------------------------------------------------------------------
 // TextBox
 // ---------------------------------------------------------------------------
+namespace {
+// The scrollbar is painted inside the text area rather than in a separate
+// widget: a TextBox owns its own scroll state, and a nested ScrollViewer would
+// fight it for the wheel and for the layout height.
+constexpr float kTextScrollbarWidth = 10.0f;
+constexpr float kTextThumbMinHeight = 16.0f;
+} // namespace
+
 Size TextBox::Measure(const Size& available) {
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
@@ -746,14 +758,28 @@ std::vector<std::wstring> TextBox::BuildDisplayLines(float wrapWidth, float font
     // so routing it through the virtual is what makes PasswordBox's mask apply to the
     // whole drawing path instead of just the placeholder branch.
     return BuildDisplayLines(DisplayText(), TextSystem::Get(), wrapWidth, bounds_.h, fontSize,
-                             weight);
+                             weight, Wrapping());
 }
 
 std::vector<std::wstring> TextBox::BuildDisplayLines(const std::wstring& text, ITextService* svc,
                                                     float wrapWidth, float boxHeight,
-                                                    float fontSize, int weight) {
+                                                    float fontSize, int weight, bool wrap) {
     std::vector<std::wstring> lines;
     const float lineH = svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
+    if (!wrap) {
+        // NoWrap still honours the lines the author typed. Only SOFT wrapping is
+        // disabled: returning one giant line with '\n' inside it would paint the
+        // newline as a glyph and break caret/IME row maths.
+        size_t start = 0;
+        while (start <= text.size()) {
+            const size_t nl = text.find(L'\n', start);
+            lines.push_back(nl == std::wstring::npos ? text.substr(start)
+                                                     : text.substr(start, nl - start));
+            if (nl == std::wstring::npos) break;
+            start = nl + 1;
+        }
+        return lines;
+    }
     // A box only one line tall has no room to wrap into; wrapping there would
     // change what a single-line field looks like.
     const bool canWrap = boxHeight >= lineH * 1.9f && wrapWidth > 0.0f;
@@ -825,6 +851,115 @@ std::wstring TextBox::DisplayText() const {
     return text.substr(0, at) + composition_ + text.substr(at);
 }
 
+bool TextBox::Wrapping() const {
+    const int slot = SlotOf("TextWrapping");
+    return slot < 0 || Get<int>(slot) == 1; // 0 = NoWrap, 1 = Wrap
+}
+
+float TextBox::LineHeight() const {
+    ITextService* svc = TextSystem::Get();
+    const float fontSize = Get<float>(SlotOf("FontSize"));
+    return svc ? svc->LineHeight(fontSize) : fontSize * 1.33f;
+}
+
+float TextBox::MaxScroll() const {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const float h = bounds_.h - margin.V() - pad.V();
+    if (h <= 0.0f) return 0.0f;
+    const float wrapWidth = lastWrapWidth_ > 0.0f ? lastWrapWidth_
+                                                  : std::max(0.0f, bounds_.w - margin.H() - pad.H());
+    const size_t rows = BuildDisplayLines(wrapWidth, Get<float>(SlotOf("FontSize")), WeightNormal)
+                            .size();
+    return std::max(0.0f, LineHeight() * static_cast<float>(rows) - h);
+}
+
+Rect TextBox::ScrollbarTrack(const Rect& textBox) const {
+    return Rect{textBox.x + textBox.w - kTextScrollbarWidth, textBox.y, kTextScrollbarWidth,
+                textBox.h};
+}
+
+void TextBox::SetScrollOffset(float value, bool publish) {
+    const float clamped = std::clamp(value, 0.0f, MaxScroll());
+    if (std::abs(clamped - scrollOffset_) < 0.01f) return;
+    scrollOffset_ = clamped;
+    if (publish) {
+        const int slot = SlotOf("ScrollOffset");
+        if (slot >= 0) SetSlotValue(slot, Value::Number(static_cast<double>(scrollOffset_)), true);
+    }
+    Invalidate(AffectsRender);
+}
+
+void TextBox::OnSlotChanged(int slot, const Value& value) {
+    Widget::OnSlotChanged(slot, value);
+    if (slot == SlotOf("Text")) {
+        pendingAutoScroll_ = true;
+        Invalidate(AffectsMeasure | AffectsRender);
+    } else if (slot == SlotOf("ScrollOffset")) {
+        double v = 0;
+        if (ValueCodec<double>::From(value, v)) {
+            const float clamped = std::clamp(static_cast<float>(v), 0.0f, MaxScroll());
+            if (std::abs(clamped - scrollOffset_) >= 0.01f) {
+                scrollOffset_ = clamped;
+                Invalidate(AffectsRender);
+            }
+        }
+    } else if (slot == SlotOf("TextWrapping") || slot == SlotOf("AutoScroll")) {
+        Invalidate(AffectsMeasure | AffectsRender);
+    }
+}
+
+bool TextBox::OnPointerWheel(float deltaLines) {
+    const float maxScroll = MaxScroll();
+    if (maxScroll <= 0.0f) return Widget::OnPointerWheel(deltaLines);
+    // Same convention as ScrollViewer: negative deltaLines means "wheel down",
+    // which moves the content UP, i.e. increases the scroll offset.
+    SetScrollOffset(scrollOffset_ - deltaLines * LineHeight(), true);
+    return true; // consumed: the page under the log must not scroll as well
+}
+
+void TextBox::OnPointerDown(const Point& local) {
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const Rect textBox{bounds_.x + margin.l + pad.l, bounds_.y + margin.t + pad.t,
+                       std::max(0.0f, bounds_.w - margin.H() - pad.H()),
+                       std::max(0.0f, bounds_.h - margin.V() - pad.V())};
+    const float maxScroll = MaxScroll();
+    if (maxScroll <= 0.0f) return;
+    const Rect track = ScrollbarTrack(textBox);
+    if (!track.Contains(local)) return;
+    const float thumbH = std::max(kTextThumbMinHeight,
+                                  track.h * track.h / (maxScroll + track.h));
+    const float thumbY = track.y + (scrollOffset_ / maxScroll) * (track.h - thumbH);
+    if (local.y < thumbY) {
+        SetScrollOffset(scrollOffset_ - track.h, true);
+    } else if (local.y > thumbY + thumbH) {
+        SetScrollOffset(scrollOffset_ + track.h, true);
+    } else {
+        draggingThumb_ = true;
+        thumbGrabDelta_ = local.y - thumbY;
+    }
+}
+
+void TextBox::OnPointerMove(const Point& local) {
+    if (!draggingThumb_) return;
+    const Thickness margin = Get<Thickness>(SlotOf("Margin"));
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const Rect textBox{bounds_.x + margin.l + pad.l, bounds_.y + margin.t + pad.t,
+                       std::max(0.0f, bounds_.w - margin.H() - pad.H()),
+                       std::max(0.0f, bounds_.h - margin.V() - pad.V())};
+    const Rect track = ScrollbarTrack(textBox);
+    const float maxScroll = MaxScroll();
+    if (maxScroll <= 0.0f || track.h <= kTextThumbMinHeight) return;
+    const float thumbH = std::max(kTextThumbMinHeight,
+                                  track.h * track.h / (maxScroll + track.h));
+    const float y = local.y - thumbGrabDelta_ - track.y;
+    const float ratio = std::clamp(y / (track.h - thumbH), 0.0f, 1.0f);
+    SetScrollOffset(ratio * maxScroll, true);
+}
+
+void TextBox::OnPointerUp(const Point&) { draggingThumb_ = false; }
+
 void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     ++PaintCount;
     const Thickness margin = Get<Thickness>(SlotOf("Margin"));
@@ -854,26 +989,74 @@ void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     // Clip to the box: content past the bottom edge belongs to a scroll offset the
     // box does not have yet, and drawing it over the card below looks like a
     // rendering bug.
+    // Two passes: the scrollbar steals a few pixels, which can add one more
+    // wrapped line, so decide from the full width and then re-wrap on the final
+    // width. Without the second pass a long word disappears under the thumb.
+    float wrapWidth = std::max(0.0f, textBox.w);
+    std::vector<std::wstring> lines = BuildDisplayLines(wrapWidth, fontSize, weight);
+    float contentH = lineH * static_cast<float>(lines.size());
+    bool needBar = contentH > textBox.h + 0.5f;
+    if (needBar) {
+        wrapWidth = std::max(0.0f, textBox.w - kTextScrollbarWidth - 2.0f);
+        lines = BuildDisplayLines(wrapWidth, fontSize, weight);
+        contentH = lineH * static_cast<float>(lines.size());
+        needBar = contentH > textBox.h + 0.5f;
+    }
+    lastWrapWidth_ = wrapWidth;
+    const float maxScroll = std::max(0.0f, contentH - textBox.h);
+    scrollOffset_ = std::clamp(scrollOffset_, 0.0f, maxScroll);
+
+    const int autoSlot = SlotOf("AutoScroll");
+    const bool toEnd = autoSlot >= 0 && Get<int>(autoSlot) == 1;
+    // Keep the text and the thumb on the SAME offset. A live log changes Text
+    // frequently; relying only on the one-shot pendingAutoScroll_ flag could
+    // leave the thumb drawn from a stale offset while the text had already
+    // jumped to the end.
+    const bool changed = std::abs(scrollOffset_ - maxScroll) >= 0.01f;
+    if (toEnd && changed) scrollOffset_ = maxScroll;
+    if (changed && (toEnd || pendingAutoScroll_)) {
+        const int slot = SlotOf("ScrollOffset");
+        if (slot >= 0) SetSlotValue(slot, Value::Number(static_cast<double>(scrollOffset_)), true);
+    }
+    pendingAutoScroll_ = false;
+
     ctx.PushClip(textBox);
-    const std::vector<std::wstring> lines = BuildDisplayLines(textBox.w, fontSize, weight);
-    float y = textBox.y;
+    float y = textBox.y - scrollOffset_;
     for (const auto& line : lines) {
-        if (y + lineH > textBox.y + textBox.h + 0.5f) break;
-        ctx.DrawText(line, Rect{textBox.x, y, textBox.w, lineH}, fg, fontSize, weight,
+        if (y + lineH <= textBox.y) { y += lineH; continue; }
+        if (y >= textBox.y + textBox.h) break;
+        ctx.DrawText(line, Rect{textBox.x, y, wrapWidth, lineH}, fg, fontSize, weight,
                      TextAlign::Left);
         y += lineH;
     }
     if (focused_) {
-        // The old caret was a full-height bar at the width of the WHOLE prefix,
-        // newlines included: in a multi-line document it sat far outside the box.
-        // CaretPosition() uses the painter's own line splitter, so the bar sits on
-        // the caret's visual line and is one line high. Drawing it inside the clip
-        // also keeps it from covering the card below when the text overflows.
-        const Point cp = CaretPosition();
-        ctx.FillRect(Rect{textBox.x + cp.x, textBox.y + cp.y, 1.5f, lineH},
+        // The caret uses the painter's own splitter, so soft wraps do not move it
+        // to the wrong row. Keeping it inside the viewport is what makes typing
+        // at the end of a long log visible without a separate command.
+        Point cp = CaretPosition();
+        if (cp.y < scrollOffset_) {
+            scrollOffset_ = cp.y;
+        } else if (cp.y + lineH > scrollOffset_ + textBox.h) {
+            scrollOffset_ = cp.y + lineH - textBox.h;
+        }
+        scrollOffset_ = std::clamp(scrollOffset_, 0.0f, maxScroll);
+        const int slot = SlotOf("ScrollOffset");
+        if (slot >= 0) SetSlotValue(slot, Value::Number(static_cast<double>(scrollOffset_)), true);
+        ctx.FillRect(Rect{textBox.x + cp.x, textBox.y + cp.y - scrollOffset_, 1.5f, lineH},
                      palette.colors[static_cast<int>(Token::TextPrimary)]);
     }
     ctx.PopClip();
+
+    if (needBar) {
+        const Rect track = ScrollbarTrack(textBox);
+        ctx.FillRect(track, palette.colors[static_cast<int>(Token::CardBorder)]);
+        const float thumbH = std::max(kTextThumbMinHeight,
+                                      track.h * track.h / (maxScroll + track.h));
+        const float thumbY = track.y +
+                             (maxScroll > 0 ? (scrollOffset_ / maxScroll) * (track.h - thumbH) : 0);
+        ctx.FillRoundRect(Rect{track.x + 2.0f, thumbY, track.w - 4.0f, thumbH}, 3.0f,
+                          palette.colors[static_cast<int>(Token::TextSecondary)]);
+    }
 }
 
 Widget* TextBox::HitTest(const Point& p) { return bounds_.Contains(p) ? this : nullptr; }
@@ -982,8 +1165,10 @@ Point TextBox::CaretPosition() const {
 
     const std::wstring display = DisplayText();
     const size_t at = std::min(caret_, display.size());
-    const std::vector<std::wstring> lines = BuildDisplayLines(
-        display.substr(0, at), svc, wrapWidth, bounds_.h, fontSize, WeightNormal);
+    const std::vector<std::wstring> lines =
+        BuildDisplayLines(display.substr(0, at), svc, lastWrapWidth_ > 0.0f ? lastWrapWidth_
+                                                                           : wrapWidth,
+                          bounds_.h, fontSize, WeightNormal, Wrapping());
     Point p{0.0f, lineH * static_cast<float>(lines.empty() ? 0 : lines.size() - 1)};
     if (!lines.empty() && !lines.back().empty()) {
         p.x = svc ? svc->Measure(lines.back(), fontSize, WeightNormal).w
@@ -1336,11 +1521,15 @@ void Grid::Arrange(const Rect& finalRect) {
     }
     usedW += barW * (nCols > 1 ? static_cast<float>(nCols - 1) : 0.0f);
     const float availW = std::max(0.0f, finalRect.w - margin.H() - pad.H());
-    if (starW > 0 && availW > usedW) {
-        const float extra = availW - usedW;
+    if (starW > 0 && availW != usedW) {
+        // Both directions matter. Measure passes a provisional star size (auto
+        // tracks are not yet known), so Arrange can be handed *less* space than
+        // the child desired. Only growing here left a star row at its measured
+        // height and pushed everything below it out of the window.
+        const float delta = availW - usedW;
         for (size_t i = 0; i < nCols; ++i)
             if (columns_[i].kind == GridLength::Kind::Star)
-                colW[i] += extra * (columns_[i].value / starW);
+                colW[i] = std::max(0.0f, colW[i] + delta * (columns_[i].value / starW));
     }
     float usedH = 0;
     float starH = 0;
@@ -1350,11 +1539,11 @@ void Grid::Arrange(const Rect& finalRect) {
     }
     usedH += barH * (nRows > 1 ? static_cast<float>(nRows - 1) : 0.0f);
     const float availH = std::max(0.0f, finalRect.h - margin.V() - pad.H() * 0 - pad.V());
-    if (starH > 0 && availH > usedH) {
-        const float extra = availH - usedH;
+    if (starH > 0 && availH != usedH) {
+        const float delta = availH - usedH;
         for (size_t i = 0; i < nRows; ++i)
             if (rows_[i].kind == GridLength::Kind::Star)
-                rowH[i] += extra * (rows_[i].value / starH);
+                rowH[i] = std::max(0.0f, rowH[i] + delta * (rows_[i].value / starH));
     }
 
     std::vector<float> colX(nCols, 0.0f);

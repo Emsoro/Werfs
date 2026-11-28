@@ -537,10 +537,17 @@ public:
     void Arrange(const Rect& finalRect) override;
     void OnPaint(PaintCtx& ctx, const ThemePalette& palette) override;
     Widget* HitTest(const Point& p) override;
+    void OnSlotChanged(int slot, const Value& value) override;
+    void OnPointerDown(const Point& local) override;
+    void OnPointerMove(const Point& local) override;
+    void OnPointerUp(const Point& local) override;
+    bool OnPointerWheel(float deltaLines) override;
     bool OnKeyDown(int vk) override;
     bool OnChar(wchar_t ch) override;
     bool Focusable() const override { return true; }
     void SetCaretToEnd();
+    // Test hook: how far the text is scrolled, in DIPs from the first line.
+    float ScrollOffsetValue() const { return scrollOffset_; }
     // Test hook: caret position for assertions.
     size_t CaretIndex() const { return caret_; }
 
@@ -570,23 +577,34 @@ protected:
 
 private:
     void CommitText();
+    bool Wrapping() const;
+    float LineHeight() const;
+    float MaxScroll() const;
+    Rect ScrollbarTrack(const Rect& textBox) const;
+    void SetScrollOffset(float value, bool publish);
     // Splits the current text into display lines. A single-line box keeps one
-    // entry; a box taller than one line wraps on explicit newlines and then on
-    // width, so a document paragraph is readable instead of running off the edge.
+    // entry; a tall box wraps on explicit newlines and then on width unless
+    // TextWrapping=NoWrap, so a document paragraph is readable instead of
+    // running off the edge.
     std::vector<std::wstring> BuildDisplayLines(float wrapWidth, float fontSize, int weight) const;
     // Same splitter, parameterised so the caret can lay out the text BEFORE it,
     // using the identical wrapping rule. Painting and IME positioning must agree
     // on which visual line the caret is on, soft wraps included.
     static std::vector<std::wstring> BuildDisplayLines(const std::wstring& text, ITextService* svc,
                                                        float wrapWidth, float boxHeight,
-                                                       float fontSize, int weight);
+                                                       float fontSize, int weight, bool wrap);
     // Caret position relative to the text area's top-left corner. x is the width
     // of the last caret line; y is that line's offset, so the painted caret and
     // the IME candidate window land on the same line in a multi-line box.
     Point CaretPosition() const;
     void RepaintWithPreview();
     int slotText_ = -1;
+    float scrollOffset_ = 0.0f;
+    float lastWrapWidth_ = 0.0f;
     size_t caret_ = 0;
+    bool pendingAutoScroll_ = false;
+    bool draggingThumb_ = false;
+    float thumbGrabDelta_ = 0.0f;
     bool caretVisible_ = true;
     std::wstring editing_;
     // The uncommitted IME preview. Empty means no composition is in progress.

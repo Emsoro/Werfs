@@ -1,6 +1,6 @@
 # Werfs 实施计划与技术验证报告
 
-> 版本：0.13.4.0
+> 版本：0.14.0.0
 > 日期：2026-11-24
 > 仓库：https://gitee.com/masonwu21/Werfs
 > 技术基线：Windows 10/11 x64 · C++20 · MSVC 19.4x · MIT · 无 WebView/.NET/Qt/JS 引擎
@@ -12,7 +12,7 @@
 
 **Werfs = WAML（声明式界面） + C++20（自绘引擎） + MVVM（数据绑定），目标是做成完整的控件图库（Gallery）：每个控件都有可运行、可交互、可阅读代码的示例页。**
 
-当前 0.13.4.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**55 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 8 个、图表的 `Chart`/`ChartPlot`，以及 `LoadingSpinner`/`AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**266 个测试**全绿，并交付 **9 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `animation` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
+当前 0.14.0.0 已完成**地基 + 布局层 + 应用外壳 + 样式与触发器 + 绑定/主题示例 + 列表虚拟化 + 图表与降采样 + Python 驱动的 MVVM 示例（`basic_py`）**：框架与示例分离、WAML 解析/校验/实例化、四种绑定模式（含 `FallbackValue` 与 `UpdateSourceTrigger=LostFocus`）、**浮层子系统（菜单含二/三级子菜单、工具栏溢出、模态）**、**55 个控件**（含六个布局面板、十个外壳控件、P0 补齐的 17 个、P1 的 8 个、图表的 `Chart`/`ChartPlot`，以及 `LoadingSpinner`/`AppBarToggleButton`/`BreadcrumbBar`/`RatingControl`）、**`Style`/`Setter`、`ResourceDictionary` 与 `Trigger`（可 `BasedOn`，触发器运行期求值并可恢复）**、**`ListBox` 纵向固定行高虚拟化（§7.29）**、**`TreeView` 层级列表（§7.36）**、**图表、实时流与四种降采样（§7.30）**、**Python 驱动的 MVVM 边界（§10d）**、两种渲染后端、**268 个测试**全绿，并交付 **9 个可独立运行的示例**（`basic` / `list` / `editor` / `binding` / `theming` / `usercontrol` / `charts` / `animation` / `basic_py`，最后一个的 ViewModel 在 Python 里）共用一套宿主。
 
 **`editor` 是集成点**：它同时用到文件对话框、菜单、工具栏、多标签和模态确认，把此前所有能力串在一个页面里。原本规划的独立 `files` 示例**已并入 `editor`**（见 §10b.1），因为「打开/另存为/选文件夹」只是编辑器的一个子集，分成两个示例等于让同一套对话框接线维护两遍。
 
@@ -50,7 +50,7 @@ build.ps1  CMakeLists.txt
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 266 用例全绿 |
+| WAML 解析 + 静态校验（行列号 + 诊断码 + 建议） | ✅ | 268 用例全绿 |
 | 四种绑定模式 + 双向回写 + 回声抑制 | ✅ | 绑定更新 89 ns/次 |
 | DataTemplate / ObservableList | ✅ | 100 项构建 288 µs |
 | **列表虚拟化**（纵向 + 固定行高）：有界高度的 `ListBox` 只实例化视口内的行 | ✅ | 1000 行模型 → 十几个行控件；8 个单元用例 + `interact` 14 条断言（§7.29） |
@@ -85,7 +85,7 @@ build.ps1  CMakeLists.txt
 | 产物 | 作用 |
 |---|---|
 | `waml_basic.exe` / `waml_list.exe` / `waml_binding.exe` / `waml_theming.exe` / `waml_editor.exe` / `waml_usercontrol.exe` / `waml_charts.exe` / `waml_animation.exe` | 真实 Win32 窗口，可交互；`--selftest` 无窗口自检 |
-| `waml_tests.exe` | 266 个单元/集成用例 |
+| `waml_tests.exe` | 268 个单元/集成用例 |
 | `waml_interact.exe` | 无窗口驱动真实输入（点击、键盘、切换、菜单、对话框） |
 | `waml_snapshot.exe` | D2D 渲染 + 确定性校验 |
 | `waml_probe.exe` | 资源与交付模式门禁 |
@@ -364,7 +364,7 @@ WAML_DOC/101: 2694 bytes      [ ok ]
 RT_GROUP_ICON/201: 118 bytes  [ ok ]
 RT_MANIFEST/1: 1568 bytes     [ ok ]
 RT_VERSION size: 1964         [ ok ]
-file version: 0.13.4.0         [ ok ]
+file version: 0.14.0.0         [ ok ]
 RESOURCE LAYOUT OK
 ```
 
@@ -2259,7 +2259,7 @@ if (ownLayer_ && root->Overlay() == nullptr) ownLayer_ = false;
 
 # 附录
 
-## A. 测试清单（266 用例）
+## A. 测试清单（268 用例）
 
 `waml_tests.exe` 可带过滤子串只跑一组，例如 `waml_tests.exe grid`。
 

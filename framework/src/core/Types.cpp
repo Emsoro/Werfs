@@ -232,6 +232,11 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
         t->Prop("Foreground", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}),
                 AffectsRender, BindingMode::OneWay, true, true);
+        // The glyph's fill colour. Previously the check box was hard-wired to
+        // the Accent token, so markup could not give it a neutral/gray look.
+        t->Prop("CheckColor", VType::Color,
+                Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender,
+                BindingMode::OneWay, true, true);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{4, 4, 4, 4}),
                 AffectsMeasure);
         add(t);
@@ -246,6 +251,17 @@ void TypeRegistry::RegisterBuiltins() {
         // A document editor wants Enter to create a line; a one-line field wants
         // Enter to commit and leave. Default stays single-line for every other page.
         t->Prop("AcceptsReturn", VType::Bool, Value::Bool(false), AffectsRender);
+        // Explicit switch for soft wrapping. Wrap is the default so an existing
+        // tall multi-line box keeps its current behaviour; NoWrap still honours
+        // explicit newlines, but never breaks a long line on width.
+        t->EnumProp("TextWrapping", {"NoWrap", "Wrap"}, 1, AffectsMeasure | AffectsRender);
+        // A log wants to stay pinned to the newest line; a document being edited
+        // wants the view to stay where the reader left it. Both are one property.
+        t->EnumProp("AutoScroll", {"None", "ToEnd"}, 0, 0);
+        // The control publishes how far the text is scrolled. TwoWay so a page can
+        // also drive the view; no AffectsRender flag because the control writes it
+        // from its own paint path.
+        t->Prop("ScrollOffset", VType::Number, Value::Number(0), 0, BindingMode::TwoWay);
         t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
         t->Prop("Foreground", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}),
                 AffectsRender, BindingMode::OneWay, true, true);

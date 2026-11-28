@@ -4820,6 +4820,87 @@ TEST("ime: the caret follows a soft-wrapped line in a multi-line box") {
     CHECK(t->Get<std::wstring>(t->SlotOf("Text")) == L"aaaa bbbb \u4E2Dcccc");
 }
 
+TEST("textbox: TextWrapping explicitly controls soft wrapping") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <TextBox x:Name="wrap" Text="aaaa bbbb cccc dddd" FontSize="14" Height="80"
+           TextWrapping="Wrap"/>
+  <TextBox x:Name="nowrap" Text="aaaa bbbb cccc dddd" FontSize="14" Height="80"
+           TextWrapping="NoWrap"/>
+</Page>)WAML", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{110, 200}); // ~90px of text room: the words must wrap
+    auto* wrap = dynamic_cast<TextBox*>(root->FindByName("wrap"));
+    auto* nowrap = dynamic_cast<TextBox*>(root->FindByName("nowrap"));
+    CHECK(wrap != nullptr && nowrap != nullptr);
+    if (!wrap || !nowrap) return;
+
+    auto paintedLines = [](TextBox* box) {
+        RecordingPaintContext ctx;
+        box->PaintTree(ctx, MakePalette(ThemeKind::Light));
+        size_t n = 0;
+        for (size_t p = 0; (p = ctx.Text().find("text \"", p)) != std::string::npos; ++p) ++n;
+        return n;
+    };
+    const size_t wrapped = paintedLines(wrap);
+    const size_t plain = paintedLines(nowrap);
+    CHECK(wrapped > plain);
+    CHECK_EQ(plain, size_t(1));
+}
+
+TEST("textbox: overflow scrolls on wheel and AutoScroll=ToEnd follows new text") {
+    InstallText();
+    DiagnosticBag bag;
+    auto doc = Compile(R"WAML(
+<Page>
+  <TextBox x:Name="keep" FontSize="14" Height="120" AcceptsReturn="True"/>
+  <TextBox x:Name="tail" FontSize="14" Height="120" AcceptsReturn="True"
+           AutoScroll="ToEnd"/>
+</Page>)WAML", bag);
+    CHECK(doc != nullptr);
+    if (!doc) return;
+    WidgetPtr root = doc->Instantiate(&g_fakeText);
+    root->ForceLayout(Size{320, 260});
+    auto* keep = dynamic_cast<TextBox*>(root->FindByName("keep"));
+    auto* tail = dynamic_cast<TextBox*>(root->FindByName("tail"));
+    CHECK(keep != nullptr && tail != nullptr);
+    if (!keep || !tail) return;
+
+    std::wstring log;
+    for (int i = 0; i < 30; ++i) {
+        log += L"line " + std::to_wstring(i) + (i + 1 < 30 ? L"\n" : L"");
+    }
+    keep->SetSlotValue(keep->SlotOf("Text"), Value::Text(log));
+    tail->SetSlotValue(tail->SlotOf("Text"), Value::Text(log));
+    RecordingPaintContext keepLog;
+    keep->PaintTree(keepLog, MakePalette(ThemeKind::Light));
+    RecordingPaintContext tailLog;
+    tail->PaintTree(tailLog, MakePalette(ThemeKind::Light));
+
+    CHECK_NEAR(keep->ScrollOffsetValue(), 0.0f, 0.01f);
+    CHECK(tail->ScrollOffsetValue() > 0.0f);
+    CHECK_NEAR(tail->Get<double>(tail->SlotOf("ScrollOffset")),
+               static_cast<double>(tail->ScrollOffsetValue()), 0.01);
+
+    // None keeps the reader's place even when text arrives from a binding.
+    keep->SetSlotValue(keep->SlotOf("Text"), Value::Text(log + L"\nnew line"));
+    RecordingPaintContext keepAfter;
+    keep->PaintTree(keepAfter, MakePalette(ThemeKind::Light));
+    CHECK_NEAR(keep->ScrollOffsetValue(), 0.0f, 0.01f);
+    CHECK(keep->OnPointerWheel(-3.0f));
+    CHECK(keep->ScrollOffsetValue() > 0.0f);
+
+    const float before = tail->ScrollOffsetValue();
+    tail->SetSlotValue(tail->SlotOf("Text"), Value::Text(log + L"\nnew line"));
+    RecordingPaintContext tailAfter;
+    tail->PaintTree(tailAfter, MakePalette(ThemeKind::Light));
+    CHECK(tail->ScrollOffsetValue() >= before);
+}
+
 // A widget plus the categories the shell tests need.
 struct ShellFixture {
     WidgetPtr root;
