@@ -3317,17 +3317,17 @@ TEST("progressbar: value is a 0..1 fraction and is clamped") {
     CHECK(PaintOpCount(b) == half);
 }
 
-TEST("progressring: the arc is stepped segments on top of the track") {
+TEST("progressring: smooth partial chords become two ellipses when full") {
     DiagnosticBag bag;
     Widget* r = MakeWidget("ProgressRing", "Value=\"0\"", bag, Size{200, 200});
     CHECK(r != nullptr);
     if (!r) return;
     const size_t trackOnly = PaintOpCount(r);
-    CHECK(trackOnly == 64); // one segment per step of a full revolution
+    CHECK(trackOnly == 180); // 180 short chords approximate the round track
 
     r->SetSlotValue(r->SlotOf("Value"), Value::Number(1.0));
-    // Track plus a full revolution of arc segments.
-    CHECK(PaintOpCount(r) == trackOnly * 2);
+    // A full ring is drawn as two anti-aliased ellipses, not 360 line chords.
+    CHECK(PaintOpCount(r) == 2);
 }
 
 TEST("inflobar: a dismissed bar takes no space") {
