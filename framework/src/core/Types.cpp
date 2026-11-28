@@ -184,6 +184,12 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("BorderThickness", VType::Thickness, Value::MakeThickness(Thickness{}),
                 AffectsMeasure);
         t->Prop("CornerRadius", VType::Number, Value::Number(0), AffectsRender);
+        // Soft card shadow, painted as concentric round rects behind the background.
+        t->Prop("ShadowRadius", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("ShadowColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("ShadowOffsetX", VType::Number, Value::Number(0), AffectsRender);
+        t->Prop("ShadowOffsetY", VType::Number, Value::Number(0), AffectsRender);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsMeasure);
         add(t);
     }
@@ -211,6 +217,10 @@ void TypeRegistry::RegisterBuiltins() {
                 AffectsRender, BindingMode::OneWay, true, true);
         t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}),
                 AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("CornerRadius", VType::Number, Value::Number(4), AffectsRender);
+        t->Prop("BorderBrush", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("BorderThickness", VType::Thickness, Value::MakeThickness(Thickness{}), AffectsRender);
         t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{12, 6, 12, 6}),
                 AffectsMeasure);
         t->Prop("TabIndex", VType::Number, Value::Number(0), 0);
@@ -627,6 +637,9 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Foreground", VType::Color,
                 Value::MakeColor(Color{0, 0, 0, 1, Token::Accent}), AffectsRender, BindingMode::OneWay,
                 true, true);
+        // Trail / empty part of the ring. Alpha 0 falls back to the palette.
+        t->Prop("TrackColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
         add(t);
     }
     {
@@ -728,9 +741,14 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("IsChecked", VType::Bool, Value::Bool(false), AffectsRender, BindingMode::TwoWay);
         t->Prop("IsEnabled", VType::Bool, Value::Bool(true), AffectsRender);
         t->Prop("FontSize", VType::Number, Value::Number(14), AffectsMeasure);
+        t->EnumProp("FontWeight", {"Normal", "Medium", "SemiBold", "Bold"}, WeightNormal, AffectsMeasure);
         t->Prop("Foreground", VType::Color,
                 Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
                 BindingMode::OneWay, true, true);
+        t->Prop("Background", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("CornerRadius", VType::Number, Value::Number(4), AffectsRender);
+        t->Prop("Padding", VType::Thickness, Value::MakeThickness(Thickness{6, 4, 6, 4}), AffectsMeasure);
         add(t);
     }
     {
@@ -745,6 +763,13 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Foreground", VType::Color,
                 Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
                 BindingMode::OneWay, true, true);
+        // Optional switch track/knob colours. Alpha 0 falls back to the palette.
+        t->Prop("OnColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("OffColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("KnobColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
         add(t);
     }
     {
@@ -824,6 +849,13 @@ void TypeRegistry::RegisterBuiltins() {
         t->Prop("Foreground", VType::Color,
                 Value::MakeColor(Color{0, 0, 0, 1, Token::TextPrimary}), AffectsRender,
                 BindingMode::OneWay, true, true);
+        // Optional switch track/knob colours. Alpha 0 falls back to the palette.
+        t->Prop("OnColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("OffColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
+        t->Prop("KnobColor", VType::Color, Value::MakeColor(Color{0, 0, 0, 0, Token::None}),
+                AffectsRender, BindingMode::OneWay, true, true);
         add(t);
     }
     {

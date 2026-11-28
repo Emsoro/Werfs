@@ -192,6 +192,22 @@ void Border::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     Rect box{bounds_.x + margin.l, bounds_.y + margin.t, bounds_.w - margin.H(), bounds_.h - margin.V()};
     if (box.w <= 0 || box.h <= 0) return;
     const float radius = Get<float>(SlotOf("CornerRadius"));
+    // Card shadow: concentric translucent round rects behind the background.
+    // Kept in the widget layer so all PaintCtx backends work unchanged.
+    const float shadowRadius = Get<float>(SlotOf("ShadowRadius"));
+    const Color shadow = ResolveColor(Get<Color>(SlotOf("ShadowColor")), palette);
+    if (shadowRadius > 0 && shadow.a > 0) {
+        const float sx = Get<float>(SlotOf("ShadowOffsetX"));
+        const float sy = Get<float>(SlotOf("ShadowOffsetY"));
+        for (int i = 5; i >= 1; --i) {
+            const float spread = shadowRadius * static_cast<float>(i) / 5.0f;
+            Color layer = shadow;
+            layer.a = shadow.a * (0.10f + 0.06f * static_cast<float>(5 - i));
+            ctx.FillRoundRect(Rect{box.x + sx - spread, box.y + sy - spread,
+                                   box.w + 2 * spread, box.h + 2 * spread},
+                              radius + spread, layer);
+        }
+    }
     const Color bg = ResolveColor(Get<Color>(SlotOf("Background")), palette);
     if (bg.a > 0) {
         if (radius > 0) ctx.FillRoundRect(box, radius, bg);
@@ -579,8 +595,13 @@ void Button::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
         bg.g = std::min(1.0f, bg.g * 1.08f + 0.02f);
         bg.b = std::min(1.0f, bg.b * 1.08f + 0.02f);
     }
-    const float radius = 4.0f;
+    const float radius = Get<float>(SlotOf("CornerRadius"));
     ctx.FillRoundRect(box, radius, bg);
+    const Color border = ResolveColor(Get<Color>(SlotOf("BorderBrush")), palette);
+    const Thickness borderThickness = Get<Thickness>(SlotOf("BorderThickness"));
+    const float borderWidth = std::max({borderThickness.l, borderThickness.t,
+                                        borderThickness.r, borderThickness.b});
+    if (border.a > 0 && borderWidth > 0) ctx.StrokeRect(box, border, borderWidth, radius);
     if (focused_) ctx.StrokeRect(box.Inflate(1.0f), ResolveColor(Get<Color>(SlotOf("Foreground")), palette), 1.5f, radius + 1);
 
     const Thickness pad = Get<Thickness>(SlotOf("Padding"));
@@ -4242,25 +4263,33 @@ void ProgressRing::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     if (radius <= 0) return;
 
     const Point center{box.x + box.w * 0.5f, box.y + box.h * 0.5f};
-    // The track is a full circle; the value arc is drawn over it. Both are stepped
-    // segments -- 64 per revolution is smooth enough at these sizes and keeps the
-    // primitive count low in the determinism snapshot.
-    constexpr int kSegments = 64;
-    const Color trackColor = palette.colors[static_cast<int>(Token::ControlFill)];
+    const float value = std::clamp(Get<float>(SlotOf("Value")), 0.0f, 1.0f);
+    Color fill = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
+    Color track = ResolveColor(Get<Color>(SlotOf("TrackColor")), palette);
+    if (track.a <= 0) track = palette.colors[static_cast<int>(Token::ControlFill)];
+
+    // A full ring is two anti-aliased ellipses -- no stepped-line jaggies.
+    if (value >= 0.999f) {
+        const float outerR = radius + stroke * 0.5f;
+        const float innerR = std::max(0.0f, radius - stroke * 0.5f);
+        ctx.FillEllipse(Rect{center.x - outerR, center.y - outerR, 2 * outerR, 2 * outerR}, fill);
+        if (innerR > 0)
+            ctx.FillEllipse(Rect{center.x - innerR, center.y - innerR, 2 * innerR, 2 * innerR}, track);
+        return;
+    }
+
+    // Partial arcs: many short chords keep the edge visually round.
+    constexpr int kSegments = 180;
     auto pointAt = [&](float fraction) {
-        // 12 o'clock, clockwise. -pi/2 puts the start at the top.
         const float angle = -3.14159265f * 0.5f + fraction * 6.28318530f;
         return Point{center.x + std::cos(angle) * radius, center.y + std::sin(angle) * radius};
     };
     for (int i = 0; i < kSegments; ++i) {
         const float f0 = static_cast<float>(i) / kSegments;
         const float f1 = static_cast<float>(i + 1) / kSegments;
-        ctx.DrawLine(pointAt(f0), pointAt(f1), trackColor, stroke);
+        ctx.DrawLine(pointAt(f0), pointAt(f1), track, stroke);
     }
-
-    const float value = std::clamp(Get<float>(SlotOf("Value")), 0.0f, 1.0f);
     if (value <= 0.0f) return;
-    const Color fill = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
     const int arcSegments = static_cast<int>(static_cast<float>(kSegments) * value + 0.5f);
     for (int i = 0; i < arcSegments; ++i) {
         const float f0 = static_cast<float>(i) / kSegments;
@@ -4687,27 +4716,35 @@ void ToggleButton::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     // Checked uses the accent fill, which is the whole point of a toggle: the state is
     // readable at a glance from a row of buttons. Hover/press only matter unchecked,
     // because a checked button already looks "down".
-    Color fill = palette.colors[static_cast<int>(Token::ControlFill)];
-    if (!enabled) {
-        fill = palette.colors[static_cast<int>(Token::AppBackground)];
-    } else if (checked) {
-        fill = palette.colors[static_cast<int>(Token::Accent)];
-    } else if (pressed_) {
-        fill = palette.colors[static_cast<int>(Token::ControlFillPressed)];
-    } else if (hovered_) {
-        fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+    Color fill = ResolveColor(Get<Color>(SlotOf("Background")), palette);
+    if (fill.a <= 0) {
+        fill = palette.colors[static_cast<int>(Token::ControlFill)];
+        if (!enabled) {
+            fill = palette.colors[static_cast<int>(Token::AppBackground)];
+        } else if (checked) {
+            fill = palette.colors[static_cast<int>(Token::Accent)];
+        } else if (pressed_) {
+            fill = palette.colors[static_cast<int>(Token::ControlFillPressed)];
+        } else if (hovered_) {
+            fill = palette.colors[static_cast<int>(Token::ControlFillHover)];
+        }
     }
-    ctx.FillRoundRect(box, 4.0f, fill);
+    const float radius = Get<float>(SlotOf("CornerRadius"));
+    ctx.FillRoundRect(box, radius, fill);
     ctx.StrokeRect(box, palette.colors[static_cast<int>(checked ? Token::Accent : Token::CardBorder)],
-                   focused_ ? 1.5f : 1.0f, 4.0f);
+                   focused_ ? 1.5f : 1.0f, radius);
 
     Color fg = palette.colors[static_cast<int>(Token::TextPrimary)];
     if (!enabled) fg = palette.colors[static_cast<int>(Token::TextDisabled)];
     else if (checked) fg = palette.colors[static_cast<int>(Token::TextOnAccent)];
     fg = ResolveColor(Get<Color>(SlotOf("Foreground")), palette);
     if (!enabled) fg = palette.colors[static_cast<int>(Token::TextDisabled)];
-    ctx.DrawText(Get<std::wstring>(SlotOf("Content")), box, fg, Get<float>(SlotOf("FontSize")),
-                 WeightNormal, TextAlign::Center);
+    const Thickness pad = Get<Thickness>(SlotOf("Padding"));
+    const Rect textBox{box.x + pad.l, box.y + pad.t,
+                       std::max(0.0f, box.w - pad.H()), std::max(0.0f, box.h - pad.V())};
+    ctx.DrawText(Get<std::wstring>(SlotOf("Content")), textBox, fg,
+                 Get<float>(SlotOf("FontSize")), Get<int>(SlotOf("FontWeight")),
+                 TextAlign::Center);
 }
 
 Widget* ToggleButton::HitTest(const Point& p) {
@@ -4780,8 +4817,11 @@ void ToggleSwitch::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
 
     // Track is vertically centred against the label.
     const Rect track{box.x, box.y + (box.h - kSwitchTrackH) * 0.5f, kSwitchTrackW, kSwitchTrackH};
-    Color trackColor = palette.colors[static_cast<int>(on ? Token::Accent : Token::ControlFillPressed)];
-    if (!enabled) trackColor = palette.colors[static_cast<int>(Token::ControlFill)];
+    Color trackColor = ResolveColor(Get<Color>(SlotOf(on ? "OnColor" : "OffColor")), palette);
+    if (trackColor.a <= 0) {
+        trackColor = palette.colors[static_cast<int>(on ? Token::Accent : Token::ControlFillPressed)];
+        if (!enabled) trackColor = palette.colors[static_cast<int>(Token::ControlFill)];
+    }
     ctx.FillRoundRect(track, kSwitchTrackH * 0.5f, trackColor);
     ctx.StrokeRect(track, palette.colors[static_cast<int>(Token::CardBorder)], 1.0f,
                    kSwitchTrackH * 0.5f);
@@ -4791,8 +4831,11 @@ void ToggleSwitch::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     const float knobD = kSwitchTrackH - kSwitchKnobInset * 2;
     const float knobX = on ? track.x + track.w - knobD - kSwitchKnobInset
                            : track.x + kSwitchKnobInset;
-    const Color knobColor = enabled ? palette.colors[static_cast<int>(Token::CardBackground)]
-                                    : palette.colors[static_cast<int>(Token::AppBackground)];
+    Color knobColor = ResolveColor(Get<Color>(SlotOf("KnobColor")), palette);
+    if (knobColor.a <= 0) {
+        knobColor = enabled ? palette.colors[static_cast<int>(Token::CardBackground)]
+                            : palette.colors[static_cast<int>(Token::AppBackground)];
+    }
     ctx.FillEllipse(Rect{knobX, track.y + kSwitchKnobInset, knobD, knobD}, knobColor);
 
     const std::wstring text = Get<std::wstring>(SlotOf("Content"));
