@@ -64,7 +64,7 @@ Windows 上做原生界面，传统有两条路：Win32 裸写（繁琐、易错
 | 类别 | 控件 |
 |---|---|
 | 布局 | `Grid`（行列 + 跨行跨列）· `StackPanel` · `WrapPanel` · `VariableSizedWrapGrid` · `Canvas` · `Viewbox` · `Expander` · `Border` · `Page` · `ScrollViewer` |
-| 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（`AcceptsReturn` 多行、`TextWrapping="NoWrap\|Wrap"` 显式换行开关、溢出时内置竖滚动条 + 滚轮/拖动、`AutoScroll="None\|ToEnd"` 保持位置或跟随最新文本、`ScrollOffset` 双向可绑定） |
+| 文本 | `TextBlock`（`TextWrapping="Wrap"`）· `TextBox`（`AcceptsReturn` 多行、`TextWrapping="NoWrap\|Wrap"` 显式换行开关、溢出时内置竖滚动条 + 滚轮/拖动、`AutoScroll="None\|ToEnd"`（`ToEnd` 为粘性跟随：在底部时跟最新行，向上滚即脱离，回到底部重新跟随）、`ScrollOffset` 双向可绑定） |
 | 输入 | `Button` · `CheckBox` · `RatingControl`（星级评分） · `BreadcrumbBar`（可点击路径） |
 | 状态 | `ProgressBar` · `ProgressRing` · `LoadingSpinner`（四种等待动画） |
 | 集合 | `ListBox` + `DataTemplate` · `TreeView`（层级/展开/选中） · `TabView`（切换/关闭/新建） |

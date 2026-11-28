@@ -582,6 +582,7 @@ private:
     float MaxScroll() const;
     Rect ScrollbarTrack(const Rect& textBox) const;
     void SetScrollOffset(float value, bool publish);
+    void UpdateFollowFromScroll();
     // Splits the current text into display lines. A single-line box keeps one
     // entry; a tall box wraps on explicit newlines and then on width unless
     // TextWrapping=NoWrap, so a document paragraph is readable instead of
@@ -603,6 +604,11 @@ private:
     float lastWrapWidth_ = 0.0f;
     size_t caret_ = 0;
     bool pendingAutoScroll_ = false;
+    // Sticky follow: AutoScroll=ToEnd follows new text only while the reader has
+    // not scrolled away. A wheel/drag off the bottom detaches it; reaching the
+    // bottom again re-attaches. Without this, a live log makes wheel input look
+    // broken because every incoming line yanks the view back to the end.
+    bool followEnd_ = false;
     bool draggingThumb_ = false;
     float thumbGrabDelta_ = 0.0f;
     bool caretVisible_ = true;

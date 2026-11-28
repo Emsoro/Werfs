@@ -890,6 +890,12 @@ void TextBox::SetScrollOffset(float value, bool publish) {
     Invalidate(AffectsRender);
 }
 
+void TextBox::UpdateFollowFromScroll() {
+    // Touching the scrollbar is an explicit statement of intent. Reaching the
+    // bottom re-arms follow; any other position detaches it.
+    followEnd_ = scrollOffset_ >= MaxScroll() - 0.5f;
+}
+
 void TextBox::OnSlotChanged(int slot, const Value& value) {
     Widget::OnSlotChanged(slot, value);
     if (slot == SlotOf("Text")) {
@@ -903,8 +909,13 @@ void TextBox::OnSlotChanged(int slot, const Value& value) {
                 scrollOffset_ = clamped;
                 Invalidate(AffectsRender);
             }
+            UpdateFollowFromScroll();
         }
-    } else if (slot == SlotOf("TextWrapping") || slot == SlotOf("AutoScroll")) {
+    } else if (slot == SlotOf("AutoScroll")) {
+        followEnd_ = Get<int>(slot) == 1;
+        pendingAutoScroll_ = true;
+        Invalidate(AffectsRender);
+    } else if (slot == SlotOf("TextWrapping")) {
         Invalidate(AffectsMeasure | AffectsRender);
     }
 }
@@ -915,6 +926,7 @@ bool TextBox::OnPointerWheel(float deltaLines) {
     // Same convention as ScrollViewer: negative deltaLines means "wheel down",
     // which moves the content UP, i.e. increases the scroll offset.
     SetScrollOffset(scrollOffset_ - deltaLines * LineHeight(), true);
+    UpdateFollowFromScroll();
     return true; // consumed: the page under the log must not scroll as well
 }
 
@@ -933,8 +945,10 @@ void TextBox::OnPointerDown(const Point& local) {
     const float thumbY = track.y + (scrollOffset_ / maxScroll) * (track.h - thumbH);
     if (local.y < thumbY) {
         SetScrollOffset(scrollOffset_ - track.h, true);
+        UpdateFollowFromScroll();
     } else if (local.y > thumbY + thumbH) {
         SetScrollOffset(scrollOffset_ + track.h, true);
+        UpdateFollowFromScroll();
     } else {
         draggingThumb_ = true;
         thumbGrabDelta_ = local.y - thumbY;
@@ -956,6 +970,7 @@ void TextBox::OnPointerMove(const Point& local) {
     const float y = local.y - thumbGrabDelta_ - track.y;
     const float ratio = std::clamp(y / (track.h - thumbH), 0.0f, 1.0f);
     SetScrollOffset(ratio * maxScroll, true);
+    UpdateFollowFromScroll();
 }
 
 void TextBox::OnPointerUp(const Point&) { draggingThumb_ = false; }
@@ -1004,17 +1019,23 @@ void TextBox::OnPaint(PaintCtx& ctx, const ThemePalette& palette) {
     }
     lastWrapWidth_ = wrapWidth;
     const float maxScroll = std::max(0.0f, contentH - textBox.h);
+    const float beforeClamp = scrollOffset_;
     scrollOffset_ = std::clamp(scrollOffset_, 0.0f, maxScroll);
+    bool offsetChanged = std::abs(scrollOffset_ - beforeClamp) >= 0.01f;
 
     const int autoSlot = SlotOf("AutoScroll");
     const bool toEnd = autoSlot >= 0 && Get<int>(autoSlot) == 1;
-    // Keep the text and the thumb on the SAME offset. A live log changes Text
-    // frequently; relying only on the one-shot pendingAutoScroll_ flag could
-    // leave the thumb drawn from a stale offset while the text had already
-    // jumped to the end.
-    const bool changed = std::abs(scrollOffset_ - maxScroll) >= 0.01f;
-    if (toEnd && changed) scrollOffset_ = maxScroll;
-    if (changed && (toEnd || pendingAutoScroll_)) {
+    // Sticky follow, not a perpetual yank: a live caption stream changes Text
+    // every few frames. Following unconditionally made the wheel look dead --
+    // every incoming line pulled the view back to the bottom. Only follow while
+    // the reader is still at the bottom; a wheel/drag away detaches, and coming
+    // back to the bottom re-attaches.
+    const bool shouldFollow = toEnd && followEnd_;
+    if (shouldFollow && std::abs(scrollOffset_ - maxScroll) >= 0.01f) {
+        scrollOffset_ = maxScroll;
+        offsetChanged = true;
+    }
+    if (offsetChanged || pendingAutoScroll_) {
         const int slot = SlotOf("ScrollOffset");
         if (slot >= 0) SetSlotValue(slot, Value::Number(static_cast<double>(scrollOffset_)), true);
     }

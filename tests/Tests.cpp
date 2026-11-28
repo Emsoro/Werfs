@@ -4899,6 +4899,24 @@ TEST("textbox: overflow scrolls on wheel and AutoScroll=ToEnd follows new text")
     RecordingPaintContext tailAfter;
     tail->PaintTree(tailAfter, MakePalette(ThemeKind::Light));
     CHECK(tail->ScrollOffsetValue() >= before);
+
+    // Sticky follow: wheeling up detaches from the end, so incoming lines must
+    // NOT yank the view back. This is what makes the wheel usable on a live log.
+    CHECK(tail->OnPointerWheel(3.0f));
+    const float parked = tail->ScrollOffsetValue();
+    CHECK(parked < before);
+    tail->SetSlotValue(tail->SlotOf("Text"), Value::Text(log + L"\nnewer line"));
+    RecordingPaintContext tailDetached;
+    tail->PaintTree(tailDetached, MakePalette(ThemeKind::Light));
+    CHECK_NEAR(tail->ScrollOffsetValue(), parked, 0.01f);
+
+    // Coming back to the bottom re-arms the follow.
+    CHECK(tail->OnPointerWheel(-100.0f));
+    const float bottom = tail->ScrollOffsetValue();
+    tail->SetSlotValue(tail->SlotOf("Text"), Value::Text(log + L"\nnewest line\none more"));
+    RecordingPaintContext tailReattached;
+    tail->PaintTree(tailReattached, MakePalette(ThemeKind::Light));
+    CHECK(tail->ScrollOffsetValue() > bottom);
 }
 
 // A widget plus the categories the shell tests need.
